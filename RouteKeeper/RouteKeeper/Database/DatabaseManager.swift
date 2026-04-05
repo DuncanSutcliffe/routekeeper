@@ -16,6 +16,8 @@ enum DatabaseManagerError: Error {
     case notInitialised
     /// A required row was missing after a seeding insert.
     case seedingFailed(String)
+    /// A user-initiated insert failed or the new row could not be retrieved.
+    case insertFailed(String)
 }
 
 // MARK: - DatabaseManager
@@ -76,6 +78,29 @@ actor DatabaseManager {
                     .fetchAll(db)
                 return (folder, lists)
             }
+        }
+    }
+
+    /// Inserts a new folder with the given name and returns it with its database-assigned id.
+    @discardableResult
+    func createFolder(name: String) async throws -> ListFolder {
+        let q = try requireQueue()
+        return try await q.write { db in
+            try db.execute(
+                sql: "INSERT INTO list_folders (name) VALUES (?)",
+                arguments: [name]
+            )
+            guard let id = try Int64.fetchOne(db, sql: "SELECT last_insert_rowid()") else {
+                throw DatabaseManagerError.insertFailed("Could not retrieve new folder ID")
+            }
+            guard let folder = try ListFolder.fetchOne(
+                db,
+                sql: "SELECT * FROM list_folders WHERE id = ?",
+                arguments: [id]
+            ) else {
+                throw DatabaseManagerError.insertFailed("Could not fetch newly created folder (id: \(id))")
+            }
+            return folder
         }
     }
 

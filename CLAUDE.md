@@ -118,8 +118,9 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–4 complete.** The application has a working shell,
-database layer, live map, and motorcycle routing.
+**Increments 1–6 complete.** The application has a working shell,
+database layer, live map, motorcycle routing, a reworked library sidebar,
+and folder creation.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -128,14 +129,14 @@ database layer, live map, and motorcycle routing.
 ### Increment 2 — Database layer
 - GRDB.swift added via Swift Package Manager
 - Full SQLite schema at `schema_version = 1`
-- `DatabaseManager` actor: opens DB in Application Support, runs 
+- `DatabaseManager` actor: opens DB in Application Support, runs
   migrations on launch, seeds placeholder data on first run
 - GRDB record structs for all nine tables
 - Sidebar reads folders and lists from SQLite
 
 ### Increment 3 — Map
 - MapLibre GL JS running in a `WKWebView` (`NSViewRepresentable`)
-- `MapLibreMap.html` bundled as a resource; loaded via 
+- `MapLibreMap.html` bundled as a resource; loaded via
   `loadFileURL(allowingReadAccessTo:)`
 - Full Swift↔JS bridge via `WKScriptMessageHandler` (`routekeeper`)
 - Map shown in detail area when a list is selected
@@ -143,13 +144,46 @@ database layer, live map, and motorcycle routing.
 ### Increment 4 — Routing
 - `RoutingService` actor calls the Valhalla API (motorcycle costing)
   via `URLSession` async/await
-- Valhalla precision-6 encoded polyline decoded in Swift; result 
+- Valhalla precision-6 encoded polyline decoded in Swift; result
   serialised as a GeoJSON FeatureCollection string
 - Route drawn on map as a blue line layer via `drawRoute()` JS function
 - In-memory cache keyed on coordinate pair prevents redundant API calls
   within a session
 - Map-ready gate in `Coordinator`: routes that arrive before MapLibre's
   `load` event are queued and flushed the moment `mapReady` is received
+
+### Increment 5 — Library sidebar rework
+- Folders styled as bold `DisclosureGroup` rows with `folder.fill` icon
+  (previously plain `Section` headers)
+- `VSplitView` replaced with a manual split using `GeometryReader` and a
+  draggable divider; `splitFraction` persisted in `@AppStorage` (70/30
+  default), immune to content-driven resizing
+- Bottom panel shows items in the selected list with per-type SF Symbols:
+  `mappin` (waypoint), `arrow.triangle.turn.up.right.diamond` (route),
+  `scribble` (track)
+- Sort toolbar above the top panel: sort by Name or Date Created with
+  ascending/descending toggle; preference stored in `@AppStorage`
+- `selectedItem: Item?` added alongside `selectedList`; selecting a list
+  clears the item selection
+- **Unclassified system folder** implemented entirely in the application
+  layer — sentinel `ListFolder` and `RouteList` with `id == -1`; rendered
+  with `tray.fill` icon; populates via `fetchUnclassifiedItems()` which
+  queries `items` rows absent from `item_list_membership`
+
+### Increment 6 — New Folder creation
+- `DatabaseManager.createFolder(name:)` inserts into `list_folders` and
+  returns the newly created `ListFolder` with its database-assigned id
+- `LibraryViewModel.createFolder(name:)` calls the DB method then reloads
+  the folder list using the user's current sort preference
+- `NewFolderSheet` — modal sheet with an auto-focused `TextField`, OK
+  disabled when the name is blank, Cancel and OK buttons with standard
+  keyboard shortcuts; OK dismisses and creates the folder asynchronously
+- Three entry points all set `showingNewFolderSheet = true`:
+  - Toolbar button (`folder.badge.plus`) above the sidebar top panel
+  - Right-click context menu on blank space in the folder list
+  - File menu item "New Folder" with ⌘⇧N, wired via `FocusedValue` /
+    `FocusedValueKey` so the menu item is disabled when the sidebar is
+    not focused
 
 ### Files in place
 
@@ -160,13 +194,15 @@ RouteKeeper/
 ├── Models/
 │   ├── ItemRecords.swift
 │   ├── LibraryRecords.swift
-│   └── LibraryModels.swift  (stub)
+│   ├── LibraryModels.swift    (stub)
+│   └── SystemFolders.swift    (sentinel values for Unclassified)
 ├── Features/
 │   ├── Library/
 │   │   ├── LibrarySidebarView.swift
-│   │   └── LibraryViewModel.swift
+│   │   ├── LibraryViewModel.swift
+│   │   └── NewFolderSheet.swift
 │   ├── Map/
-│   │   └── MapView.swift          (includes MapViewModel)
+│   │   └── MapView.swift      (includes MapViewModel)
 │   └── Routing/
 │       └── RoutingService.swift
 ├── Resources/
@@ -183,15 +219,15 @@ RouteKeeper/
 
 ## Known Limitations
 
-- **Map tile source** — `demotiles.maplibre.org` is MapLibre's demo 
-  server and is not suitable for production use. To be replaced with a 
+- **Map tile source** — `demotiles.maplibre.org` is MapLibre's demo
+  server and is not suitable for production use. To be replaced with a
   proper tile provider before release.
-- **Valhalla routing** — uses the public OpenStreetMap community 
-  instance (`valhalla1.openstreetmap.de`). This is rate-limited and 
-  occasionally unavailable. To be replaced with a self-hosted or 
+- **Valhalla routing** — uses the public OpenStreetMap community
+  instance (`valhalla1.openstreetmap.de`). This is rate-limited and
+  occasionally unavailable. To be replaced with a self-hosted or
   commercial instance before release.
 
-Next step: Increment 5 — to be decided.
+Next step: Increment 7 — creating new lists within folders, and creating favourite waypoints.
 
 ## File Structure (Planned)
 ```

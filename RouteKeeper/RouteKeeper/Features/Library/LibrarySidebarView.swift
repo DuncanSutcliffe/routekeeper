@@ -25,6 +25,8 @@ struct LibrarySidebarView: View {
     // Persisted so the user's preferred split survives relaunch.
     @AppStorage("library.splitFraction") private var splitFraction: Double = 0.7
 
+    @State private var showingNewFolderSheet = false
+
     private let dividerHeight: CGFloat = 8
     private let minFraction:   CGFloat = 0.3
     private let maxFraction:   CGFloat = 0.85
@@ -57,6 +59,20 @@ struct LibrarySidebarView: View {
             }
         }
         .navigationTitle("Library")
+        .toolbar {
+            ToolbarItem {
+                Button {
+                    showingNewFolderSheet = true
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                }
+                .help("New Folder")
+            }
+        }
+        .sheet(isPresented: $showingNewFolderSheet) {
+            NewFolderSheet(viewModel: viewModel)
+        }
+        .focusedValue(\.showNewFolderSheet, $showingNewFolderSheet)
         .overlay {
             if viewModel.isLoading {
                 ProgressView()
@@ -114,6 +130,13 @@ struct LibrarySidebarView: View {
                 }
             }
             .listStyle(.sidebar)
+            .contextMenu {
+                Button {
+                    showingNewFolderSheet = true
+                } label: {
+                    Label("New Folder", systemImage: "folder.badge.plus")
+                }
+            }
         }
     }
 

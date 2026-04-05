@@ -33,6 +33,10 @@ final class LibraryViewModel {
     /// The most recent error from a failed load attempt, if any.
     private(set) var loadError: Error?
 
+    // Remembered so createFolder() can reload with the same sort the user last chose.
+    private var currentSortColumn: String = "sort_order"
+    private var currentSortAscending: Bool = true
+
     // MARK: - Folder / list loading
 
     /// Fetches folder and list data from the database.
@@ -41,6 +45,8 @@ final class LibraryViewModel {
     ///   - sortColumn: Column to sort `list_folders` by (`"name"` or `"created_at"`).
     ///   - ascending: Sort direction.
     func load(sortColumn: String = "sort_order", ascending: Bool = true) async {
+        currentSortColumn = sortColumn
+        currentSortAscending = ascending
         isLoading = true
         loadError = nil
         do {
@@ -59,6 +65,19 @@ final class LibraryViewModel {
             loadError = error
         }
         isLoading = false
+    }
+
+    // MARK: - Folder creation
+
+    /// Creates a new folder with the given name and reloads the folder list.
+    func createFolder(name: String) async {
+        do {
+            try await DatabaseManager.shared.createFolder(name: name)
+        } catch {
+            print("Create folder failed: \(error)")
+            return
+        }
+        await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
     }
 
     // MARK: - Item loading

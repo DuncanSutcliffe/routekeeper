@@ -1,0 +1,192 @@
+//
+//  ItemRecords.swift
+//  RouteKeeper
+//
+//  GRDB record types for the items, waypoints, routes, route_points,
+//  tracks, and track_points tables.
+//
+//  Columns with NOT NULL DEFAULT (datetime('now')) are omitted from
+//  encode(to:) so that SQLite's default applies on insert.
+//  They are still decoded when a record is fetched from the database.
+//
+
+import Foundation
+import GRDB
+
+// MARK: - ItemType
+
+/// The kind of library item stored in the `items` table.
+enum ItemType: String, Codable {
+    case route
+    case waypoint
+    case track
+}
+
+// MARK: - Item
+
+/// A top-level library item (route, waypoint, or track).
+///
+/// The type-specific data lives in the corresponding satellite table
+/// (`routes`, `waypoints`, or `tracks`) linked by `item_id`.
+struct Item: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "items"
+
+    var id: Int64?
+    var type: ItemType
+    var name: String
+    var description: String?
+    var colour: String?
+    /// Populated by the database on insert; read back when fetched.
+    var createdAt: String = ""
+    /// Populated by the database on insert; updated on modification.
+    var modifiedAt: String = ""
+
+    init(type: ItemType, name: String, description: String? = nil, colour: String? = nil) {
+        self.type = type
+        self.name = name
+        self.description = description
+        self.colour = colour
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, type, name, description, colour
+        case createdAt = "created_at"
+        case modifiedAt = "modified_at"
+    }
+
+    func encode(to container: inout PersistenceContainer) throws {
+        container["id"] = id
+        container["type"] = type.rawValue
+        container["name"] = name
+        container["description"] = description
+        container["colour"] = colour
+        // created_at and modified_at omitted — database provides defaults.
+    }
+}
+
+// MARK: - Waypoint
+
+/// Waypoint-specific geometry, linked 1-to-1 with an `Item` via `item_id`.
+struct Waypoint: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "waypoints"
+
+    /// Foreign key to `items.id`; also the primary key of this table.
+    var itemId: Int64
+    var latitude: Double
+    var longitude: Double
+    var elevation: Double?
+    /// Garmin symbol name (e.g. "Flag, Red") used for device display.
+    var symbol: String?
+
+    enum CodingKeys: String, CodingKey {
+        case itemId = "item_id"
+        case latitude, longitude, elevation, symbol
+    }
+}
+
+// MARK: - Route
+
+/// Route-specific data, linked 1-to-1 with an `Item` via `item_id`.
+///
+/// Individual points are stored in `route_points` and linked by `route_item_id`.
+struct Route: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "routes"
+
+    /// Foreign key to `items.id`; also the primary key of this table.
+    var itemId: Int64
+    /// Calculated GeoJSON LineString from the Valhalla response.
+    var geojson: String?
+    var distanceMetres: Double?
+    var estimatedDurationSecs: Int?
+    var routingProfile: String
+
+    init(itemId: Int64, routingProfile: String = "motorcycle") {
+        self.itemId = itemId
+        self.routingProfile = routingProfile
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case itemId = "item_id"
+        case geojson
+        case distanceMetres = "distance_metres"
+        case estimatedDurationSecs = "estimated_duration_secs"
+        case routingProfile = "routing_profile"
+    }
+}
+
+// MARK: - RoutePoint
+
+/// A single point in a planned route, ordered by `sequence_number`.
+struct RoutePoint: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "route_points"
+
+    var id: Int64?
+    var routeItemId: Int64
+    var sequenceNumber: Int
+    var latitude: Double
+    var longitude: Double
+    var elevation: Double?
+    /// `true` = via point (device announces arrival and shows a flag).
+    /// `false` = shaping point (silent; influences the route shape only).
+    var announcesArrival: Bool
+    var name: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case routeItemId = "route_item_id"
+        case sequenceNumber = "sequence_number"
+        case latitude, longitude, elevation
+        case announcesArrival = "announces_arrival"
+        case name
+    }
+}
+
+// MARK: - Track
+
+/// Track-specific data, linked 1-to-1 with an `Item` via `item_id`.
+///
+/// Individual recorded points are stored in `track_points`.
+struct Track: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "tracks"
+
+    /// Foreign key to `items.id`; also the primary key of this table.
+    var itemId: Int64
+    var geojson: String?
+    var distanceMetres: Double?
+    var durationSeconds: Int?
+    var recordedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case itemId = "item_id"
+        case geojson
+        case distanceMetres = "distance_metres"
+        case durationSeconds = "duration_seconds"
+        case recordedAt = "recorded_at"
+    }
+}
+
+// MARK: - TrackPoint
+
+/// A single point in a recorded GPS track, ordered by `sequence_number`.
+struct TrackPoint: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "track_points"
+
+    var id: Int64?
+    var trackItemId: Int64
+    var sequenceNumber: Int
+    var latitude: Double
+    var longitude: Double
+    var elevation: Double?
+    var recordedAt: String?
+    /// Speed in metres per second at the time this point was recorded.
+    var speedMs: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case trackItemId = "track_item_id"
+        case sequenceNumber = "sequence_number"
+        case latitude, longitude, elevation
+        case recordedAt = "recorded_at"
+        case speedMs = "speed_ms"
+    }
+}

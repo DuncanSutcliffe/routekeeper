@@ -93,9 +93,10 @@ follow the exact planned route rather than recalculating.
 
 ## Critical Rules
 
-- **Never modify .pbxproj or .xcodeproj files directly.** Xcode 
-  project configuration is managed manually by the developer. 
-  Create Swift files; the developer will add them to the project.
+- **NEVER modify .xcodeproj or .pbxproj files under any 
+  circumstances.** This rule has already been broken once. 
+  Do not modify Xcode project files. Create Swift files only 
+  and tell the developer which files were created.
 - No force unwrapping (`!`) in production code.
 - Use Swift concurrency (async/await and actors) throughout — 
   no callback-based async patterns.
@@ -114,13 +115,28 @@ follow the exact planned route rather than recalculating.
   a WKWebView is the chosen approach.
 - Do not attempt to handle Xcode project file configuration.
 
+
 ## Current Status
 
-Project infrastructure in place (GitHub, licence, README). 
-Xcode project not yet created. No application code written yet.
+**Increment 1 complete.** Xcode project created. Application shell 
+is built and working:
 
-Next step: design the SQLite schema with the developer before 
-any application code is written.
+- Two-column `NavigationSplitView` layout
+- Library sidebar (`LibrarySidebarView`) with placeholder folders 
+  and lists using `.listStyle(.sidebar)`
+- Detail area shows a placeholder message when no list is selected, 
+  or the list name when one is selected
+- Window opens at 1200x750 points via `.defaultSize`
+
+Files in place:
+- `RouteKeeper/Models/LibraryModels.swift` — `RouteList` and 
+  `ListFolder` structs with placeholder data
+- `RouteKeeper/Features/Library/LibrarySidebarView.swift` — sidebar view
+- `RouteKeeper/ContentView.swift` — root split view layout
+- `RouteKeeper/RouteKeeperApp.swift` — app entry point with window size
+
+Next step: add GRDB.swift via Swift Package Manager and build 
+the database layer — schema design first.
 
 ## File Structure (Planned)
 ```

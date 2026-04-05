@@ -3,19 +3,20 @@
 //  RouteKeeper
 //
 //  The left-column sidebar showing the library: folders containing lists.
+//  Data is provided by LibraryViewModel, which loads from the database.
 //
 
 import SwiftUI
 
 struct LibrarySidebarView: View {
-    let folders: [ListFolder]
+    let viewModel: LibraryViewModel
     @Binding var selectedList: RouteList?
 
     var body: some View {
         List(selection: $selectedList) {
-            ForEach(folders) { folder in
+            ForEach(viewModel.folderContents, id: \.folder.id) { folder, lists in
                 Section(folder.name) {
-                    ForEach(folder.lists) { list in
+                    ForEach(lists) { list in
                         Label(list.name, systemImage: "map")
                             .tag(list)
                     }
@@ -24,13 +25,18 @@ struct LibrarySidebarView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle("Library")
+        .overlay {
+            if viewModel.isLoading {
+                ProgressView()
+            }
+        }
     }
 }
 
 #Preview {
     NavigationSplitView {
         LibrarySidebarView(
-            folders: ListFolder.placeholders,
+            viewModel: LibraryViewModel(),
             selectedList: .constant(nil)
         )
     } detail: {

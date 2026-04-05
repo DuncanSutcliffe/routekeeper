@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		AAA37EB42F82871400506556 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = AAA37EB32F82871400506556 /* GRDB */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		AA408DDA2F8279DB000B7E78 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AAA37EB42F82871400506556 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = RouteKeeper;
 			packageProductDependencies = (
+				AAA37EB32F82871400506556 /* GRDB */,
 			);
 			productName = RouteKeeper;
 			productReference = AA408DCC2F8279D9000B7E78 /* RouteKeeper.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = AA408DC32F8279D8000B7E78;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				AAA37EB22F82871400506556 /* XCRemoteSwiftPackageReference "GRDB" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA408DCD2F8279D9000B7E78 /* Products */;
 			projectDirPath = "";
@@ -605,6 +614,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		AAA37EB22F82871400506556 /* XCRemoteSwiftPackageReference "GRDB" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift";
+			requirement = {
+				branch = master;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AAA37EB32F82871400506556 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AAA37EB22F82871400506556 /* XCRemoteSwiftPackageReference "GRDB" */;
+			productName = GRDB;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = AA408DC42F8279D8000B7E78 /* Project object */;
 }

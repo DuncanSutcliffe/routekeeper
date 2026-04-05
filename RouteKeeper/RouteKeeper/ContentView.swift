@@ -11,6 +11,7 @@ import CoreLocation
 
 struct ContentView: View {
     @State private var selectedList: RouteList?
+    @State private var selectedItem: Item?
     @State private var libraryViewModel = LibraryViewModel()
     @State private var mapViewModel = MapViewModel()
 
@@ -22,11 +23,12 @@ struct ContentView: View {
         NavigationSplitView {
             LibrarySidebarView(
                 viewModel: libraryViewModel,
-                selectedList: $selectedList
+                selectedList: $selectedList,
+                selectedItem: $selectedItem
             )
             .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
-            if selectedList != nil {
+            if selectedList != nil || selectedItem != nil {
                 // Reading mapViewModel properties here establishes SwiftUI observation:
                 // when drawRoute() or flyTo() mutates them, ContentView re-renders
                 // and updateNSView is called on MapView with the new values.
@@ -49,9 +51,16 @@ struct ContentView: View {
             }
             await libraryViewModel.load()
         }
-        // Re-runs automatically whenever selectedList changes.
-        // Cancels the previous task if the selection changes mid-flight.
-        .task(id: selectedList) {
+        // Re-runs when the selection changes. selectedItem takes priority:
+        // if an item is selected, its specific geometry would be drawn (not yet
+        // implemented — item routes will be drawn here once stored in the DB).
+        // Otherwise, the selected list triggers the hardcoded test route.
+        .task(id: mapTaskKey) {
+            if selectedItem != nil {
+                // Item-specific map drawing: placeholder for Increment 6+.
+                // Leave the current map state unchanged.
+                return
+            }
             guard selectedList != nil else { return }
             do {
                 let geojson = try await RoutingService.shared.calculateRoute(
@@ -65,6 +74,17 @@ struct ContentView: View {
             }
         }
     }
+
+    /// Combined key that re-fires the map task when either selection changes.
+    private var mapTaskKey: MapTaskKey {
+        MapTaskKey(listID: selectedList?.id, itemID: selectedItem?.id)
+    }
+}
+
+/// `Equatable` identity for the `.task(id:)` map task.
+private struct MapTaskKey: Equatable {
+    let listID: Int64?
+    let itemID: Int64?
 }
 
 #Preview {

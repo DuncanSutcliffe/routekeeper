@@ -118,24 +118,38 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increment 3 complete.** MapLibre GL JS running in a WKWebView,
-displaying a live interactive OpenStreetMap. Swift↔JS bridge in place.
+**Increments 1–4 complete.** The application has a working shell,
+database layer, live map, and motorcycle routing.
 
-### What is built
+### Increment 1 — Application shell
+- Two-column `NavigationSplitView` with library sidebar and detail area
+- Window opens at 1200×750 via `.defaultSize`
 
-- Two-column `NavigationSplitView` shell (Increment 1)
-- GRDB.swift + full SQLite schema + sidebar from database (Increment 2)
-- `MapLibreMap.html` (bundled resource): loads MapLibre GL JS from CDN,
-  initialises map over UK (54.0, -2.0, zoom 5), fills viewport with no 
-  margins, fires `mapReady` event to Swift on load
-- `MapView.swift`: `NSViewRepresentable` wrapping `WKWebView`; loads 
-  the HTML via `loadFileURL(allowingReadAccessTo:)`; suppresses white 
-  flash via `drawsBackground = false`
-- `WKScriptMessageHandler` (`Coordinator`) registered as `routekeeper` —
-  receives JS → Swift messages; `evaluateJavaScript` available for 
-  Swift → JS direction
-- `ContentView` shows `MapView` in the detail area when a list is 
-  selected; placeholder when nothing is selected
+### Increment 2 — Database layer
+- GRDB.swift added via Swift Package Manager
+- Full SQLite schema at `schema_version = 1`
+- `DatabaseManager` actor: opens DB in Application Support, runs 
+  migrations on launch, seeds placeholder data on first run
+- GRDB record structs for all nine tables
+- Sidebar reads folders and lists from SQLite
+
+### Increment 3 — Map
+- MapLibre GL JS running in a `WKWebView` (`NSViewRepresentable`)
+- `MapLibreMap.html` bundled as a resource; loaded via 
+  `loadFileURL(allowingReadAccessTo:)`
+- Full Swift↔JS bridge via `WKScriptMessageHandler` (`routekeeper`)
+- Map shown in detail area when a list is selected
+
+### Increment 4 — Routing
+- `RoutingService` actor calls the Valhalla API (motorcycle costing)
+  via `URLSession` async/await
+- Valhalla precision-6 encoded polyline decoded in Swift; result 
+  serialised as a GeoJSON FeatureCollection string
+- Route drawn on map as a blue line layer via `drawRoute()` JS function
+- In-memory cache keyed on coordinate pair prevents redundant API calls
+  within a session
+- Map-ready gate in `Coordinator`: routes that arrive before MapLibre's
+  `load` event are queued and flushed the moment `mapReady` is received
 
 ### Files in place
 
@@ -151,8 +165,10 @@ RouteKeeper/
 │   ├── Library/
 │   │   ├── LibrarySidebarView.swift
 │   │   └── LibraryViewModel.swift
-│   └── Map/
-│       └── MapView.swift
+│   ├── Map/
+│   │   └── MapView.swift          (includes MapViewModel)
+│   └── Routing/
+│       └── RoutingService.swift
 ├── Resources/
 │   └── MapLibreMap.html
 ├── ContentView.swift
@@ -161,13 +177,21 @@ RouteKeeper/
 
 ### Bridge notes
 
-- JS → Swift: `window.webkit.messageHandlers.routekeeper.postMessage({ ... })`
-- Swift → JS: `webView.evaluateJavaScript("handleSwiftMessage(name, payload)")`
-- The JS `handleSwiftMessage(name, payload)` stub is defined in 
-  `MapLibreMap.html` and ready to be extended in future increments.
+- JS → Swift: `window.webkit.messageHandlers.routekeeper.postMessage({ type: "...", ... })`
+- Swift → JS: `webView.evaluateJavaScript("drawRoute(\"...\");")`
+- Message types in use: `mapReady`, `routeDrawn`
 
-Next step: Increment 4 — call the Valhalla routing API and draw a 
-motorcycle route on the map.
+## Known Limitations
+
+- **Map tile source** — `demotiles.maplibre.org` is MapLibre's demo 
+  server and is not suitable for production use. To be replaced with a 
+  proper tile provider before release.
+- **Valhalla routing** — uses the public OpenStreetMap community 
+  instance (`valhalla1.openstreetmap.de`). This is rate-limited and 
+  occasionally unavailable. To be replaced with a self-hosted or 
+  commercial instance before release.
+
+Next step: Increment 5 — to be decided.
 
 ## File Structure (Planned)
 ```

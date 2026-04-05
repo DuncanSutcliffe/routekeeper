@@ -20,6 +20,15 @@ enum ItemType: String, Codable {
     case route
     case waypoint
     case track
+
+    /// SF Symbol name used to represent this item type in the sidebar.
+    var systemImage: String {
+        switch self {
+        case .route:    return "arrow.triangle.turn.up.right.diamond"
+        case .waypoint: return "mappin"
+        case .track:    return "scribble"
+        }
+    }
 }
 
 // MARK: - Item
@@ -28,7 +37,7 @@ enum ItemType: String, Codable {
 ///
 /// The type-specific data lives in the corresponding satellite table
 /// (`routes`, `waypoints`, or `tracks`) linked by `item_id`.
-struct Item: Codable, FetchableRecord, PersistableRecord {
+struct Item: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "items"
 
     var id: Int64?
@@ -62,6 +71,10 @@ struct Item: Codable, FetchableRecord, PersistableRecord {
         container["colour"] = colour
         // created_at and modified_at omitted — database provides defaults.
     }
+
+    // Hashable — identity based on id only, matching the RouteList pattern.
+    static func == (lhs: Item, rhs: Item) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 // MARK: - Waypoint

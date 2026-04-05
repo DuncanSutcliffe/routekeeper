@@ -54,13 +54,21 @@ actor DatabaseManager {
 
     // MARK: Queries
 
-    /// Fetches all list folders paired with their contained lists, ordered by `sort_order`.
-    func fetchFoldersWithLists() async throws -> [(ListFolder, [RouteList])] {
+    /// Fetches all list folders paired with their contained lists.
+    ///
+    /// - Parameters:
+    ///   - sortColumn: The `list_folders` column to sort by (`"name"` or `"created_at"`).
+    ///   - ascending: `true` for A→Z / oldest-first; `false` for Z→A / newest-first.
+    func fetchFoldersWithLists(
+        sortColumn: String = "sort_order",
+        ascending: Bool = true
+    ) async throws -> [(ListFolder, [RouteList])] {
         let q = try requireQueue()
         return try await q.read { db in
-            let folders = try ListFolder
-                .order(Column("sort_order"))
-                .fetchAll(db)
+            let order = ascending
+                ? Column(sortColumn).asc
+                : Column(sortColumn).desc
+            let folders = try ListFolder.order(order).fetchAll(db)
             return try folders.map { folder in
                 let lists = try RouteList
                     .filter(Column("folder_id") == folder.id)
@@ -68,6 +76,36 @@ actor DatabaseManager {
                     .fetchAll(db)
                 return (folder, lists)
             }
+        }
+    }
+
+    /// Fetches all items that have no row in `item_list_membership`, ordered by name.
+    ///
+    /// Used to populate the application-layer Unclassified folder.
+    func fetchUnclassifiedItems() async throws -> [Item] {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try Item.fetchAll(db, sql: """
+                SELECT items.*
+                FROM items
+                WHERE items.id NOT IN (SELECT item_id FROM item_list_membership)
+                ORDER BY items.name
+                """)
+        }
+    }
+
+    /// Fetches all items belonging to the given list, ordered by name.
+    func fetchItems(for listId: Int64) async throws -> [Item] {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try Item.fetchAll(db, sql: """
+                SELECT items.*
+                FROM items
+                JOIN item_list_membership
+                  ON items.id = item_list_membership.item_id
+                WHERE item_list_membership.list_id = ?
+                ORDER BY items.name
+                """, arguments: [listId])
         }
     }
 
@@ -265,5 +303,128 @@ actor DatabaseManager {
                 "Peak District Loop", dayRidesFolderId,
             ]
         )
+
+        try seedItems(db)
+    }
+
+    /// Inserts placeholder items and associates them with the seed lists.
+    ///
+    /// Called once from ``seedIfNeeded(_:)`` immediately after the lists are
+    /// created. List IDs are looked up by name — safe because the names are
+    /// unique within the seed data.
+    private static func seedItems(_ db: Database) throws {
+
+        // Resolve list IDs by name.
+        func listID(_ name: String) throws -> Int64 {
+            guard let id = try Int64.fetchOne(
+                db, sql: "SELECT id FROM lists WHERE name = ?", arguments: [name]
+            ) else {
+                throw DatabaseManagerError.seedingFailed("List '\(name)' not found")
+            }
+            return id
+        }
+
+        let alpsID        = try listID("Alps Loop 2024")
+        let pyreneesID    = try listID("Pyrenees Run")
+        let coastalID     = try listID("Morning Coastal")
+        let peakDistID    = try listID("Peak District Loop")
+
+        // Helper: insert an item row and return its new id.
+        func insertItem(type: String, name: String) throws -> Int64 {
+            try db.execute(
+                sql: "INSERT INTO items (type, name) VALUES (?, ?)",
+                arguments: [type, name]
+            )
+            guard let id = try Int64.fetchOne(db, sql: "SELECT last_insert_rowid()") else {
+                throw DatabaseManagerError.seedingFailed("Could not retrieve item id for '\(name)'")
+            }
+            return id
+        }
+
+        // Helper: link an item to a list.
+        func associate(itemId: Int64, listId: Int64, order: Int = 0) throws {
+            try db.execute(
+                sql: "INSERT INTO item_list_membership (item_id, list_id, sort_order) VALUES (?, ?, ?)",
+                arguments: [itemId, listId, order]
+            )
+        }
+
+        // ── Alps Loop 2024 ────────────────────────────────────────────────
+
+        let galibier = try insertItem(type: "waypoint", name: "Col du Galibier")
+        try db.execute(
+            sql: "INSERT INTO waypoints (item_id, latitude, longitude, elevation, symbol) VALUES (?, ?, ?, ?, ?)",
+            arguments: [galibier, 45.0643, 6.4078, 2642.0, "Summit"]
+        )
+        try associate(itemId: galibier, listId: alpsID, order: 0)
+
+        let chamonixAnnecy = try insertItem(type: "route", name: "Chamonix to Annecy")
+        try db.execute(
+            sql: "INSERT INTO routes (item_id, routing_profile) VALUES (?, ?)",
+            arguments: [chamonixAnnecy, "motorcycle"]
+        )
+        try associate(itemId: chamonixAnnecy, listId: alpsID, order: 1)
+
+        let montBlancTrack = try insertItem(type: "track", name: "Tour du Mont Blanc")
+        try db.execute(
+            sql: "INSERT INTO tracks (item_id) VALUES (?)",
+            arguments: [montBlancTrack]
+        )
+        try associate(itemId: montBlancTrack, listId: alpsID, order: 2)
+
+        // ── Pyrenees Run ─────────────────────────────────────────────────
+
+        let aubisque = try insertItem(type: "waypoint", name: "Col d'Aubisque")
+        try db.execute(
+            sql: "INSERT INTO waypoints (item_id, latitude, longitude, elevation, symbol) VALUES (?, ?, ?, ?, ?)",
+            arguments: [aubisque, 42.9697, -0.3375, 1709.0, "Summit"]
+        )
+        try associate(itemId: aubisque, listId: pyreneesID, order: 0)
+
+        let lourdesBiarritz = try insertItem(type: "route", name: "Lourdes to Biarritz")
+        try db.execute(
+            sql: "INSERT INTO routes (item_id, routing_profile) VALUES (?, ?)",
+            arguments: [lourdesBiarritz, "motorcycle"]
+        )
+        try associate(itemId: lourdesBiarritz, listId: pyreneesID, order: 1)
+
+        // ── Morning Coastal ───────────────────────────────────────────────
+
+        let beachyHead = try insertItem(type: "waypoint", name: "Beachy Head")
+        try db.execute(
+            sql: "INSERT INTO waypoints (item_id, latitude, longitude, symbol) VALUES (?, ?, ?, ?)",
+            arguments: [beachyHead, 50.7361, 0.2450, "Scenic Area"]
+        )
+        try associate(itemId: beachyHead, listId: coastalID, order: 0)
+
+        let sevenSisters = try insertItem(type: "track", name: "Seven Sisters Ride")
+        try db.execute(
+            sql: "INSERT INTO tracks (item_id) VALUES (?)",
+            arguments: [sevenSisters]
+        )
+        try associate(itemId: sevenSisters, listId: coastalID, order: 1)
+
+        // ── Peak District Loop ────────────────────────────────────────────
+
+        let matlockBath = try insertItem(type: "waypoint", name: "Matlock Bath")
+        try db.execute(
+            sql: "INSERT INTO waypoints (item_id, latitude, longitude, symbol) VALUES (?, ?, ?, ?)",
+            arguments: [matlockBath, 53.1283, -1.5604, "Flag, Blue"]
+        )
+        try associate(itemId: matlockBath, listId: peakDistID, order: 0)
+
+        let matlockBuxton = try insertItem(type: "route", name: "Matlock to Buxton")
+        try db.execute(
+            sql: "INSERT INTO routes (item_id, routing_profile) VALUES (?, ?)",
+            arguments: [matlockBuxton, "motorcycle"]
+        )
+        try associate(itemId: matlockBuxton, listId: peakDistID, order: 1)
+
+        let stanage = try insertItem(type: "waypoint", name: "Stanage Edge")
+        try db.execute(
+            sql: "INSERT INTO waypoints (item_id, latitude, longitude, symbol) VALUES (?, ?, ?, ?)",
+            arguments: [stanage, 53.3667, -1.6333, "Scenic Area"]
+        )
+        try associate(itemId: stanage, listId: peakDistID, order: 2)
     }
 }

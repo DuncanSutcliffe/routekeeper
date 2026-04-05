@@ -34,8 +34,15 @@
         //   window.webkit.messageHandlers.routekeeper.postMessage({ ... })
         // ---------------------------------------------------------------------------
         function handleSwiftMessage(name, payload) {
-            // Reserved for future increments.
             console.log("Swift message:", name, payload);
+        }
+
+        function postToSwift(payload) {
+            if (window.webkit &&
+                window.webkit.messageHandlers &&
+                window.webkit.messageHandlers.routekeeper) {
+                window.webkit.messageHandlers.routekeeper.postMessage(payload);
+            }
         }
 
         // ---------------------------------------------------------------------------
@@ -51,11 +58,66 @@
         map.addControl(new maplibregl.NavigationControl(), "top-right");
 
         map.on("load", function () {
-            // Notify Swift that the map is ready to receive instructions.
-            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.routekeeper) {
-                window.webkit.messageHandlers.routekeeper.postMessage({ event: "mapReady" });
-            }
+            postToSwift({ type: "mapReady" });
         });
+
+        // ---------------------------------------------------------------------------
+        // Route drawing
+        // ---------------------------------------------------------------------------
+
+        /// Draws a GeoJSON route on the map.
+        ///
+        /// geojsonString — a JSON string containing a GeoJSON FeatureCollection
+        /// or Feature with a LineString geometry.
+        ///
+        /// If the map style is not yet loaded the call is deferred until it is.
+        /// If a route is already drawn its data is replaced in-place (the layer
+        /// is not recreated, which avoids a visual flash).
+        function drawRoute(geojsonString) {
+            if (!map.isStyleLoaded()) {
+                map.once("idle", function () { drawRoute(geojsonString); });
+                return;
+            }
+
+            const geojson = JSON.parse(geojsonString);
+
+            if (map.getSource("active-route")) {
+                // Update existing source data without touching the layer.
+                map.getSource("active-route").setData(geojson);
+            } else {
+                map.addSource("active-route", {
+                    type: "geojson",
+                    data: geojson
+                });
+
+                map.addLayer({
+                    id: "active-route",
+                    type: "line",
+                    source: "active-route",
+                    layout: {
+                        "line-join": "round",
+                        "line-cap": "round"
+                    },
+                    paint: {
+                        "line-color": "#3b82f6",
+                        "line-width": 4,
+                        "line-opacity": 0.85
+                    }
+                });
+            }
+
+            postToSwift({ type: "routeDrawn" });
+        }
+
+        /// Removes the active route layer and source from the map.
+        function clearRoute() {
+            if (map.getLayer("active-route")) {
+                map.removeLayer("active-route");
+            }
+            if (map.getSource("active-route")) {
+                map.removeSource("active-route");
+            }
+        }
     </script>
 </body>
 </html>

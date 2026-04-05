@@ -118,21 +118,24 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increment 2 complete.** GRDB.swift integrated, full schema live,
-sidebar loads from SQLite.
+**Increment 3 complete.** MapLibre GL JS running in a WKWebView,
+displaying a live interactive OpenStreetMap. Swift↔JS bridge in place.
 
 ### What is built
 
 - Two-column `NavigationSplitView` shell (Increment 1)
-- GRDB.swift added via Swift Package Manager
-- Full SQLite schema at `schema_version = 1` (all tables as designed)
-- `DatabaseManager` actor: opens DB in Application Support, runs 
-  migrations on launch, seeds placeholder data on first run
-- GRDB record structs for all nine tables (`Item`, `Waypoint`, 
-  `Route`, `RoutePoint`, `Track`, `TrackPoint`, `ListFolder`, 
-  `RouteList`, `ItemListMembership`)
-- `LibraryViewModel` (`@Observable`) loads folder/list data from DB
-- Sidebar reads from SQLite; seeded with two folders and four lists
+- GRDB.swift + full SQLite schema + sidebar from database (Increment 2)
+- `MapLibreMap.html` (bundled resource): loads MapLibre GL JS from CDN,
+  initialises map over UK (54.0, -2.0, zoom 5), fills viewport with no 
+  margins, fires `mapReady` event to Swift on load
+- `MapView.swift`: `NSViewRepresentable` wrapping `WKWebView`; loads 
+  the HTML via `loadFileURL(allowingReadAccessTo:)`; suppresses white 
+  flash via `drawsBackground = false`
+- `WKScriptMessageHandler` (`Coordinator`) registered as `routekeeper` —
+  receives JS → Swift messages; `evaluateJavaScript` available for 
+  Swift → JS direction
+- `ContentView` shows `MapView` in the detail area when a list is 
+  selected; placeholder when nothing is selected
 
 ### Files in place
 
@@ -143,25 +146,28 @@ RouteKeeper/
 ├── Models/
 │   ├── ItemRecords.swift
 │   ├── LibraryRecords.swift
-│   └── LibraryModels.swift  (stub; types moved to LibraryRecords)
-├── Features/Library/
-│   ├── LibrarySidebarView.swift
-│   └── LibraryViewModel.swift
+│   └── LibraryModels.swift  (stub)
+├── Features/
+│   ├── Library/
+│   │   ├── LibrarySidebarView.swift
+│   │   └── LibraryViewModel.swift
+│   └── Map/
+│       └── MapView.swift
+├── Resources/
+│   └── MapLibreMap.html
 ├── ContentView.swift
 └── RouteKeeperApp.swift
 ```
 
-### Schema notes
+### Bridge notes
 
-- Timestamps (`created_at`, `modified_at`, `added_at`) use SQLite 
-  `DEFAULT (datetime('now'))`; omitted from Swift `encode(to:)` so 
-  the database default applies on insert.
-- `RouteList.==` and `.hash` are identity-based (on `id` only) for 
-  stable sidebar selection state across reloads.
-- Migration stubs are in place in `applyMigrations(_:)` for v2+.
+- JS → Swift: `window.webkit.messageHandlers.routekeeper.postMessage({ ... })`
+- Swift → JS: `webView.evaluateJavaScript("handleSwiftMessage(name, payload)")`
+- The JS `handleSwiftMessage(name, payload)` stub is defined in 
+  `MapLibreMap.html` and ready to be extended in future increments.
 
-Next step: Increment 3 — embed MapLibre GL JS in a `WKWebView` to 
-display an OpenStreetMap basemap in the detail area.
+Next step: Increment 4 — call the Valhalla routing API and draw a 
+motorcycle route on the map.
 
 ## File Structure (Planned)
 ```

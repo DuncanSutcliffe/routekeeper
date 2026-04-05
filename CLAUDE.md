@@ -118,9 +118,9 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–6 complete.** The application has a working shell,
+**Increments 1–7 complete.** The application has a working shell,
 database layer, live map, motorcycle routing, a reworked library sidebar,
-and folder creation.
+folder creation, and list creation.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -128,7 +128,7 @@ and folder creation.
 
 ### Increment 2 — Database layer
 - GRDB.swift added via Swift Package Manager
-- Full SQLite schema at `schema_version = 1`
+- Full SQLite schema (currently at migration `"v2"` via `DatabaseMigrator`)
 - `DatabaseManager` actor: opens DB in Application Support, runs
   migrations on launch, seeds placeholder data on first run
 - GRDB record structs for all nine tables
@@ -184,6 +184,44 @@ and folder creation.
   - File menu item "New Folder" with ⌘⇧N, wired via `FocusedValue` /
     `FocusedValueKey` so the menu item is disabled when the sidebar is
     not focused
+- **Uniqueness constraints** enforced at two levels:
+  - Schema: `list_folders.name UNIQUE`, `lists UNIQUE(name, folder_id)`,
+    `items.name UNIQUE` — added to DDL for new installs; existing databases
+    upgraded via a `"v2"` `DatabaseMigrator` migration that creates named
+    unique indexes (`idx_list_folders_name`, `idx_lists_name_folder`,
+    `idx_items_name`). Migration tracking moved from the hand-rolled
+    `app_settings` approach to GRDB's `DatabaseMigrator` (schema version 2).
+  - Application: `LibraryViewModel.createFolder(name:)` and
+    `createList(name:folderId:)` catch `DatabaseError` where
+    `resultCode == .SQLITE_CONSTRAINT` and set `creationError: String?`
+    with a human-readable message. `NewFolderSheet` displays the error in
+    red below the text field and clears it when the user edits the name;
+    the sheet stays open so the user can correct the duplicate.
+- `DatabaseManager.createList(name:folderId:)` and
+  `LibraryViewModel.createList(name:folderId:)` added (used by the
+  forthcoming `NewListSheet`)
+
+### Increment 7 — New List creation
+- `DatabaseManager.createList(name:folderId:)` inserts into `lists` and
+  returns the newly created `RouteList` with its database-assigned id
+- `LibraryViewModel.createList(name:folderId:)` calls the DB method then
+  reloads the folder list; catches `DatabaseError` where
+  `resultCode == .SQLITE_CONSTRAINT` and sets `creationError` to
+  "A list with that name already exists in this folder."
+- `NewListSheet` — modal sheet with an auto-focused `TextField` for the
+  list name, a `.menu`-style `Picker` showing all real folders
+  (Unclassified sentinel excluded), pre-selected to the folder that was
+  right-clicked or defaulting to the first real folder; red error text
+  shown below the name field on constraint violation, cleared on edit;
+  OK disabled when name is blank or no real folders exist; sheet stays
+  open on error so the user can correct it
+- Three entry points all set `showingNewListSheet = true`:
+  - Toolbar button (`rectangle.badge.plus`) above the sidebar top panel,
+    opens with no pre-selection (defaults to first real folder)
+  - Right-click context menu on each real folder row, passes that folder
+    as the pre-selection; not shown on the Unclassified sentinel
+  - File menu item "New List" with ⌘N, wired via `FocusedValue` /
+    `ShowNewListSheetKey`; disabled when the sidebar is not focused
 
 ### Files in place
 
@@ -200,7 +238,8 @@ RouteKeeper/
 │   ├── Library/
 │   │   ├── LibrarySidebarView.swift
 │   │   ├── LibraryViewModel.swift
-│   │   └── NewFolderSheet.swift
+│   │   ├── NewFolderSheet.swift
+│   │   └── NewListSheet.swift
 │   ├── Map/
 │   │   └── MapView.swift      (includes MapViewModel)
 │   └── Routing/
@@ -227,7 +266,7 @@ RouteKeeper/
   occasionally unavailable. To be replaced with a self-hosted or
   commercial instance before release.
 
-Next step: Increment 7 — creating new lists within folders, and creating favourite waypoints.
+Next step: Increment 8 — creating favourite waypoints.
 
 ## File Structure (Planned)
 ```

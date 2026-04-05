@@ -26,6 +26,8 @@ struct LibrarySidebarView: View {
     @AppStorage("library.splitFraction") private var splitFraction: Double = 0.7
 
     @State private var showingNewFolderSheet = false
+    @State private var showingNewListSheet = false
+    @State private var newListPreselectedFolderID: Int64?
 
     private let dividerHeight: CGFloat = 8
     private let minFraction:   CGFloat = 0.3
@@ -62,6 +64,15 @@ struct LibrarySidebarView: View {
         .toolbar {
             ToolbarItem {
                 Button {
+                    newListPreselectedFolderID = nil
+                    showingNewListSheet = true
+                } label: {
+                    Image(systemName: "rectangle.badge.plus")
+                }
+                .help("New List")
+            }
+            ToolbarItem {
+                Button {
                     showingNewFolderSheet = true
                 } label: {
                     Image(systemName: "folder.badge.plus")
@@ -72,7 +83,11 @@ struct LibrarySidebarView: View {
         .sheet(isPresented: $showingNewFolderSheet) {
             NewFolderSheet(viewModel: viewModel)
         }
+        .sheet(isPresented: $showingNewListSheet) {
+            NewListSheet(viewModel: viewModel, preselectedFolderID: newListPreselectedFolderID)
+        }
         .focusedValue(\.showNewFolderSheet, $showingNewFolderSheet)
+        .focusedValue(\.showNewListSheet, $showingNewListSheet)
         .overlay {
             if viewModel.isLoading {
                 ProgressView()
@@ -126,6 +141,16 @@ struct LibrarySidebarView: View {
                             systemImage: folder.id == -1 ? "tray.fill" : "folder.fill"
                         )
                         .fontWeight(.bold)
+                        .contextMenu {
+                            if folder.id != -1 {
+                                Button {
+                                    newListPreselectedFolderID = folder.id
+                                    showingNewListSheet = true
+                                } label: {
+                                    Label("New List", systemImage: "list.bullet.rectangle.portrait")
+                                }
+                            }
+                        }
                     }
                 }
             }

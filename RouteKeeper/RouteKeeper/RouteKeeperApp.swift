@@ -5,9 +5,13 @@
 
 import SwiftUI
 
-// MARK: - Focused value key
+// MARK: - Focused value keys
 
 private struct ShowNewFolderSheetKey: FocusedValueKey {
+    typealias Value = Binding<Bool>
+}
+
+private struct ShowNewListSheetKey: FocusedValueKey {
     typealias Value = Binding<Bool>
 }
 
@@ -17,15 +21,28 @@ extension FocusedValues {
         get { self[ShowNewFolderSheetKey.self] }
         set { self[ShowNewFolderSheetKey.self] = newValue }
     }
+
+    /// Binding to the sidebar's `showingNewListSheet` state.
+    var showNewListSheet: Binding<Bool>? {
+        get { self[ShowNewListSheetKey.self] }
+        set { self[ShowNewListSheetKey.self] = newValue }
+    }
 }
 
 // MARK: - Commands
 
 struct RouteKeeperCommands: Commands {
+    @FocusedValue(\.showNewListSheet)   private var showNewListSheet:   Binding<Bool>?
     @FocusedValue(\.showNewFolderSheet) private var showNewFolderSheet: Binding<Bool>?
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
+            Button("New List") {
+                showNewListSheet?.wrappedValue = true
+            }
+            .keyboardShortcut("n", modifiers: [.command])
+            .disabled(showNewListSheet == nil)
+
             Button("New Folder") {
                 showNewFolderSheet?.wrappedValue = true
             }

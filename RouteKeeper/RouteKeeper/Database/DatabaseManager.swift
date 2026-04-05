@@ -47,10 +47,36 @@ actor DatabaseManager {
     func setUp() async throws {
         guard _dbQueue == nil else { return }
         let dbQueue = try Self.openDatabaseQueue()
-        try await dbQueue.write { db in
-            try Self.applyMigrations(db)
+        var migrator = DatabaseMigrator()
+
+        // v1 — full schema creation and seed data.
+        // The guard lets this migration run safely on databases that were created
+        // before DatabaseMigrator was adopted: those already have the schema in
+        // place, so we skip creation and let v2 apply the uniqueness indexes.
+        migrator.registerMigration("v1") { db in
+            guard try !db.tableExists("app_settings") else { return }
+            try Self.createSchemaV1(db)
             try Self.seedIfNeeded(db)
         }
+
+        // v2 — unique-name constraints.
+        // Uses named indexes rather than table recreation (SQLite has no
+        // ALTER TABLE … ADD CONSTRAINT). On databases created after the v1
+        // DDL update, this adds a second index alongside the implicit
+        // sqlite_autoindex_* created by the UNIQUE clause — redundant but
+        // harmless. On pre-v2 databases the index is the sole constraint.
+        migrator.registerMigration("v2") { db in
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_list_folders_name
+                    ON list_folders(name);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_lists_name_folder
+                    ON lists(name, folder_id);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_items_name
+                    ON items(name);
+                """)
+        }
+
+        try await migrator.migrate(dbQueue)
         _dbQueue = dbQueue
     }
 
@@ -101,6 +127,30 @@ actor DatabaseManager {
                 throw DatabaseManagerError.insertFailed("Could not fetch newly created folder (id: \(id))")
             }
             return folder
+        }
+    }
+
+    /// Inserts a new list with the given name inside `folderId` and returns it
+    /// with its database-assigned id.
+    @discardableResult
+    func createList(name: String, folderId: Int64) async throws -> RouteList {
+        let q = try requireQueue()
+        return try await q.write { db in
+            try db.execute(
+                sql: "INSERT INTO lists (name, folder_id) VALUES (?, ?)",
+                arguments: [name, folderId]
+            )
+            guard let id = try Int64.fetchOne(db, sql: "SELECT last_insert_rowid()") else {
+                throw DatabaseManagerError.insertFailed("Could not retrieve new list ID")
+            }
+            guard let list = try RouteList.fetchOne(
+                db,
+                sql: "SELECT * FROM lists WHERE id = ?",
+                arguments: [id]
+            ) else {
+                throw DatabaseManagerError.insertFailed("Could not fetch newly created list (id: \(id))")
+            }
+            return list
         }
     }
 
@@ -158,25 +208,6 @@ actor DatabaseManager {
 
     // MARK: Migrations
 
-    private static func applyMigrations(_ db: Database) throws {
-        // Check whether the settings table exists to distinguish a fresh database
-        // from one already at v1. Subsequent versions read schema_version directly.
-        let settingsExists = try db.tableExists("app_settings")
-        guard settingsExists else {
-            try createSchemaV1(db)
-            return
-        }
-
-        let version = try String.fetchOne(
-            db,
-            sql: "SELECT value FROM app_settings WHERE key = 'schema_version'"
-        )
-
-        // Slot future migrations in here, in order:
-        // if version == "1" { try migrateV1toV2(db) }
-        _ = version
-    }
-
     private static func createSchemaV1(_ db: Database) throws {
         // Execute the complete v1 schema as a single batch.
         // sqlite3_exec handles multiple semicolon-separated statements.
@@ -185,7 +216,7 @@ actor DatabaseManager {
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 type        TEXT    NOT NULL
                             CHECK (type IN ('route', 'waypoint', 'track')),
-                name        TEXT    NOT NULL,
+                name        TEXT    NOT NULL UNIQUE,
                 description TEXT,
                 colour      TEXT,
                 created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -247,7 +278,7 @@ actor DatabaseManager {
 
             CREATE TABLE list_folders (
                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                name             TEXT    NOT NULL,
+                name             TEXT    NOT NULL UNIQUE,
                 parent_folder_id INTEGER REFERENCES list_folders(id)
                                  ON DELETE SET NULL,
                 sort_order       INTEGER NOT NULL DEFAULT 0,
@@ -264,7 +295,8 @@ actor DatabaseManager {
                 smart_rule  TEXT,
                 sort_order  INTEGER NOT NULL DEFAULT 0,
                 created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
-                modified_at TEXT    NOT NULL DEFAULT (datetime('now'))
+                modified_at TEXT    NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(name, folder_id)
             );
 
             CREATE TABLE item_list_membership (

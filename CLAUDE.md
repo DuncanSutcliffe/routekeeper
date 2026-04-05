@@ -170,7 +170,7 @@ and folder creation.
   with `tray.fill` icon; populates via `fetchUnclassifiedItems()` which
   queries `items` rows absent from `item_list_membership`
 
-### Increment 6 — New Folder creation
+### Increment 6 — New Folder creation and uniqueness constraints
 - `DatabaseManager.createFolder(name:)` inserts into `list_folders` and
   returns the newly created `ListFolder` with its database-assigned id
 - `LibraryViewModel.createFolder(name:)` calls the DB method then reloads

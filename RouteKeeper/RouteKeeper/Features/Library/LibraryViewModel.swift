@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import GRDB
 import Observation
 
 /// Provides the library sidebar with folder, list, and item data from the database.
@@ -32,6 +33,10 @@ final class LibraryViewModel {
 
     /// The most recent error from a failed load attempt, if any.
     private(set) var loadError: Error?
+
+    /// Human-readable message set when a creation attempt fails due to a
+    /// name-uniqueness constraint. Cleared by the sheet on text-field changes.
+    var creationError: String?
 
     // Remembered so createFolder() can reload with the same sort the user last chose.
     private var currentSortColumn: String = "sort_order"
@@ -70,11 +75,32 @@ final class LibraryViewModel {
     // MARK: - Folder creation
 
     /// Creates a new folder with the given name and reloads the folder list.
+    ///
+    /// Sets `creationError` if the name is already taken.
     func createFolder(name: String) async {
         do {
             try await DatabaseManager.shared.createFolder(name: name)
+        } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
+            creationError = "A folder with that name already exists."
+            return
         } catch {
             print("Create folder failed: \(error)")
+            return
+        }
+        await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
+    }
+
+    /// Creates a new list inside `folderId` with the given name and reloads the folder list.
+    ///
+    /// Sets `creationError` if a list with that name already exists in the folder.
+    func createList(name: String, folderId: Int64) async {
+        do {
+            try await DatabaseManager.shared.createList(name: name, folderId: folderId)
+        } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
+            creationError = "A list with that name already exists in this folder."
+            return
+        } catch {
+            print("Create list failed: \(error)")
             return
         }
         await load(sortColumn: currentSortColumn, ascending: currentSortAscending)

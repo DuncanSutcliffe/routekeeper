@@ -24,6 +24,15 @@ struct NewFolderSheet: View {
                 .textFieldStyle(.roundedBorder)
                 .focused($fieldIsFocused)
                 .onSubmit { submit() }
+                .onChange(of: folderName) {
+                    viewModel.creationError = nil
+                }
+
+            if let error = viewModel.creationError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
 
             HStack {
                 Spacer()
@@ -51,7 +60,9 @@ struct NewFolderSheet: View {
         guard !trimmed.isEmpty else { return }
         Task {
             await viewModel.createFolder(name: trimmed)
-            dismiss()
+            if viewModel.creationError == nil {
+                dismiss()
+            }
         }
     }
 }

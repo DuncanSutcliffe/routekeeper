@@ -2,8 +2,11 @@
 //  ItemRecords.swift
 //  RouteKeeper
 //
-//  GRDB record types for the items, waypoints, routes, route_points,
-//  tracks, and track_points tables.
+//  GRDB record types for the items, routes, route_points, tracks,
+//  and track_points tables.
+//
+//  The old satellite `waypoints` table (item_id → items.id) was dropped in
+//  schema v3. The new standalone waypoints model lives in WaypointRecords.swift.
 //
 //  Columns with NOT NULL DEFAULT (datetime('now')) are omitted from
 //  encode(to:) so that SQLite's default applies on insert.
@@ -75,26 +78,6 @@ struct Item: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord
     // Hashable — identity based on id only, matching the RouteList pattern.
     static func == (lhs: Item, rhs: Item) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
-}
-
-// MARK: - Waypoint
-
-/// Waypoint-specific geometry, linked 1-to-1 with an `Item` via `item_id`.
-struct Waypoint: Codable, FetchableRecord, PersistableRecord {
-    static let databaseTableName = "waypoints"
-
-    /// Foreign key to `items.id`; also the primary key of this table.
-    var itemId: Int64
-    var latitude: Double
-    var longitude: Double
-    var elevation: Double?
-    /// Garmin symbol name (e.g. "Flag, Red") used for device display.
-    var symbol: String?
-
-    enum CodingKeys: String, CodingKey {
-        case itemId = "item_id"
-        case latitude, longitude, elevation, symbol
-    }
 }
 
 // MARK: - Route

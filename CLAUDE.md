@@ -118,9 +118,9 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–7 complete.** The application has a working shell,
-database layer, live map, motorcycle routing, a reworked library sidebar,
-folder creation, and list creation.
+**Increments 1–7 complete, schema v3 applied.** The application has a
+working shell, database layer, live map, motorcycle routing, a reworked
+library sidebar, folder creation, list creation, and the waypoints schema.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -128,10 +128,10 @@ folder creation, and list creation.
 
 ### Increment 2 — Database layer
 - GRDB.swift added via Swift Package Manager
-- Full SQLite schema (currently at migration `"v2"` via `DatabaseMigrator`)
+- Full SQLite schema (currently at migration `"v3"` via `DatabaseMigrator`)
 - `DatabaseManager` actor: opens DB in Application Support, runs
   migrations on launch, seeds placeholder data on first run
-- GRDB record structs for all nine tables
+- GRDB record structs for all tables
 - Sidebar reads folders and lists from SQLite
 
 ### Increment 3 — Map
@@ -223,6 +223,29 @@ folder creation, and list creation.
   - File menu item "New List" with ⌘N, wired via `FocusedValue` /
     `ShowNewListSheetKey`; disabled when the sidebar is not focused
 
+### Schema v3 — waypoints data model
+- **Old `waypoints` satellite table dropped** (previously linked to `items.id`
+  via `item_id`; Garmin-style geometry store). Items of type `"waypoint"` remain
+  in the `items` table but their geometry rows are gone. The old `Waypoint`
+  struct in `ItemRecords.swift` was removed accordingly.
+- **`categories` table** — lookup table for waypoint POI types. Seeded with
+  twelve defaults in alphabetical order on first run (migration `"v3"`):
+  Café (`cup.and.saucer.fill`), Campsite (`tent.fill`), Ferry (`ferry.fill`),
+  Fuel (`fuelpump.fill`), Hotel (`bed.double.fill`), Landmark
+  (`building.columns.fill`), Other (`mappin`), Parking (`parkingsign`),
+  Pass (`mountain.2.fill`), Restaurant (`fork.knife`), Viewpoint
+  (`binoculars.fill`), Workshop (`wrench.and.screwdriver.fill`).
+- **`waypoints` table** — standalone favourite POI store, independent of the
+  library item system. Columns: `id`, `name` (UNIQUE), `latitude`, `longitude`,
+  `category_id` (nullable FK → `categories.id` ON DELETE SET NULL),
+  `color_hex` (default `#E8453C`), `notes`, `created_at`.
+- **`WaypointRecords.swift`** — `Category` and `Waypoint` Swift structs
+  following the same `Codable / Identifiable / Hashable / FetchableRecord /
+  PersistableRecord` pattern as `LibraryRecords.swift`. Both use `encode(to:)`
+  to omit `created_at` so the DB default applies on insert. Hashable on `id`.
+- **`DatabaseManager`** gains `fetchCategories() async throws -> [Category]`
+  and `fetchWaypoints() async throws -> [Waypoint]`, both ordered by name.
+
 ### Files in place
 
 ```
@@ -232,6 +255,7 @@ RouteKeeper/
 ├── Models/
 │   ├── ItemRecords.swift
 │   ├── LibraryRecords.swift
+│   ├── WaypointRecords.swift  (Category, Waypoint — schema v3)
 │   ├── LibraryModels.swift    (stub)
 │   └── SystemFolders.swift    (sentinel values for Unclassified)
 ├── Features/
@@ -266,7 +290,7 @@ RouteKeeper/
   occasionally unavailable. To be replaced with a self-hosted or
   commercial instance before release.
 
-Next step: Increment 8 — creating favourite waypoints.
+Next step: Increment 8 — waypoint creation UI with Nominatim geocoding search.
 
 ## File Structure (Planned)
 ```

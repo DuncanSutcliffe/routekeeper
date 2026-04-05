@@ -76,6 +76,15 @@ actor DatabaseManager {
                 """)
         }
 
+        // v3 — standalone waypoints model.
+        // Drops the old satellite `waypoints` table (item_id → items.id,
+        // Garmin-style) and replaces it with a `categories` lookup table
+        // and a new standalone `waypoints` table for favourite POIs.
+        migrator.registerMigration("v3") { db in
+            try db.execute(sql: "DROP TABLE IF EXISTS waypoints")
+            try Self.createCategoriesAndWaypoints(db)
+        }
+
         try await migrator.migrate(dbQueue)
         _dbQueue = dbQueue
     }
@@ -151,6 +160,22 @@ actor DatabaseManager {
                 throw DatabaseManagerError.insertFailed("Could not fetch newly created list (id: \(id))")
             }
             return list
+        }
+    }
+
+    /// Fetches all categories ordered by name.
+    func fetchCategories() async throws -> [Category] {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try Category.order(Column("name")).fetchAll(db)
+        }
+    }
+
+    /// Fetches all favourite waypoints ordered by name.
+    func fetchWaypoints() async throws -> [Waypoint] {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try Waypoint.order(Column("name")).fetchAll(db)
         }
     }
 
@@ -316,6 +341,51 @@ actor DatabaseManager {
 
             INSERT INTO app_settings (key, value) VALUES ('schema_version', '1');
             """)
+    }
+
+    /// Creates the `categories` and `waypoints` tables (v3 schema) and seeds
+    /// the twelve default categories in alphabetical order.
+    private static func createCategoriesAndWaypoints(_ db: Database) throws {
+        try db.execute(sql: """
+            CREATE TABLE categories (
+                id         INTEGER  PRIMARY KEY AUTOINCREMENT,
+                name       TEXT     NOT NULL UNIQUE,
+                icon_name  TEXT     NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE waypoints (
+                id          INTEGER  PRIMARY KEY AUTOINCREMENT,
+                name        TEXT     NOT NULL UNIQUE,
+                latitude    REAL     NOT NULL,
+                longitude   REAL     NOT NULL,
+                category_id INTEGER  REFERENCES categories(id) ON DELETE SET NULL,
+                color_hex   TEXT     NOT NULL DEFAULT '#E8453C',
+                notes       TEXT,
+                created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
+            );
+            """)
+
+        let defaults: [(name: String, iconName: String)] = [
+            ("Café",        "cup.and.saucer.fill"),
+            ("Campsite",    "tent.fill"),
+            ("Ferry",       "ferry.fill"),
+            ("Fuel",        "fuelpump.fill"),
+            ("Hotel",       "bed.double.fill"),
+            ("Landmark",    "building.columns.fill"),
+            ("Other",       "mappin"),
+            ("Parking",     "parkingsign"),
+            ("Pass",        "mountain.2.fill"),
+            ("Restaurant",  "fork.knife"),
+            ("Viewpoint",   "binoculars.fill"),
+            ("Workshop",    "wrench.and.screwdriver.fill"),
+        ]
+        for row in defaults {
+            try db.execute(
+                sql: "INSERT INTO categories (name, icon_name) VALUES (?, ?)",
+                arguments: [row.name, row.iconName]
+            )
+        }
     }
 
     // MARK: Seeding

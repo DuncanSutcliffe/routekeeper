@@ -20,9 +20,8 @@ struct ContentView: View {
             )
             .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
-            if let list = selectedList {
-                Text("\"\(list.name)\" contents go here")
-                    .foregroundStyle(.secondary)
+            if selectedList != nil {
+                MapView()
             } else {
                 Text("Select a list to view its contents")
                     .foregroundStyle(.secondary)

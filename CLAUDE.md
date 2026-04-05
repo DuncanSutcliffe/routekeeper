@@ -118,25 +118,50 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increment 1 complete.** Xcode project created. Application shell 
-is built and working:
+**Increment 2 complete.** GRDB.swift integrated, full schema live,
+sidebar loads from SQLite.
 
-- Two-column `NavigationSplitView` layout
-- Library sidebar (`LibrarySidebarView`) with placeholder folders 
-  and lists using `.listStyle(.sidebar)`
-- Detail area shows a placeholder message when no list is selected, 
-  or the list name when one is selected
-- Window opens at 1200x750 points via `.defaultSize`
+### What is built
 
-Files in place:
-- `RouteKeeper/Models/LibraryModels.swift` — `RouteList` and 
-  `ListFolder` structs with placeholder data
-- `RouteKeeper/Features/Library/LibrarySidebarView.swift` — sidebar view
-- `RouteKeeper/ContentView.swift` — root split view layout
-- `RouteKeeper/RouteKeeperApp.swift` — app entry point with window size
+- Two-column `NavigationSplitView` shell (Increment 1)
+- GRDB.swift added via Swift Package Manager
+- Full SQLite schema at `schema_version = 1` (all tables as designed)
+- `DatabaseManager` actor: opens DB in Application Support, runs 
+  migrations on launch, seeds placeholder data on first run
+- GRDB record structs for all nine tables (`Item`, `Waypoint`, 
+  `Route`, `RoutePoint`, `Track`, `TrackPoint`, `ListFolder`, 
+  `RouteList`, `ItemListMembership`)
+- `LibraryViewModel` (`@Observable`) loads folder/list data from DB
+- Sidebar reads from SQLite; seeded with two folders and four lists
 
-Next step: add GRDB.swift via Swift Package Manager and build 
-the database layer — schema design first.
+### Files in place
+
+```
+RouteKeeper/
+├── Database/
+│   └── DatabaseManager.swift
+├── Models/
+│   ├── ItemRecords.swift
+│   ├── LibraryRecords.swift
+│   └── LibraryModels.swift  (stub; types moved to LibraryRecords)
+├── Features/Library/
+│   ├── LibrarySidebarView.swift
+│   └── LibraryViewModel.swift
+├── ContentView.swift
+└── RouteKeeperApp.swift
+```
+
+### Schema notes
+
+- Timestamps (`created_at`, `modified_at`, `added_at`) use SQLite 
+  `DEFAULT (datetime('now'))`; omitted from Swift `encode(to:)` so 
+  the database default applies on insert.
+- `RouteList.==` and `.hash` are identity-based (on `id` only) for 
+  stable sidebar selection state across reloads.
+- Migration stubs are in place in `applyMigrations(_:)` for v2+.
+
+Next step: Increment 3 — embed MapLibre GL JS in a `WKWebView` to 
+display an OpenStreetMap basemap in the detail area.
 
 ## File Structure (Planned)
 ```

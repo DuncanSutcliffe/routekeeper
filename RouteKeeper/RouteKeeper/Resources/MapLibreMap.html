@@ -123,6 +123,61 @@
                 map.removeSource("active-route");
             }
         }
-    </script>
+
+        // ---------------------------------------------------------------------------
+        // Waypoint display
+        // ---------------------------------------------------------------------------
+
+        /// Shows a single waypoint marker on the map.
+        ///
+        /// lat, lng — WGS-84 coordinates
+        /// colour   — CSS colour string, e.g. "#E8453C"
+        ///
+        /// Any existing waypoint marker is removed first. If the style is not yet
+        /// loaded the call is deferred until the map is idle.
+        function showWaypoint(lat, lng, colour) {
+            if (!map.isStyleLoaded()) {
+                map.once("idle", function () { showWaypoint(lat, lng, colour); });
+                return;
+            }
+
+            clearWaypoint();
+
+            map.addSource("waypoint-source", {
+                type: "geojson",
+                data: {
+                    type: "Feature",
+                    geometry: {
+                        type: "Point",
+                        coordinates: [lng, lat]
+                    }
+                }
+            });
+
+            map.addLayer({
+                id: "waypoint-layer",
+                type: "circle",
+                source: "waypoint-source",
+                paint: {
+                    "circle-radius": 10,
+                    "circle-color": colour,
+                    "circle-stroke-width": 2,
+                    "circle-stroke-color": "#FFFFFF"
+                }
+            });
+
+            map.flyTo({ center: [lng, lat], zoom: 13 });
+        }
+
+        /// Removes the waypoint marker layer and source from the map.
+        function clearWaypoint() {
+            if (map.getLayer("waypoint-layer")) {
+                map.removeLayer("waypoint-layer");
+            }
+            if (map.getSource("waypoint-source")) {
+                map.removeSource("waypoint-source");
+            }
+        }
+</script>
 </body>
 </html>

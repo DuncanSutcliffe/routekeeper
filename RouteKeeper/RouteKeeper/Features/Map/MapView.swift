@@ -26,11 +26,22 @@ import SwiftUI
 import WebKit
 import Observation
 
+// MARK: - WaypointDisplay
+
+/// The data needed to render a single waypoint pin on the map.
+struct WaypointDisplay: Equatable {
+    let latitude: Double
+    let longitude: Double
+    /// CSS hex colour string, e.g. `"#E8453C"`.
+    let colorHex: String
+}
+
 // MARK: - MapViewModel
 
 /// Drives the map's displayed state.
 ///
-/// ContentView calls ``drawRoute(geojson:)`` and ``flyTo(longitude:latitude:zoom:)``
+/// ContentView calls ``drawRoute(geojson:)``, ``flyTo(longitude:latitude:zoom:)``,
+/// ``showWaypoint(latitude:longitude:colorHex:)``, and ``clearWaypoint()``
 /// to update the map. Because this class is ``@Observable``, any SwiftUI view that
 /// reads its properties in `body` will automatically re-render when they change.
 @Observable
@@ -43,6 +54,9 @@ final class MapViewModel {
     var centerLat: Double = 54.0
     var zoom: Double = 5.0
 
+    /// Non-nil when a waypoint marker should be shown on the map.
+    var waypointDisplay: WaypointDisplay? = nil
+
     /// Draws a GeoJSON route on the map, replacing any previously drawn route.
     func drawRoute(geojson: String) {
         routeGeoJSON = geojson
@@ -53,6 +67,16 @@ final class MapViewModel {
         centerLon = longitude
         centerLat = latitude
         self.zoom = zoom
+    }
+
+    /// Shows a waypoint marker on the map at the given coordinates.
+    func showWaypoint(latitude: Double, longitude: Double, colorHex: String) {
+        waypointDisplay = WaypointDisplay(latitude: latitude, longitude: longitude, colorHex: colorHex)
+    }
+
+    /// Removes the waypoint marker from the map.
+    func clearWaypoint() {
+        waypointDisplay = nil
     }
 }
 
@@ -66,6 +90,7 @@ struct MapView: NSViewRepresentable {
     let centerLon: Double
     let centerLat: Double
     let zoom: Double
+    let waypointDisplay: WaypointDisplay?
 
     // MARK: NSViewRepresentable
 
@@ -121,6 +146,19 @@ struct MapView: NSViewRepresentable {
                 )
             }
         }
+
+        // Apply a waypoint display change if it has changed.
+        if waypointDisplay != coordinator.lastWaypointDisplay {
+            coordinator.lastWaypointDisplay = waypointDisplay
+            if coordinator.mapIsReady {
+                coordinator.applyWaypointDisplay(waypointDisplay, in: nsView)
+            } else {
+                // Queue for flushing once mapReady fires. Storing nil here cancels
+                // any previously queued showWaypoint (map starts empty, so no
+                // explicit clearWaypoint call is needed before the map is ready).
+                coordinator.pendingWaypointDisplay = waypointDisplay
+            }
+        }
     }
 
     // MARK: Private helpers
@@ -160,7 +198,12 @@ struct MapView: NSViewRepresentable {
         /// Flushed immediately once mapReady is received.
         var pendingRouteGeoJSON: String? = nil
 
-        /// Weak reference to the WKWebView, used to flush pendingRouteGeoJSON
+        /// Waypoint display queued before the map was ready.
+        /// `nil` means nothing pending (or a pending show was cancelled by a deselect).
+        /// Flushed on mapReady if non-nil.
+        var pendingWaypointDisplay: WaypointDisplay? = nil
+
+        /// Weak reference to the WKWebView, used to flush pending state
         /// from inside the message handler (which has no other webView reference).
         weak var webView: WKWebView?
 
@@ -170,6 +213,7 @@ struct MapView: NSViewRepresentable {
         var lastCenterLon: Double = .nan  // nan ensures the first flyTo always fires
         var lastCenterLat: Double = .nan
         var lastZoom: Double = .nan
+        var lastWaypointDisplay: WaypointDisplay? = nil
 
         // MARK: JS calls
 
@@ -190,6 +234,18 @@ struct MapView: NSViewRepresentable {
             webView.evaluateJavaScript("drawRoute(\"\(escaped)\");")
         }
 
+        /// Calls either `showWaypoint()` or `clearWaypoint()` in JS depending on
+        /// whether `display` is non-nil.
+        func applyWaypointDisplay(_ display: WaypointDisplay?, in webView: WKWebView) {
+            if let wp = display {
+                webView.evaluateJavaScript(
+                    "showWaypoint(\(wp.latitude), \(wp.longitude), \"\(wp.colorHex)\");"
+                )
+            } else {
+                webView.evaluateJavaScript("clearWaypoint();")
+            }
+        }
+
         // MARK: WKScriptMessageHandler
 
         func userContentController(
@@ -205,8 +261,10 @@ struct MapView: NSViewRepresentable {
 
             if type == "mapReady" {
                 mapIsReady = true
+                guard let wv = webView else { return }
+
                 // Flush any route that arrived before the map was ready.
-                if let pending = pendingRouteGeoJSON, let wv = webView {
+                if let pending = pendingRouteGeoJSON {
                     executeDrawRoute(geojson: pending, in: wv)
                     pendingRouteGeoJSON = nil
                     // Also apply the queued flyTo if centre was already set.
@@ -216,12 +274,18 @@ struct MapView: NSViewRepresentable {
                         )
                     }
                 }
+
+                // Flush any waypoint that arrived before the map was ready.
+                if let pending = pendingWaypointDisplay {
+                    applyWaypointDisplay(pending, in: wv)
+                    pendingWaypointDisplay = nil
+                }
             }
         }
     }
 }
 
 #Preview {
-    MapView(routeGeoJSON: nil, centerLon: -2.0, centerLat: 54.0, zoom: 5)
+    MapView(routeGeoJSON: nil, centerLon: -2.0, centerLat: 54.0, zoom: 5, waypointDisplay: nil)
         .frame(width: 800, height: 600)
 }

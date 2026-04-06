@@ -261,6 +261,21 @@ actor DatabaseManager {
         }
     }
 
+    /// Returns the waypoint row for the given item id, or `nil` if no row exists.
+    ///
+    /// Used when an item is selected in the sidebar to retrieve its coordinates
+    /// and colour for display on the map.
+    func fetchWaypointDetails(itemId: Int64) async throws -> Waypoint? {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try Waypoint.fetchOne(
+                db,
+                sql: "SELECT * FROM waypoints WHERE item_id = ?",
+                arguments: [itemId]
+            )
+        }
+    }
+
     /// Fetches all items that have no row in `item_list_membership`, ordered by name.
     ///
     /// Used to populate the application-layer Unclassified folder.

@@ -118,11 +118,12 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–8 complete, schema v4 applied, waypoint creation implemented.**
-The application has a working shell, database layer, live map, motorcycle
-routing, a reworked library sidebar, folder creation, list creation, the
-waypoints schema, a tested geocoding service, and a full waypoint creation
-flow with Nominatim search integration.
+**Increments 1–10 complete, schema v4 applied, sidebar selection wired to map.**
+The application has a working shell, database layer, live map (MapTiler tiles),
+motorcycle routing, a reworked library sidebar, folder creation, list creation,
+the waypoints schema, a tested geocoding service, a full waypoint creation flow
+with Nominatim search integration, and sidebar item selection that flies the map
+to a selected waypoint and draws a coloured circle marker.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -308,6 +309,51 @@ flow with Nominatim search integration.
   - File menu item "New Waypoint" with ⌘⌥N, wired via `FocusedValue` /
     `ShowNewWaypointSheetKey`; disabled when the sidebar is not focused.
 
+### Increment 9 — MapTiler tile provider
+- **`Config.plist`** (excluded from git) — holds `MapTilerAPIKey` string;
+  never committed to version control.
+- **`Services/ConfigService.swift`** — `enum ConfigService` with static
+  property `mapTilerAPIKey: String` that reads from `Config.plist` at
+  runtime; logs a warning and returns `""` if the key is missing.
+- **`MapLibreMap.html`** updated — hardcoded `demotiles.maplibre.org` style
+  URL replaced with a `mapStyleURL` JavaScript variable. The map
+  initialisation reads `mapStyleURL`; falls back to `""` (visible in the
+  console) if injection failed.
+- **`MapView.swift`** updated — `makeConfiguration(coordinator:)` builds the
+  MapTiler streets-v2 URL (`https://api.maptiler.com/maps/streets-v2/style.json?key=…`)
+  from `ConfigService.mapTilerAPIKey` and injects it as
+  `var mapStyleURL = "…"` via `WKUserScript` at `.atDocumentStart`.
+
+### Increment 10 — Sidebar item selection wired to map
+- **Hardcoded demo route removed** — `ContentView` no longer calls
+  `RoutingService` on list selection; `import CoreLocation` dropped; the
+  `MapTaskKey` struct removed. The map now starts empty.
+- **`MapLibreMap.html`** — two new JS functions:
+  - `showWaypoint(lat, lng, colour)` — removes any existing marker, adds a
+    GeoJSON point source (`"waypoint-source"`) and circle layer
+    (`"waypoint-layer"`) with `circle-radius: 10` and a white
+    `circle-stroke-width: 2` in the given colour, then flies to zoom 13.
+    Guards on `isStyleLoaded()` with an idle-event defer.
+  - `clearWaypoint()` — removes the layer and source if they exist.
+- **`MapView.swift`** — new `WaypointDisplay` struct (`latitude`,
+  `longitude`, `colorHex`); `MapViewModel` gains `waypointDisplay:
+  WaypointDisplay?`, `showWaypoint(latitude:longitude:colorHex:)`, and
+  `clearWaypoint()`; `MapView` gains `let waypointDisplay: WaypointDisplay?`;
+  `updateNSView` calls `applyWaypointDisplay(_:in:)` when the value changes
+  or queues it in `pendingWaypointDisplay` before mapReady; `Coordinator`
+  flushes the pending waypoint in the `mapReady` handler.
+- **`ContentView.swift`** — `.task(id: selectedItem?.id)` calls
+  `handleItemSelection(_:)`: waypoints fetch coordinates and colour via
+  `DatabaseManager.fetchWaypointDetails(itemId:)` and call
+  `mapViewModel.showWaypoint(...)`; routes and tracks call
+  `mapViewModel.clearWaypoint()`; nil selection clears the marker.
+- **`DatabaseManager.swift`** — new method `fetchWaypointDetails(itemId:
+  Int64) async throws -> Waypoint?` queries `waypoints` by `item_id`.
+- **Seed data note** — the seeded waypoints (`Col du Galibier`, etc.) have
+  no rows in the v4 `waypoints` table (the seed ran against the v1 schema
+  which was later dropped by migrations v3 and v4), so selecting them
+  correctly does nothing.
+
 ### Files in place
 
 ```
@@ -333,6 +379,7 @@ RouteKeeper/
 │   └── Waypoints/
 │       └── NewWaypointSheet.swift
 ├── Services/
+│   ├── ConfigService.swift
 │   └── GeocodingService.swift
 ├── Resources/
 │   └── MapLibreMap.html
@@ -345,12 +392,11 @@ RouteKeeper/
 - JS → Swift: `window.webkit.messageHandlers.routekeeper.postMessage({ type: "...", ... })`
 - Swift → JS: `webView.evaluateJavaScript("drawRoute(\"...\");")`
 - Message types in use: `mapReady`, `routeDrawn`
+- JS functions callable from Swift: `drawRoute(geojsonString)`, `clearRoute()`,
+  `showWaypoint(lat, lng, colour)`, `clearWaypoint()`
 
 ## Known Limitations
 
-- **Map tile source** — `demotiles.maplibre.org` is MapLibre's demo
-  server and is not suitable for production use. To be replaced with a
-  proper tile provider before release.
 - **Valhalla routing** — uses the public OpenStreetMap community
   instance (`valhalla1.openstreetmap.de`). This is rate-limited and
   occasionally unavailable. To be replaced with a self-hosted or
@@ -358,13 +404,14 @@ RouteKeeper/
 - **Waypoint editing** — `NewWaypointSheet` handles creation only.
   Editing an existing waypoint's name, location, category, colour,
   notes, or list membership is not yet implemented.
-- **Sidebar selection not wired to map** — selecting a list or item in
-  the sidebar does not yet update what is displayed on the map.
+- **List selection not wired to map** — selecting a list in the top
+  panel does not yet display all its items on the map simultaneously.
+- **Seed data waypoints** — the seeded waypoints have no v4 geometry
+  rows (lost during schema migrations); selecting them does nothing.
+  New waypoints created via the sheet display correctly.
 
-Next step: Increment 9 — replace demo map tile provider with a
-production-ready source, then wire sidebar selection to map display.
-
-Next step: Increment 8 — waypoint creation sheet with Nominatim search integration.
+Next step: Increment 11 — selecting a list in the top panel draws all
+its items on the map simultaneously.
 
 ## File Structure (Planned)
 ```

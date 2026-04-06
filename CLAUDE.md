@@ -118,9 +118,10 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–7 complete, schema v3 applied.** The application has a
-working shell, database layer, live map, motorcycle routing, a reworked
-library sidebar, folder creation, list creation, and the waypoints schema.
+**Increments 1–7 complete, schema v3 applied, geocoding service in place.**
+The application has a working shell, database layer, live map, motorcycle
+routing, a reworked library sidebar, folder creation, list creation, the
+waypoints schema, and a tested geocoding service.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -246,6 +247,29 @@ library sidebar, folder creation, list creation, and the waypoints schema.
 - **`DatabaseManager`** gains `fetchCategories() async throws -> [Category]`
   and `fetchWaypoints() async throws -> [Waypoint]`, both ordered by name.
 
+### GeocodingService
+- **`Services/GeocodingService.swift`** — `@MainActor final class` wrapping the
+  Nominatim search endpoint
+  (`https://nominatim.openstreetmap.org/search?q=…&format=json&limit=8&addressdetails=1`).
+  Returns `[GeocodingResult]` — each with `name` (Nominatim `display_name`),
+  `subtitle` (city/town/village + country), `latitude`, `longitude`.
+  Sends `User-Agent: RouteKeeper/1.0` on every request (required by Nominatim).
+  300 ms debounce via task cancellation: each call to `search(_:)` cancels the
+  previous `Task` before sleeping 300 ms then fetching; the previous caller
+  receives `CancellationError`, which callers should catch and ignore.
+- **`RouteKeeperTests/GeocodingServiceTests.swift`** — five Swift Testing tests,
+  suite marked `@Suite(.serialized)` to prevent singleton state interference:
+  1. `testSearchReturnsResults` — real network call; verifies non-empty results
+     and UK bounding box (lat 49–61, lon −8–2) for "Matlock, Derbyshire"
+  2. `testSearchResultHasSubtitle` — real network call; verifies non-empty
+     subtitle for "Chamonix"
+  3. `testEmptyQueryReturnsEmptyResults` — no network call; verifies the empty
+     query short-circuit
+  4. `testInvalidQueryReturnsEmptyResults` — real network call; verifies empty
+     array for a nonsense query
+  5. `testDuplicateSearchCancelsPrevious` — no network call for Bath; verifies
+     Bristol succeeds and Bath raises `CancellationError`
+
 ### Files in place
 
 ```
@@ -268,6 +292,8 @@ RouteKeeper/
 │   │   └── MapView.swift      (includes MapViewModel)
 │   └── Routing/
 │       └── RoutingService.swift
+├── Services/
+│   └── GeocodingService.swift
 ├── Resources/
 │   └── MapLibreMap.html
 ├── ContentView.swift
@@ -290,7 +316,7 @@ RouteKeeper/
   occasionally unavailable. To be replaced with a self-hosted or
   commercial instance before release.
 
-Next step: Increment 8 — waypoint creation UI with Nominatim geocoding search.
+Next step: Increment 8 — waypoint creation sheet with Nominatim search integration.
 
 ## File Structure (Planned)
 ```

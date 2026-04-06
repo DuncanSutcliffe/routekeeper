@@ -48,9 +48,14 @@
         // ---------------------------------------------------------------------------
         // Map initialisation
         // ---------------------------------------------------------------------------
+        // mapStyleURL is injected by Swift via WKUserScript before this page loads.
+        // If the injection failed, fall back to an empty string so the failure
+        // is visible in the console rather than silently using a stale URL.
+        const styleURL = (typeof mapStyleURL !== "undefined" && mapStyleURL) ? mapStyleURL : "";
+
         const map = new maplibregl.Map({
             container: "map",
-            style: "https://demotiles.maplibre.org/style.json",
+            style: styleURL,
             center: [-2.0, 54.0],   // [longitude, latitude] — centre over the UK
             zoom: 5
         });

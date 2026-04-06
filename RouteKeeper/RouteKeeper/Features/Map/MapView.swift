@@ -129,6 +129,18 @@ struct MapView: NSViewRepresentable {
         let config = WKWebViewConfiguration()
         let contentController = WKUserContentController()
         contentController.add(coordinator, name: "routekeeper")
+
+        // Inject the MapTiler style URL before the page's own scripts run so
+        // that the map initialisation in MapLibreMap.html can read mapStyleURL.
+        let apiKey = ConfigService.mapTilerAPIKey
+        let styleURL = "https://api.maptiler.com/maps/streets-v2/style.json?key=\(apiKey)"
+        let script = WKUserScript(
+            source: "var mapStyleURL = \"\(styleURL)\";",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        contentController.addUserScript(script)
+
         config.userContentController = contentController
         return config
     }

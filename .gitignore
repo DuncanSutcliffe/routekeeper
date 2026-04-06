@@ -1,4 +1,5 @@
 .DS_Store
+Config.plist
 /.build
 /DerivedData
 *.xcuserdata

@@ -19,6 +19,10 @@ private struct ShowNewWaypointSheetKey: FocusedValueKey {
     typealias Value = Binding<Bool>
 }
 
+private struct ShowNewRouteSheetKey: FocusedValueKey {
+    typealias Value = Binding<Bool>
+}
+
 extension FocusedValues {
     /// Binding to the sidebar's `showingNewFolderSheet` state.
     var showNewFolderSheet: Binding<Bool>? {
@@ -37,6 +41,12 @@ extension FocusedValues {
         get { self[ShowNewWaypointSheetKey.self] }
         set { self[ShowNewWaypointSheetKey.self] = newValue }
     }
+
+    /// Binding to the sidebar's `showingNewRouteSheet` state.
+    var showNewRouteSheet: Binding<Bool>? {
+        get { self[ShowNewRouteSheetKey.self] }
+        set { self[ShowNewRouteSheetKey.self] = newValue }
+    }
 }
 
 // MARK: - Commands
@@ -45,9 +55,16 @@ struct RouteKeeperCommands: Commands {
     @FocusedValue(\.showNewListSheet)     private var showNewListSheet:     Binding<Bool>?
     @FocusedValue(\.showNewFolderSheet)   private var showNewFolderSheet:   Binding<Bool>?
     @FocusedValue(\.showNewWaypointSheet) private var showNewWaypointSheet: Binding<Bool>?
+    @FocusedValue(\.showNewRouteSheet)    private var showNewRouteSheet:    Binding<Bool>?
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
+            Button("New Route") {
+                showNewRouteSheet?.wrappedValue = true
+            }
+            .keyboardShortcut("r", modifiers: [.command, .option])
+            .disabled(showNewRouteSheet == nil)
+
             Button("New Waypoint") {
                 showNewWaypointSheet?.wrappedValue = true
             }

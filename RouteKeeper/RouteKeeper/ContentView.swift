@@ -32,7 +32,8 @@ struct ContentView: View {
                     centerLon:       mapViewModel.centerLon,
                     centerLat:       mapViewModel.centerLat,
                     zoom:            mapViewModel.zoom,
-                    waypointDisplay: mapViewModel.waypointDisplay
+                    waypointDisplay: mapViewModel.waypointDisplay,
+                    routeDisplay:    mapViewModel.routeDisplay
                 )
             } else {
                 Text("Select a list to view its contents")
@@ -66,10 +67,12 @@ struct ContentView: View {
     private func handleItemSelection(_ item: Item?) async {
         guard let item, let itemId = item.id else {
             mapViewModel.clearWaypoint()
+            mapViewModel.clearRoute()
             return
         }
         switch item.type {
         case .waypoint:
+            mapViewModel.clearRoute()
             do {
                 if let wp = try await DatabaseManager.shared.fetchWaypointDetails(itemId: itemId) {
                     mapViewModel.showWaypoint(
@@ -84,8 +87,21 @@ struct ContentView: View {
                 print("fetchWaypointDetails failed: \(error)")
                 mapViewModel.clearWaypoint()
             }
-        case .route, .track:
+        case .route:
             mapViewModel.clearWaypoint()
+            do {
+                if let geometry = try await DatabaseManager.shared.fetchRouteGeometry(itemId: itemId) {
+                    mapViewModel.showRoute(geojson: geometry)
+                } else {
+                    mapViewModel.clearRoute()
+                }
+            } catch {
+                print("fetchRouteGeometry failed: \(error)")
+                mapViewModel.clearRoute()
+            }
+        case .track:
+            mapViewModel.clearWaypoint()
+            mapViewModel.clearRoute()
         }
     }
 }

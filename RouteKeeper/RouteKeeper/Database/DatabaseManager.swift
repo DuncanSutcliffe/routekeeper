@@ -37,16 +37,27 @@ actor DatabaseManager {
 
     private var _dbQueue: DatabaseQueue?
 
-    private init() {}
+    /// Internal so that unit tests can create isolated in-memory instances via
+    /// ``makeInMemory()``. All production code uses ``shared``.
+    init() {}
 
     // MARK: Setup
 
     /// Opens (or creates) the database file and applies any pending schema migrations.
     ///
+    /// - Parameter path: SQLite file path. Pass `nil` (the default) to use the
+    ///   standard Application Support location. Pass `":memory:"` for an isolated
+    ///   in-memory database (used by unit tests via ``makeInMemory()``).
+    ///
     /// Idempotent — safe to call more than once; subsequent calls return immediately.
-    func setUp() async throws {
+    func setUp(path: String? = nil) async throws {
         guard _dbQueue == nil else { return }
-        let dbQueue = try Self.openDatabaseQueue()
+        let dbQueue: DatabaseQueue
+        if let path {
+            dbQueue = try DatabaseQueue(path: path)
+        } else {
+            dbQueue = try Self.openDatabaseQueue()
+        }
         var migrator = DatabaseMigrator()
 
         // v1 — full schema creation and seed data.
@@ -108,8 +119,28 @@ actor DatabaseManager {
                 """)
         }
 
+        // v5 — geometry column on routes.
+        // Adds a nullable TEXT column to store the Valhalla-calculated GeoJSON
+        // FeatureCollection produced by the route-creation flow. Existing rows
+        // receive NULL, which is correct since no geometry has been calculated
+        // for them yet.
+        migrator.registerMigration("v5") { db in
+            try db.execute(sql: "ALTER TABLE routes ADD COLUMN geometry TEXT")
+        }
+
         try await migrator.migrate(dbQueue)
         _dbQueue = dbQueue
+    }
+
+    /// Creates a fresh `DatabaseManager` backed by an isolated in-memory SQLite
+    /// database with all migrations applied.
+    ///
+    /// Each call returns a completely independent instance — suitable for use
+    /// in unit tests where isolation between test cases is required.
+    static func makeInMemory() async throws -> DatabaseManager {
+        let db = DatabaseManager()
+        try await db.setUp(path: ":memory:")
+        return db
     }
 
     // MARK: Queries
@@ -258,6 +289,93 @@ actor DatabaseManager {
                 )
             }
             return waypoint
+        }
+    }
+
+    /// Returns the stored GeoJSON geometry string for the given route item id,
+    /// or `nil` if no row exists or the geometry column is NULL.
+    ///
+    /// Used when a route item is selected in the sidebar to retrieve the
+    /// geometry for display via `showRoute()` in MapLibreMap.html.
+    func fetchRouteGeometry(itemId: Int64) async throws -> String? {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT geometry FROM routes WHERE item_id = ?",
+                arguments: [itemId]
+            )
+        }
+    }
+
+    /// Returns the `Route` record for the given item id, or `nil` if none exists.
+    func fetchRouteRecord(itemId: Int64) async throws -> Route? {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try Route.fetchOne(
+                db,
+                sql: "SELECT * FROM routes WHERE item_id = ?",
+                arguments: [itemId]
+            )
+        }
+    }
+
+    /// Fetches all waypoints that have coordinate rows in the v4 `waypoints` table,
+    /// ordered by name.
+    ///
+    /// Only waypoints created through the `NewWaypointSheet` flow have rows here;
+    /// seed-data items of type `"waypoint"` do not (their geometry was lost during
+    /// the v3/v4 schema migrations). This method is used to populate the start/end
+    /// point pickers in `NewRouteSheet`.
+    func fetchWaypointsWithCoordinates() async throws -> [Waypoint] {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try Waypoint.fetchAll(db, sql: """
+                SELECT * FROM waypoints
+                WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+                ORDER BY name
+                """)
+        }
+    }
+
+    /// Inserts a new route item, its geometry, and optional list memberships.
+    ///
+    /// All three inserts run inside a single write transaction. Returns the
+    /// database-assigned `items.id` for the new route.
+    ///
+    /// - Parameters:
+    ///   - name: The route name; must be unique across all items.
+    ///   - geometry: GeoJSON FeatureCollection string from Valhalla.
+    ///   - listIds: Lists to associate the route with. Pass an empty array to
+    ///     leave the route unclassified (it will appear in the Unclassified folder).
+    @discardableResult
+    func createRoute(name: String, geometry: String, listIds: [Int64]) async throws -> Int64 {
+        let q = try requireQueue()
+        return try await q.write { db in
+            // 1. Insert into items (type = 'route').
+            try db.execute(
+                sql: "INSERT INTO items (type, name) VALUES (?, ?)",
+                arguments: ["route", name]
+            )
+            guard let itemId = try Int64.fetchOne(db, sql: "SELECT last_insert_rowid()") else {
+                throw DatabaseManagerError.insertFailed("Could not retrieve new item ID")
+            }
+
+            // 2. Insert route-specific data.
+            try db.execute(
+                sql: "INSERT INTO routes (item_id, routing_profile, geometry) VALUES (?, ?, ?)",
+                arguments: [itemId, "motorcycle", geometry]
+            )
+
+            // 3. Associate with requested lists.
+            for listId in listIds {
+                try db.execute(
+                    sql: "INSERT INTO item_list_membership (item_id, list_id) VALUES (?, ?)",
+                    arguments: [itemId, listId]
+                )
+            }
+
+            return itemId
         }
     }
 

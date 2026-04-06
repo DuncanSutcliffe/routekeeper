@@ -114,14 +114,70 @@
             postToSwift({ type: "routeDrawn" });
         }
 
-        /// Removes the active route layer and source from the map.
+        // ---------------------------------------------------------------------------
+        // Stored route display (sidebar selection)
+        // ---------------------------------------------------------------------------
+
+        /// Shows a stored route on the map by parsing a GeoJSON FeatureCollection string.
+        ///
+        /// Any previously shown route is removed first. The map is fitted to the
+        /// route bounds with 60 px of padding. If the style is not yet loaded the
+        /// call is deferred until the map is idle.
+        function showRoute(geojsonString) {
+            if (!map.isStyleLoaded()) {
+                map.once("idle", function () { showRoute(geojsonString); });
+                return;
+            }
+
+            clearRoute();
+
+            const geojson = JSON.parse(geojsonString);
+
+            map.addSource("route-source", {
+                type: "geojson",
+                data: geojson
+            });
+
+            map.addLayer({
+                id: "route-layer",
+                type: "line",
+                source: "route-source",
+                layout: {
+                    "line-cap": "round",
+                    "line-join": "round"
+                },
+                paint: {
+                    "line-color": "#2F7CF6",
+                    "line-width": 4
+                }
+            });
+
+            // Collect all LineString coordinates and fit the viewport to their bounds.
+            const coords = (geojson.features || [])
+                .filter(f => f.geometry && f.geometry.type === "LineString")
+                .flatMap(f => f.geometry.coordinates);
+
+            if (coords.length > 0) {
+                const lngs = coords.map(c => c[0]);
+                const lats = coords.map(c => c[1]);
+                map.fitBounds(
+                    [[Math.min(...lngs), Math.min(...lats)],
+                     [Math.max(...lngs), Math.max(...lats)]],
+                    { padding: 60 }
+                );
+            }
+        }
+
+        /// Removes the route layer and source from the map.
+        ///
+        /// Clears both the current "route-source"/"route-layer" ids used by
+        /// showRoute() and the legacy "active-route" id used by drawRoute(),
+        /// so switching between the two mechanisms never leaves orphaned layers.
         function clearRoute() {
-            if (map.getLayer("active-route")) {
-                map.removeLayer("active-route");
-            }
-            if (map.getSource("active-route")) {
-                map.removeSource("active-route");
-            }
+            if (map.getLayer("route-layer"))   { map.removeLayer("route-layer"); }
+            if (map.getSource("route-source")) { map.removeSource("route-source"); }
+            if (map.getLayer("active-route"))  { map.removeLayer("active-route"); }
+            if (map.getSource("active-route")) { map.removeSource("active-route"); }
         }
 
         // ---------------------------------------------------------------------------

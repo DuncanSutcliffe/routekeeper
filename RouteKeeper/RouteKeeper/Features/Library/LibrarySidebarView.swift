@@ -32,6 +32,9 @@ struct LibrarySidebarView: View {
     @State private var showingNewWaypointSheet = false
     @State private var newWaypointPreselectedListID: Int64?
 
+    @State private var showingNewRouteSheet = false
+    @State private var newRoutePreselectedListID: Int64?
+
     private let dividerHeight: CGFloat = 8
     private let minFraction:   CGFloat = 0.3
     private let maxFraction:   CGFloat = 0.85
@@ -65,6 +68,15 @@ struct LibrarySidebarView: View {
         }
         .navigationTitle("Library")
         .toolbar {
+            ToolbarItem {
+                Button {
+                    newRoutePreselectedListID = nil
+                    showingNewRouteSheet = true
+                } label: {
+                    Image(systemName: "road.lanes")
+                }
+                .help("New Route")
+            }
             ToolbarItem {
                 Button {
                     newWaypointPreselectedListID = nil
@@ -101,9 +113,13 @@ struct LibrarySidebarView: View {
         .sheet(isPresented: $showingNewWaypointSheet) {
             NewWaypointSheet(viewModel: viewModel, preselectedListID: newWaypointPreselectedListID)
         }
+        .sheet(isPresented: $showingNewRouteSheet) {
+            NewRouteSheet(viewModel: viewModel, preselectedListID: newRoutePreselectedListID)
+        }
         .focusedValue(\.showNewFolderSheet, $showingNewFolderSheet)
         .focusedValue(\.showNewListSheet, $showingNewListSheet)
         .focusedValue(\.showNewWaypointSheet, $showingNewWaypointSheet)
+        .focusedValue(\.showNewRouteSheet, $showingNewRouteSheet)
         .overlay {
             if viewModel.isLoading {
                 ProgressView()
@@ -151,6 +167,12 @@ struct LibrarySidebarView: View {
                             Label(list.name, systemImage: "map")
                                 .tag(list)
                                 .contextMenu {
+                                    Button {
+                                        newRoutePreselectedListID = list.id
+                                        showingNewRouteSheet = true
+                                    } label: {
+                                        Label("New Route", systemImage: "road.lanes")
+                                    }
                                     Button {
                                         newWaypointPreselectedListID = list.id
                                         showingNewWaypointSheet = true

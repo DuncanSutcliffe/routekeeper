@@ -92,6 +92,8 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
     var itemId: Int64
     /// Calculated GeoJSON LineString from the Valhalla response.
     var geojson: String?
+    /// GeoJSON FeatureCollection string stored by the route-creation flow (schema v5).
+    var geometry: String?
     var distanceMetres: Double?
     var estimatedDurationSecs: Int?
     var routingProfile: String
@@ -104,6 +106,7 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
     enum CodingKeys: String, CodingKey {
         case itemId = "item_id"
         case geojson
+        case geometry
         case distanceMetres = "distance_metres"
         case estimatedDurationSecs = "estimated_duration_secs"
         case routingProfile = "routing_profile"

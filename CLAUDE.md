@@ -118,12 +118,13 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–10 complete, schema v4 applied, sidebar selection wired to map.**
+**Increments 1–11 complete, schema v5 applied, route creation and map display implemented.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
-with Nominatim search integration, and sidebar item selection that flies the map
-to a selected waypoint and draws a coloured circle marker.
+with Nominatim search integration, sidebar item selection wired to the map, and
+a route creation sheet that calls Valhalla and persists the GeoJSON geometry so
+selecting a route in the sidebar draws it on the map with bounds fitting.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -354,6 +355,58 @@ to a selected waypoint and draws a coloured circle marker.
   which was later dropped by migrations v3 and v4), so selecting them
   correctly does nothing.
 
+### Increment 11 — Route creation and map display
+- **Schema v5** — `ALTER TABLE routes ADD COLUMN geometry TEXT` adds a nullable
+  GeoJSON geometry column to the `routes` table. Existing rows receive NULL.
+- **`Models/ItemRecords.swift`** — `Route` struct gains `var geometry: String?`
+  and the matching `CodingKeys` entry.
+- **`DatabaseManager.swift`** additions:
+  - `setUp(path:)` — optional `path` parameter (defaults to Application Support
+    file; pass `":memory:"` for unit tests).
+  - `static makeInMemory()` — test factory; fully migrated in-memory instance.
+  - `fetchWaypointsWithCoordinates()` — returns waypoints with non-null lat/lon,
+    used to populate the start/end pickers in `NewRouteSheet`.
+  - `createRoute(name:geometry:listIds:)` — single write transaction: inserts
+    into `items`, `routes` (with geometry), and `item_list_membership`.
+  - `fetchRouteGeometry(itemId:)` — returns the `geometry` string for a route
+    item, or `nil` if absent.
+  - `fetchRouteRecord(itemId:)` — returns the full `Route` row; used by tests.
+- **`Features/Routes/NewRouteSheet.swift`** (new file) — four-section sheet:
+  name field, start-waypoint `Picker`, end-waypoint `Picker` (start excluded),
+  checkbox list assignment. Save disabled until name + both endpoints are set.
+  While Valhalla is running, `ProgressView` replaces the Save button and Cancel
+  is disabled. A Valhalla error is shown via `.alert`. Calls
+  `RoutingService.shared.calculateRoute` then `viewModel.createRoute(...)`.
+- **`LibraryViewModel.swift`** additions:
+  - `availableWaypoints: [Waypoint]` — populated by `loadAvailableWaypoints()`.
+  - `createRoute(name:geometry:listIds:)` — catches `SQLITE_CONSTRAINT`,
+    reloads sidebar on success.
+- **`MapLibreMap.html`** additions:
+  - `showRoute(geojsonString)` — clears any existing route, adds source
+    `"route-source"` and layer `"route-layer"` (`line-color: "#2F7CF6"`,
+    `line-width: 4`, rounded cap/join), fits map bounds with 60 px padding.
+    Guards on `isStyleLoaded()` with idle-event defer.
+  - `clearRoute()` (replaces the old stub) — removes both the new
+    `"route-source"`/`"route-layer"` and the legacy `"active-route"` ids.
+- **`MapView.swift`** additions — `MapViewModel` gains `var routeDisplay:
+  String?`, `showRoute(geojson:)`, and `clearRoute()`; `MapView` gains
+  `let routeDisplay: String?`; `updateNSView` drives `applyRouteDisplay(_:in:)`;
+  `Coordinator` gains `lastRouteDisplay`, `pendingRouteDisplay`, and flushes
+  on `mapReady`.
+- **`ContentView.swift`** — `handleItemSelection` updated: `.waypoint` clears
+  route before showing pin; `.route` clears waypoint, fetches geometry, calls
+  `mapViewModel.showRoute(geojson:)` or `mapViewModel.clearRoute()` silently
+  if geometry is nil; `.track` and nil clear both.
+- **Three entry points** for New Route following the established pattern:
+  toolbar button (`road.lanes`), context menu on list rows ("New Route"),
+  File menu item "New Route" ⌘⌥R.
+- **`RouteKeeperTests/RouteCreationTests.swift`** (new file) — two Swift
+  Testing tests using in-memory `DatabaseManager.makeInMemory()`:
+  - `testCreateRoutePersistsToAllTables` — verifies rows in `items`, `routes`
+    (with correct geometry string and routing profile), and `item_list_membership`.
+  - `testCreateRouteWithNoListsAssignsToUnclassified` — verifies a route with
+    empty `listIds` appears in `fetchUnclassifiedItems()` with no membership row.
+
 ### Files in place
 
 ```
@@ -376,6 +429,8 @@ RouteKeeper/
 │   │   └── MapView.swift      (includes MapViewModel)
 │   ├── Routing/
 │   │   └── RoutingService.swift
+│   ├── Routes/
+│   │   └── NewRouteSheet.swift
 │   └── Waypoints/
 │       └── NewWaypointSheet.swift
 ├── Services/
@@ -392,8 +447,8 @@ RouteKeeper/
 - JS → Swift: `window.webkit.messageHandlers.routekeeper.postMessage({ type: "...", ... })`
 - Swift → JS: `webView.evaluateJavaScript("drawRoute(\"...\");")`
 - Message types in use: `mapReady`, `routeDrawn`
-- JS functions callable from Swift: `drawRoute(geojsonString)`, `clearRoute()`,
-  `showWaypoint(lat, lng, colour)`, `clearWaypoint()`
+- JS functions callable from Swift: `drawRoute(geojsonString)`, `showRoute(geojsonString)`,
+  `clearRoute()`, `showWaypoint(lat, lng, colour)`, `clearWaypoint()`
 
 ## Known Limitations
 
@@ -404,14 +459,17 @@ RouteKeeper/
 - **Waypoint editing** — `NewWaypointSheet` handles creation only.
   Editing an existing waypoint's name, location, category, colour,
   notes, or list membership is not yet implemented.
+- **Route editing** — `NewRouteSheet` handles creation only. Editing an
+  existing route's name, endpoints, or list membership is not yet implemented.
 - **List selection not wired to map** — selecting a list in the top
   panel does not yet display all its items on the map simultaneously.
 - **Seed data waypoints** — the seeded waypoints have no v4 geometry
   rows (lost during schema migrations); selecting them does nothing.
   New waypoints created via the sheet display correctly.
+- **Seed data routes** — the seeded routes have no geometry (NULL in the
+  `geometry` column); selecting them silently shows nothing on the map.
 
-Next step: Increment 11 — selecting a list in the top panel draws all
-its items on the map simultaneously.
+Next step: Increment 12 — UI tidy-up.
 
 ## File Structure (Planned)
 ```

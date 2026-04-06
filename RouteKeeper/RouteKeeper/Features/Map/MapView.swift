@@ -57,6 +57,10 @@ final class MapViewModel {
     /// Non-nil when a waypoint marker should be shown on the map.
     var waypointDisplay: WaypointDisplay? = nil
 
+    /// Non-nil GeoJSON string when a stored route should be displayed on the map.
+    /// Setting this triggers `showRoute()` in JS; setting it to nil triggers `clearRoute()`.
+    var routeDisplay: String? = nil
+
     /// Draws a GeoJSON route on the map, replacing any previously drawn route.
     func drawRoute(geojson: String) {
         routeGeoJSON = geojson
@@ -78,6 +82,16 @@ final class MapViewModel {
     func clearWaypoint() {
         waypointDisplay = nil
     }
+
+    /// Displays a stored route on the map, fitting the viewport to its bounds.
+    func showRoute(geojson: String) {
+        routeDisplay = geojson
+    }
+
+    /// Removes the stored route from the map.
+    func clearRoute() {
+        routeDisplay = nil
+    }
 }
 
 // MARK: - MapView
@@ -91,6 +105,8 @@ struct MapView: NSViewRepresentable {
     let centerLat: Double
     let zoom: Double
     let waypointDisplay: WaypointDisplay?
+    /// Non-nil GeoJSON from a sidebar-selected stored route; passed to showRoute() in JS.
+    let routeDisplay: String?
 
     // MARK: NSViewRepresentable
 
@@ -159,6 +175,16 @@ struct MapView: NSViewRepresentable {
                 coordinator.pendingWaypointDisplay = waypointDisplay
             }
         }
+
+        // Apply a stored-route display change if it has changed.
+        if routeDisplay != coordinator.lastRouteDisplay {
+            coordinator.lastRouteDisplay = routeDisplay
+            if coordinator.mapIsReady {
+                coordinator.applyRouteDisplay(routeDisplay, in: nsView)
+            } else {
+                coordinator.pendingRouteDisplay = routeDisplay
+            }
+        }
     }
 
     // MARK: Private helpers
@@ -203,6 +229,10 @@ struct MapView: NSViewRepresentable {
         /// Flushed on mapReady if non-nil.
         var pendingWaypointDisplay: WaypointDisplay? = nil
 
+        /// Route GeoJSON queued before the map was ready. Follows the same
+        /// nil-cancels-pending contract as `pendingWaypointDisplay`.
+        var pendingRouteDisplay: String? = nil
+
         /// Weak reference to the WKWebView, used to flush pending state
         /// from inside the message handler (which has no other webView reference).
         weak var webView: WKWebView?
@@ -214,6 +244,7 @@ struct MapView: NSViewRepresentable {
         var lastCenterLat: Double = .nan
         var lastZoom: Double = .nan
         var lastWaypointDisplay: WaypointDisplay? = nil
+        var lastRouteDisplay: String? = nil
 
         // MARK: JS calls
 
@@ -243,6 +274,19 @@ struct MapView: NSViewRepresentable {
                 )
             } else {
                 webView.evaluateJavaScript("clearWaypoint();")
+            }
+        }
+
+        /// Calls either `showRoute()` or `clearRoute()` in JS depending on
+        /// whether `geojson` is non-nil.
+        func applyRouteDisplay(_ geojson: String?, in webView: WKWebView) {
+            if let geojson {
+                let escaped = geojson
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                webView.evaluateJavaScript("showRoute(\"\(escaped)\");")
+            } else {
+                webView.evaluateJavaScript("clearRoute();")
             }
         }
 
@@ -280,12 +324,18 @@ struct MapView: NSViewRepresentable {
                     applyWaypointDisplay(pending, in: wv)
                     pendingWaypointDisplay = nil
                 }
+
+                // Flush any stored route that arrived before the map was ready.
+                if let pending = pendingRouteDisplay {
+                    applyRouteDisplay(pending, in: wv)
+                    pendingRouteDisplay = nil
+                }
             }
         }
     }
 }
 
 #Preview {
-    MapView(routeGeoJSON: nil, centerLon: -2.0, centerLat: 54.0, zoom: 5, waypointDisplay: nil)
+    MapView(routeGeoJSON: nil, centerLon: -2.0, centerLat: 54.0, zoom: 5, waypointDisplay: nil, routeDisplay: nil)
         .frame(width: 800, height: 600)
 }

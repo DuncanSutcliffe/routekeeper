@@ -41,6 +41,9 @@ final class LibraryViewModel {
     /// All waypoint categories, loaded on demand by the New Waypoint sheet.
     private(set) var categories: [Category] = []
 
+    /// Waypoints that have stored coordinates, loaded on demand by the New Route sheet.
+    private(set) var availableWaypoints: [Waypoint] = []
+
     // Remembered so createFolder() can reload with the same sort the user last chose.
     private var currentSortColumn: String = "sort_order"
     private var currentSortAscending: Bool = true
@@ -121,6 +124,35 @@ final class LibraryViewModel {
         } catch {
             print("Load categories failed: \(error)")
         }
+    }
+
+    /// Loads all waypoints that have stored coordinates from the database.
+    ///
+    /// Called from the New Route sheet's `onAppear`. Always fetches fresh so
+    /// newly created waypoints are visible without restarting the app.
+    func loadAvailableWaypoints() async {
+        do {
+            availableWaypoints = try await DatabaseManager.shared.fetchWaypointsWithCoordinates()
+        } catch {
+            print("Load available waypoints failed: \(error)")
+        }
+    }
+
+    /// Creates a new route with the given name, Valhalla geometry, and list memberships.
+    ///
+    /// Sets `creationError` if a route with that name already exists.
+    /// Reloads the sidebar on success.
+    func createRoute(name: String, geometry: String, listIds: [Int64]) async {
+        do {
+            try await DatabaseManager.shared.createRoute(name: name, geometry: geometry, listIds: listIds)
+        } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
+            creationError = "A route with that name already exists."
+            return
+        } catch {
+            print("Create route failed: \(error)")
+            return
+        }
+        await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
     }
 
     /// Creates a new waypoint and reloads the sidebar.

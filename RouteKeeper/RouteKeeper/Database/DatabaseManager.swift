@@ -85,6 +85,29 @@ actor DatabaseManager {
             try Self.createCategoriesAndWaypoints(db)
         }
 
+        // v4 — waypoints linked to items via item_id PK.
+        // The v3 standalone waypoints table had its own autoincrement id,
+        // preventing waypoints from participating in item_list_membership.
+        // This migration drops that table and recreates waypoints with
+        // item_id as both the primary key and a foreign key to items.id,
+        // matching the pattern used by routes and tracks.
+        migrator.registerMigration("v4") { db in
+            try db.execute(sql: "DROP TABLE IF EXISTS waypoints")
+            try db.execute(sql: """
+                CREATE TABLE waypoints (
+                    item_id     INTEGER  PRIMARY KEY
+                                         REFERENCES items(id) ON DELETE CASCADE,
+                    name        TEXT     NOT NULL,
+                    latitude    REAL     NOT NULL,
+                    longitude   REAL     NOT NULL,
+                    category_id INTEGER  REFERENCES categories(id) ON DELETE SET NULL,
+                    color_hex   TEXT     NOT NULL DEFAULT '#E8453C',
+                    notes       TEXT,
+                    created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
+                )
+                """)
+        }
+
         try await migrator.migrate(dbQueue)
         _dbQueue = dbQueue
     }
@@ -176,6 +199,65 @@ actor DatabaseManager {
         let q = try requireQueue()
         return try await q.read { db in
             try Waypoint.order(Column("name")).fetchAll(db)
+        }
+    }
+
+    /// Inserts a new waypoint and associates it with zero or more lists.
+    ///
+    /// Writes an `items` row (type = `"waypoint"`) first, then a `waypoints`
+    /// row using the new item's id as the primary key. List associations are
+    /// written to `item_list_membership`. The entire operation runs inside a
+    /// single write transaction.
+    @discardableResult
+    func createWaypoint(
+        name: String,
+        latitude: Double,
+        longitude: Double,
+        categoryId: Int64?,
+        colorHex: String,
+        notes: String?,
+        listIds: [Int64]
+    ) async throws -> Waypoint {
+        let q = try requireQueue()
+        return try await q.write { db in
+            // 1. Insert into items (type = 'waypoint').
+            try db.execute(
+                sql: "INSERT INTO items (type, name) VALUES (?, ?)",
+                arguments: ["waypoint", name]
+            )
+            guard let itemId = try Int64.fetchOne(db, sql: "SELECT last_insert_rowid()") else {
+                throw DatabaseManagerError.insertFailed("Could not retrieve new item ID")
+            }
+
+            // 2. Insert waypoint-specific data, keyed on itemId.
+            try db.execute(
+                sql: """
+                    INSERT INTO waypoints
+                        (item_id, name, latitude, longitude, category_id, color_hex, notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [itemId, name, latitude, longitude, categoryId, colorHex, notes]
+            )
+
+            // 3. Associate with requested lists.
+            for listId in listIds {
+                try db.execute(
+                    sql: "INSERT INTO item_list_membership (item_id, list_id) VALUES (?, ?)",
+                    arguments: [itemId, listId]
+                )
+            }
+
+            // 4. Fetch and return the persisted record.
+            guard let waypoint = try Waypoint.fetchOne(
+                db,
+                sql: "SELECT * FROM waypoints WHERE item_id = ?",
+                arguments: [itemId]
+            ) else {
+                throw DatabaseManagerError.insertFailed(
+                    "Could not fetch newly created waypoint (item_id: \(itemId))"
+                )
+            }
+            return waypoint
         }
     }
 

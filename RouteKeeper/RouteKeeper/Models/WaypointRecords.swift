@@ -56,12 +56,20 @@ struct Category: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
 
 /// A favourite point of interest stored independently of the library item system.
 ///
+/// The primary key (`item_id`) is also a foreign key to `items.id`, so each
+/// waypoint participates in the normal library membership system and can be
+/// assigned to one or more lists via `item_list_membership`.
+///
 /// Each waypoint belongs to an optional ``Category`` and carries a map colour
 /// expressed as a hex string (default `#E8453C`, the standard RouteKeeper red).
 struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "waypoints"
 
-    var id: Int64?
+    /// Primary key — also the foreign key to `items.id`.
+    var itemId: Int64
+    /// Satisfies `Identifiable`; backed by `itemId`.
+    var id: Int64 { itemId }
+
     var name: String
     var latitude: Double
     var longitude: Double
@@ -74,6 +82,7 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     var createdAt: String = ""
 
     init(
+        itemId: Int64,
         name: String,
         latitude: Double,
         longitude: Double,
@@ -81,6 +90,7 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
         colorHex: String = "#E8453C",
         notes: String? = nil
     ) {
+        self.itemId     = itemId
         self.name       = name
         self.latitude   = latitude
         self.longitude  = longitude
@@ -90,7 +100,8 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, latitude, longitude
+        case itemId     = "item_id"
+        case name, latitude, longitude
         case categoryId = "category_id"
         case colorHex   = "color_hex"
         case notes
@@ -98,7 +109,7 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     }
 
     func encode(to container: inout PersistenceContainer) throws {
-        container["id"]          = id
+        container["item_id"]     = itemId
         container["name"]        = name
         container["latitude"]    = latitude
         container["longitude"]   = longitude
@@ -108,8 +119,8 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
         // created_at omitted — database provides default.
     }
 
-    // MARK: Hashable — identity based on id only
+    // MARK: Hashable — identity based on itemId only
 
-    static func == (lhs: Waypoint, rhs: Waypoint) -> Bool { lhs.id == rhs.id }
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    static func == (lhs: Waypoint, rhs: Waypoint) -> Bool { lhs.itemId == rhs.itemId }
+    func hash(into hasher: inout Hasher) { hasher.combine(itemId) }
 }

@@ -38,6 +38,9 @@ final class LibraryViewModel {
     /// name-uniqueness constraint. Cleared by the sheet on text-field changes.
     var creationError: String?
 
+    /// All waypoint categories, loaded on demand by the New Waypoint sheet.
+    private(set) var categories: [Category] = []
+
     // Remembered so createFolder() can reload with the same sort the user last chose.
     private var currentSortColumn: String = "sort_order"
     private var currentSortAscending: Bool = true
@@ -101,6 +104,52 @@ final class LibraryViewModel {
             return
         } catch {
             print("Create list failed: \(error)")
+            return
+        }
+        await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
+    }
+
+    // MARK: - Waypoint creation
+
+    /// Loads all waypoint categories from the database.
+    ///
+    /// Called from the New Waypoint sheet's `onAppear`. No-op if already loaded.
+    func loadCategories() async {
+        guard categories.isEmpty else { return }
+        do {
+            categories = try await DatabaseManager.shared.fetchCategories()
+        } catch {
+            print("Load categories failed: \(error)")
+        }
+    }
+
+    /// Creates a new waypoint and reloads the sidebar.
+    ///
+    /// Sets `creationError` if a waypoint with that name already exists.
+    func createWaypoint(
+        name: String,
+        latitude: Double,
+        longitude: Double,
+        categoryId: Int64?,
+        colorHex: String,
+        notes: String?,
+        listIds: [Int64]
+    ) async {
+        do {
+            try await DatabaseManager.shared.createWaypoint(
+                name: name,
+                latitude: latitude,
+                longitude: longitude,
+                categoryId: categoryId,
+                colorHex: colorHex,
+                notes: notes,
+                listIds: listIds
+            )
+        } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
+            creationError = "A waypoint with that name already exists."
+            return
+        } catch {
+            print("Create waypoint failed: \(error)")
             return
         }
         await load(sortColumn: currentSortColumn, ascending: currentSortAscending)

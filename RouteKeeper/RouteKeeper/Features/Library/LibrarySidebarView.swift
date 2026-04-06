@@ -29,6 +29,9 @@ struct LibrarySidebarView: View {
     @State private var showingNewListSheet = false
     @State private var newListPreselectedFolderID: Int64?
 
+    @State private var showingNewWaypointSheet = false
+    @State private var newWaypointPreselectedListID: Int64?
+
     private let dividerHeight: CGFloat = 8
     private let minFraction:   CGFloat = 0.3
     private let maxFraction:   CGFloat = 0.85
@@ -64,6 +67,15 @@ struct LibrarySidebarView: View {
         .toolbar {
             ToolbarItem {
                 Button {
+                    newWaypointPreselectedListID = nil
+                    showingNewWaypointSheet = true
+                } label: {
+                    Image(systemName: "mappin.and.ellipse")
+                }
+                .help("New Waypoint")
+            }
+            ToolbarItem {
+                Button {
                     newListPreselectedFolderID = nil
                     showingNewListSheet = true
                 } label: {
@@ -86,8 +98,12 @@ struct LibrarySidebarView: View {
         .sheet(isPresented: $showingNewListSheet) {
             NewListSheet(viewModel: viewModel, preselectedFolderID: newListPreselectedFolderID)
         }
+        .sheet(isPresented: $showingNewWaypointSheet) {
+            NewWaypointSheet(viewModel: viewModel, preselectedListID: newWaypointPreselectedListID)
+        }
         .focusedValue(\.showNewFolderSheet, $showingNewFolderSheet)
         .focusedValue(\.showNewListSheet, $showingNewListSheet)
+        .focusedValue(\.showNewWaypointSheet, $showingNewWaypointSheet)
         .overlay {
             if viewModel.isLoading {
                 ProgressView()
@@ -134,6 +150,14 @@ struct LibrarySidebarView: View {
                         ForEach(lists) { list in
                             Label(list.name, systemImage: "map")
                                 .tag(list)
+                                .contextMenu {
+                                    Button {
+                                        newWaypointPreselectedListID = list.id
+                                        showingNewWaypointSheet = true
+                                    } label: {
+                                        Label("New Waypoint", systemImage: "mappin.and.ellipse")
+                                    }
+                                }
                         }
                     } label: {
                         Label(

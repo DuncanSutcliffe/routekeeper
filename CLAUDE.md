@@ -118,10 +118,11 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–7 complete, schema v3 applied, geocoding service in place.**
+**Increments 1–8 complete, schema v4 applied, waypoint creation implemented.**
 The application has a working shell, database layer, live map, motorcycle
 routing, a reworked library sidebar, folder creation, list creation, the
-waypoints schema, and a tested geocoding service.
+waypoints schema, a tested geocoding service, and a full waypoint creation
+flow with Nominatim search integration.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -129,7 +130,7 @@ waypoints schema, and a tested geocoding service.
 
 ### Increment 2 — Database layer
 - GRDB.swift added via Swift Package Manager
-- Full SQLite schema (currently at migration `"v3"` via `DatabaseMigrator`)
+- Full SQLite schema (currently at migration `"v4"` via `DatabaseMigrator`)
 - `DatabaseManager` actor: opens DB in Application Support, runs
   migrations on launch, seeds placeholder data on first run
 - GRDB record structs for all tables
@@ -224,7 +225,7 @@ waypoints schema, and a tested geocoding service.
   - File menu item "New List" with ⌘N, wired via `FocusedValue` /
     `ShowNewListSheetKey`; disabled when the sidebar is not focused
 
-### Schema v3 — waypoints data model
+### Schema v3 — waypoints data model (superseded by v4)
 - **Old `waypoints` satellite table dropped** (previously linked to `items.id`
   via `item_id`; Garmin-style geometry store). Items of type `"waypoint"` remain
   in the `items` table but their geometry rows are gone. The old `Waypoint`
@@ -236,16 +237,20 @@ waypoints schema, and a tested geocoding service.
   (`building.columns.fill`), Other (`mappin`), Parking (`parkingsign`),
   Pass (`mountain.2.fill`), Restaurant (`fork.knife`), Viewpoint
   (`binoculars.fill`), Workshop (`wrench.and.screwdriver.fill`).
-- **`waypoints` table** — standalone favourite POI store, independent of the
-  library item system. Columns: `id`, `name` (UNIQUE), `latitude`, `longitude`,
+- v3 `waypoints` table was a standalone store with its own autoincrement `id`,
+  preventing participation in `item_list_membership`. Replaced by v4 (below).
+
+### Schema v4 — waypoints linked to items
+- **`waypoints` table redesigned** — `item_id INTEGER PRIMARY KEY REFERENCES
+  items(id) ON DELETE CASCADE` replaces the standalone `id` autoincrement key.
+  This makes waypoints full participants in the library membership system: the
+  same `item_list_membership` junction table used by routes and tracks.
+  Columns: `item_id`, `name`, `latitude`, `longitude`,
   `category_id` (nullable FK → `categories.id` ON DELETE SET NULL),
   `color_hex` (default `#E8453C`), `notes`, `created_at`.
-- **`WaypointRecords.swift`** — `Category` and `Waypoint` Swift structs
-  following the same `Codable / Identifiable / Hashable / FetchableRecord /
-  PersistableRecord` pattern as `LibraryRecords.swift`. Both use `encode(to:)`
-  to omit `created_at` so the DB default applies on insert. Hashable on `id`.
-- **`DatabaseManager`** gains `fetchCategories() async throws -> [Category]`
-  and `fetchWaypoints() async throws -> [Waypoint]`, both ordered by name.
+- **`WaypointRecords.swift`** — `Waypoint` struct updated: `var itemId: Int64`
+  is the stored PK/FK; `var id: Int64 { itemId }` satisfies `Identifiable`.
+  `Category` struct unchanged. Both use `encode(to:)` to omit `created_at`.
 
 ### GeocodingService
 - **`Services/GeocodingService.swift`** — `@MainActor final class` wrapping the
@@ -270,6 +275,39 @@ waypoints schema, and a tested geocoding service.
   5. `testDuplicateSearchCancelsPrevious` — no network call for Bath; verifies
      Bristol succeeds and Bath raises `CancellationError`
 
+### Increment 8 — Waypoint creation
+- **Schema v4** applied (see above) — `waypoints.item_id` is now both PK and FK
+  to `items.id ON DELETE CASCADE`, enabling list membership via the existing
+  `item_list_membership` junction table.
+- **`DatabaseManager.createWaypoint(name:latitude:longitude:categoryId:colorHex:notes:listIds:)`**
+  — inserts into `items` (type = `"waypoint"`), then `waypoints` (using the new
+  `item_id`), then `item_list_membership` for each requested list, all within a
+  single write transaction. Returns the persisted `Waypoint`.
+- **`LibraryViewModel`** gains:
+  - `private(set) var categories: [Category]` — loaded on demand.
+  - `loadCategories()` — fetches from DB once; no-ops on subsequent calls.
+  - `createWaypoint(...)` — calls the DB method, catches `SQLITE_CONSTRAINT`
+    for duplicate names, reloads the sidebar on success.
+- **`Features/Waypoints/NewWaypointSheet.swift`** (new file) — three-section
+  creation sheet:
+  1. **Location** — `TextField` with live Nominatim search results (300 ms
+     debounced via `GeocodingService`); selecting a result shows a confirmed-
+     location chip with a clear button; waypoint name pre-filled from the
+     first comma-component of the result's subtitle.
+  2. **Details** — name field, category `Picker` (menu style, includes None),
+     eight preset colour swatches (`#E8453C`, `#E8873C`, `#E8D83C`, `#4CAF50`,
+     `#2196F3`, `#9C27B0`, `#795548`, `#607D8B`), notes `TextEditor`.
+  3. **Add to Lists** — checkbox list of all real lists with folder context;
+     pre-checks the list that was right-clicked.
+  - "Add Waypoint" button disabled until a location is confirmed and name is
+    non-empty. Duplicate name error shown in red; sheet stays open to correct.
+- **Three entry points** all set `showingNewWaypointSheet = true`:
+  - Toolbar button (`mappin.and.ellipse`) above the sidebar top panel.
+  - Right-click context menu on each real list row ("New Waypoint"), passes
+    that list as the pre-selection.
+  - File menu item "New Waypoint" with ⌘⌥N, wired via `FocusedValue` /
+    `ShowNewWaypointSheetKey`; disabled when the sidebar is not focused.
+
 ### Files in place
 
 ```
@@ -279,7 +317,7 @@ RouteKeeper/
 ├── Models/
 │   ├── ItemRecords.swift
 │   ├── LibraryRecords.swift
-│   ├── WaypointRecords.swift  (Category, Waypoint — schema v3)
+│   ├── WaypointRecords.swift  (Category, Waypoint — schema v4)
 │   ├── LibraryModels.swift    (stub)
 │   └── SystemFolders.swift    (sentinel values for Unclassified)
 ├── Features/
@@ -290,8 +328,10 @@ RouteKeeper/
 │   │   └── NewListSheet.swift
 │   ├── Map/
 │   │   └── MapView.swift      (includes MapViewModel)
-│   └── Routing/
-│       └── RoutingService.swift
+│   ├── Routing/
+│   │   └── RoutingService.swift
+│   └── Waypoints/
+│       └── NewWaypointSheet.swift
 ├── Services/
 │   └── GeocodingService.swift
 ├── Resources/
@@ -315,6 +355,14 @@ RouteKeeper/
   instance (`valhalla1.openstreetmap.de`). This is rate-limited and
   occasionally unavailable. To be replaced with a self-hosted or
   commercial instance before release.
+- **Waypoint editing** — `NewWaypointSheet` handles creation only.
+  Editing an existing waypoint's name, location, category, colour,
+  notes, or list membership is not yet implemented.
+- **Sidebar selection not wired to map** — selecting a list or item in
+  the sidebar does not yet update what is displayed on the map.
+
+Next step: Increment 9 — replace demo map tile provider with a
+production-ready source, then wire sidebar selection to map display.
 
 Next step: Increment 8 — waypoint creation sheet with Nominatim search integration.
 

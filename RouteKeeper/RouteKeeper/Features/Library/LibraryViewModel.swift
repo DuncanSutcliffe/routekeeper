@@ -23,6 +23,12 @@ final class LibraryViewModel {
     /// Items belonging to the currently selected list.
     private(set) var listItems: [Item] = []
 
+    /// The list whose items are currently shown in the bottom panel.
+    ///
+    /// Retained so that drag-and-drop operations can refresh the correct list
+    /// without the list selection being passed back through the view.
+    private(set) var currentList: RouteList?
+
     /// IDs of folders currently expanded in the top panel.
     /// Populated with all folder IDs when folders are loaded so everything
     /// starts expanded.
@@ -194,6 +200,7 @@ final class LibraryViewModel {
     /// When `list` is the sentinel ``RouteList/unclassified`` (id == -1),
     /// queries for items with no membership row instead of the normal join.
     func loadItems(for list: RouteList) async {
+        currentList = list
         do {
             if list.id == -1 {
                 listItems = try await DatabaseManager.shared.fetchUnclassifiedItems()
@@ -208,6 +215,50 @@ final class LibraryViewModel {
 
     /// Clears the item list (called when no list is selected).
     func clearItems() {
+        currentList = nil
         listItems = []
+    }
+
+    // MARK: - Drag and drop
+
+    /// Copies `itemId` into `targetList` by inserting a membership row.
+    ///
+    /// No-op if the item is already a member of the target list.
+    /// Refreshes the bottom panel after a successful operation.
+    func copyItem(itemId: Int64, toList targetList: RouteList) async {
+        guard let targetListId = targetList.id else { return }
+        do {
+            try await DatabaseManager.shared.copyItemToList(
+                itemId: itemId,
+                targetListId: targetListId
+            )
+        } catch {
+            print("Copy item to list failed: \(error)")
+            return
+        }
+        if let current = currentList {
+            await loadItems(for: current)
+        }
+    }
+
+    /// Moves `itemId` from `sourceListId` to `targetList` in a single transaction.
+    ///
+    /// No-op when source and target are the same list.
+    /// Refreshes the bottom panel after a successful operation.
+    func moveItem(itemId: Int64, fromListId sourceListId: Int64, toList targetList: RouteList) async {
+        guard let targetListId = targetList.id, sourceListId != targetListId else { return }
+        do {
+            try await DatabaseManager.shared.moveItemBetweenLists(
+                itemId: itemId,
+                sourceListId: sourceListId,
+                targetListId: targetListId
+            )
+        } catch {
+            print("Move item between lists failed: \(error)")
+            return
+        }
+        if let current = currentList {
+            await loadItems(for: current)
+        }
     }
 }

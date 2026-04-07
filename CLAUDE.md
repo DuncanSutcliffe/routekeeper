@@ -118,14 +118,15 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–12 complete, schema v5 applied, UI tidy-up done.**
+**Increments 1–13 complete, schema v5 applied, drag and drop implemented.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
 with Nominatim search integration, sidebar item selection wired to the map, a
 route creation sheet that calls Valhalla and persists the GeoJSON geometry so
-selecting a route in the sidebar draws it on the map with bounds fitting, and
-a polished sidebar control strip with correctly coloured item icons.
+selecting a route in the sidebar draws it on the map with bounds fitting, a
+polished sidebar control strip with correctly coloured item icons, and drag and
+drop to move or copy items between lists.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -495,7 +496,36 @@ RouteKeeper/
   Sidebar list rows apply `foregroundStyle` to the icon only; waypoints
   use their stored colour and routes/tracks fall back to `.secondary`.
 
-Next step: Increment 13 — drag and drop to move items between lists.
+### Increment 13 — Drag and drop between lists
+- **Item rows are draggable** — each row in the bottom panel carries a
+  `DraggableItem` payload (JSON-encoded `itemId` + `sourceListId`) via
+  SwiftUI's `.draggable()` modifier using a custom `Transferable` type.
+- **Drop targets are list rows only** — `.onDrop(of:delegate:)` is attached
+  to every list row; `ListDropDelegate.validateDrop` rejects the Unclassified
+  sentinel (id == −1) and folder headers receive no drop modifier at all.
+- **Operation semantics:**
+  - Source is Unclassified → always a move (insert target membership; no
+    source row exists to delete).
+  - Source is a real list, no modifier → copy (insert target membership,
+    source membership untouched).
+  - Source is a real list, Command held → move (delete source membership,
+    insert target membership in a single write transaction).
+- **Badge behaviour** — `dropUpdated` returns `.copy` (shows +) by default
+  and `.move` (no badge) when Command is held, via `NSEvent.modifierFlags`.
+- **Same-list drops are no-ops** — `INSERT OR IGNORE` in `copyItemToList`
+  and an early-exit guard in `moveItemBetweenLists` prevent duplicate rows.
+- **`DatabaseManager`** gains two new methods, each in a single write
+  transaction: `copyItemToList(itemId:targetListId:)` and
+  `moveItemBetweenLists(itemId:sourceListId:targetListId:)`.
+- **`LibraryViewModel`** gains `currentList: RouteList?` (set by
+  `loadItems(for:)`, cleared by `clearItems()`), `copyItem(itemId:toList:)`,
+  and `moveItem(itemId:fromListId:toList:)` — both reload the bottom panel
+  from `currentList` after a successful DB write.
+- **UTType** — `com.routekeeper.libraryitem` is declared as an exported type
+  in the Xcode target's Info settings and referenced in code via
+  `UTType(exportedAs: "com.routekeeper.libraryitem")`.
+
+Next step: Increment 14 — context menu for move/copy between lists.
 
 ## File Structure (Planned)
 ```

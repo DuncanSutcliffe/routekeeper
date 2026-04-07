@@ -13,6 +13,89 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
+
+// MARK: - Drag identifier
+
+private extension UTType {
+    /// Internal type used to transfer library items within RouteKeeper.
+    ///
+    /// Uses `importedAs` rather than `exportedAs` so that no Info.plist
+    /// declaration is required — this type is private to the app and is
+    /// never exported to the system UTType registry.
+    static let routeKeeperItem = UTType(exportedAs: "com.routekeeper.libraryitem")
+}
+
+// MARK: - Drag payload
+
+/// Data transferred when a library item is dragged between lists.
+private struct DraggableItem: Codable, Transferable {
+    /// The `items.id` of the dragged item.
+    let itemId: Int64
+    /// The `lists.id` the item was dragged from; −1 means Unclassified.
+    let sourceListId: Int64
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .routeKeeperItem)
+    }
+}
+
+// MARK: - Drop delegate
+
+/// Handles drops onto a list row in the library tree.
+///
+/// - Valid targets: real lists only (id ≠ −1).
+/// - Dropping onto Unclassified or a folder is rejected via `validateDrop`.
+/// - Badge behaviour: returns `.copy` (shows +) by default; returns `.move`
+///   (no badge) when the Command key is held during the drag.
+private struct ListDropDelegate: DropDelegate {
+    let targetList: RouteList
+    let viewModel: LibraryViewModel
+
+    func validateDrop(info: DropInfo) -> Bool {
+        targetList.id != -1
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        guard targetList.id != -1 else { return DropProposal(operation: .forbidden) }
+        let commandDown = NSEvent.modifierFlags.contains(.command)
+        return DropProposal(operation: commandDown ? .move : .copy)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard targetList.id != -1 else { return false }
+        let commandDown = NSEvent.modifierFlags.contains(.command)
+        let providers = info.itemProviders(for: [.routeKeeperItem])
+        guard let provider = providers.first else { return false }
+
+        provider.loadDataRepresentation(
+            forTypeIdentifier: UTType.routeKeeperItem.identifier
+        ) { data, _ in
+            guard let data,
+                  let dragged = try? JSONDecoder().decode(DraggableItem.self, from: data)
+            else { return }
+
+            Task { @MainActor in
+                if dragged.sourceListId == -1 {
+                    // From Unclassified — always a move: insert membership only
+                    // (there is no source membership row to delete).
+                    await viewModel.copyItem(itemId: dragged.itemId, toList: targetList)
+                } else if commandDown {
+                    // Command held — move: delete source membership, insert target.
+                    await viewModel.moveItem(
+                        itemId: dragged.itemId,
+                        fromListId: dragged.sourceListId,
+                        toList: targetList
+                    )
+                } else {
+                    // No modifier — copy: insert target membership, source unchanged.
+                    await viewModel.copyItem(itemId: dragged.itemId, toList: targetList)
+                }
+            }
+        }
+        return true
+    }
+}
 
 struct LibrarySidebarView: View {
     let viewModel: LibraryViewModel
@@ -74,6 +157,13 @@ struct LibrarySidebarView: View {
                                     Label("New Waypoint", systemImage: "mappin.and.ellipse")
                                 }
                             }
+                            .onDrop(
+                                of: [.routeKeeperItem],
+                                delegate: ListDropDelegate(
+                                    targetList: list,
+                                    viewModel: viewModel
+                                )
+                            )
                     }
                 } label: {
                     Label(
@@ -271,6 +361,10 @@ struct LibrarySidebarView: View {
                                 .foregroundStyle(iconColor(for: item))
                         }
                         .tag(item)
+                        .draggable(DraggableItem(
+                            itemId: item.id ?? 0,
+                            sourceListId: selectedList?.id ?? -1
+                        ))
                     }
                 }
                 .listStyle(.sidebar)

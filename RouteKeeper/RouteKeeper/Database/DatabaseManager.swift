@@ -418,6 +418,47 @@ actor DatabaseManager {
         }
     }
 
+    /// Copies an item into a list by inserting a membership row.
+    ///
+    /// Uses `INSERT OR IGNORE` so this is a no-op if the item is already a
+    /// member of the target list — dropping an item onto its own list is safe.
+    func copyItemToList(itemId: Int64, targetListId: Int64) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "INSERT OR IGNORE INTO item_list_membership (item_id, list_id) VALUES (?, ?)",
+                arguments: [itemId, targetListId]
+            )
+        }
+    }
+
+    /// Moves an item from one list to another in a single write transaction.
+    ///
+    /// Deletes the `(itemId, sourceListId)` membership row, then inserts a new
+    /// `(itemId, targetListId)` row.  `INSERT OR IGNORE` ensures a pre-existing
+    /// target membership is not treated as an error.  No other list memberships
+    /// for the item are affected.
+    ///
+    /// Calling this with `sourceListId == targetListId` is a no-op.
+    func moveItemBetweenLists(
+        itemId: Int64,
+        sourceListId: Int64,
+        targetListId: Int64
+    ) async throws {
+        guard sourceListId != targetListId else { return }
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "DELETE FROM item_list_membership WHERE item_id = ? AND list_id = ?",
+                arguments: [itemId, sourceListId]
+            )
+            try db.execute(
+                sql: "INSERT OR IGNORE INTO item_list_membership (item_id, list_id) VALUES (?, ?)",
+                arguments: [itemId, targetListId]
+            )
+        }
+    }
+
     /// Fetches all items belonging to the given list, ordered by name.
     ///
     /// A LEFT JOIN with `waypoints` promotes `waypoints.color_hex` into the

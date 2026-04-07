@@ -127,9 +127,9 @@ struct NewWaypointSheet: View {
                     Image(systemName: "mappin.circle.fill")
                         .foregroundStyle(.red)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(waypointName.isEmpty ? loc.subtitle : waypointName)
+                        Text(waypointName.isEmpty ? loc.name : waypointName)
                             .lineLimit(1)
-                        Text(loc.name)
+                        Text(loc.subtitle)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -170,9 +170,9 @@ struct NewWaypointSheet: View {
                             Button { selectResult(result) } label: {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(result.subtitle.isEmpty ? result.name : result.subtitle)
-                                            .lineLimit(1)
                                         Text(result.name)
+                                            .lineLimit(1)
+                                        Text(result.subtitle)
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                             .lineLimit(1)
@@ -310,14 +310,10 @@ struct NewWaypointSheet: View {
     private func selectResult(_ result: GeocodingResult) {
         selectedLocation = result
         searchResults = []
-        // Pre-fill name from the first comma-component of the subtitle
-        // (e.g. "Chamonix" from "Chamonix, France") if the field is still empty.
+        // Pre-fill name from the result title (place's own name or first
+        // component of display_name) if the field is still empty.
         if waypointName.isEmpty {
-            let candidate = result.subtitle
-                .components(separatedBy: ",")
-                .first?
-                .trimmingCharacters(in: .whitespaces) ?? ""
-            waypointName = candidate.isEmpty ? result.name : candidate
+            waypointName = result.name
         }
     }
 

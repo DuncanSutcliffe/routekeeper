@@ -118,13 +118,14 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–11 complete, schema v5 applied, route creation and map display implemented.**
+**Increments 1–12 complete, schema v5 applied, UI tidy-up done.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
-with Nominatim search integration, sidebar item selection wired to the map, and
-a route creation sheet that calls Valhalla and persists the GeoJSON geometry so
-selecting a route in the sidebar draws it on the map with bounds fitting.
+with Nominatim search integration, sidebar item selection wired to the map, a
+route creation sheet that calls Valhalla and persists the GeoJSON geometry so
+selecting a route in the sidebar draws it on the map with bounds fitting, and
+a polished sidebar control strip with correctly coloured item icons.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -469,7 +470,32 @@ RouteKeeper/
 - **Seed data routes** — the seeded routes have no geometry (NULL in the
   `geometry` column); selecting them silently shows nothing on the map.
 
-Next step: Increment 12 — UI tidy-up.
+### Increment 12 — UI tidy-up
+- **Sidebar control strip** — sort control and new-item icons moved from
+  the window title bar into the sidebar content area as the first (non-
+  selectable) row of the `List`, sitting correctly below the window chrome.
+  `List` with `.listStyle(.sidebar)` is now the sidebar root so macOS
+  handles title-bar safe-area insets automatically; the items panel is
+  attached as a `.safeAreaInset(edge: .bottom)` with a restored draggable
+  divider whose height is persisted in `@AppStorage`.
+- **Control strip sizing and spacing** — icons resized to
+  `.font(.system(size: 16))`, `HStack` spacing increased to 16 pt.
+  Tooltips added to all five controls.
+- **New-item icon order** changed to folder → list → waypoint → route,
+  matching the containment hierarchy.
+- **Nominatim result title** — `GeocodingService` now decodes the `name`
+  field from the API response and uses it as the result title (falling back
+  to the first comma-component of `display_name` when `name` is absent).
+  The same value is pre-populated in the waypoint name field when the user
+  confirms a search result. Result rows in `NewWaypointSheet` now show the
+  proper name as the primary line and city/country as the secondary line.
+- **Sidebar icon colour** — `fetchItems(for:)` and `fetchUnclassifiedItems()`
+  now `LEFT JOIN waypoints` and alias `color_hex` as `colour` so
+  `Item.colour` is populated for waypoint rows without any schema change.
+  Sidebar list rows apply `foregroundStyle` to the icon only; waypoints
+  use their stored colour and routes/tracks fall back to `.secondary`.
+
+Next step: Increment 13 — drag and drop to move items between lists.
 
 ## File Structure (Planned)
 ```

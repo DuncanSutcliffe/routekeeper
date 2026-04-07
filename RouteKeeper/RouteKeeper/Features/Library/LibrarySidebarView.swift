@@ -2,12 +2,14 @@
 //  LibrarySidebarView.swift
 //  RouteKeeper
 //
-//  Split sidebar: top panel shows folders and lists; bottom panel shows
-//  the contents (items) of the selected list.
+//  The root of the sidebar is a List with .listStyle(.sidebar) — macOS
+//  applies the title-bar safe-area inset automatically for this pattern.
+//  The items panel is attached as a .safeAreaInset(edge: .bottom) so the
+//  List scrolls above it.  A draggable divider lets the user resize the
+//  two panels.
 //
-//  The split is implemented manually with a GeometryReader and a draggable
-//  divider so that content changes never affect panel heights. splitFraction
-//  is stored in @AppStorage so the user's preferred split persists.
+//  The sort control and new-item buttons live in a control strip that is
+//  the first row of the List (no .tag, so it is not selectable).
 //
 
 import SwiftUI
@@ -18,92 +20,119 @@ struct LibrarySidebarView: View {
     @Binding var selectedItem: Item?
 
     // Sort preference — persisted across launches.
-    @AppStorage("library.sortColumn")    private var sortColumn: String = "name"
-    @AppStorage("library.sortAscending") private var sortAscending: Bool = true
+    @AppStorage("library.sortColumn")        private var sortColumn: String    = "name"
+    @AppStorage("library.sortAscending")     private var sortAscending: Bool   = true
 
-    // Fraction of total height given to the top panel.
-    // Persisted so the user's preferred split survives relaunch.
-    @AppStorage("library.splitFraction") private var splitFraction: Double = 0.7
+    // Height of the bottom (items) panel in points — persisted.
+    @AppStorage("library.bottomPanelHeight") private var bottomPanelHeight: Double = 200
 
-    @State private var showingNewFolderSheet = false
-    @State private var showingNewListSheet = false
+    // Drag state — not persisted; initialised from bottomPanelHeight on appear.
+    @State private var isDragging      = false
+    @State private var dragStartHeight: CGFloat = 200
+
+    @State private var showingNewFolderSheet   = false
+    @State private var showingNewListSheet     = false
     @State private var newListPreselectedFolderID: Int64?
 
     @State private var showingNewWaypointSheet = false
     @State private var newWaypointPreselectedListID: Int64?
 
-    @State private var showingNewRouteSheet = false
+    @State private var showingNewRouteSheet    = false
     @State private var newRoutePreselectedListID: Int64?
 
-    private let dividerHeight: CGFloat = 8
-    private let minFraction:   CGFloat = 0.3
-    private let maxFraction:   CGFloat = 0.85
+    private let dividerHeight:  CGFloat = 8
+    private let minPanelHeight: CGFloat = 80
+    private let maxPanelHeight: CGFloat = 600
 
     var body: some View {
-        GeometryReader { geometry in
-            let totalHeight    = geometry.size.height
-            let topHeight      = CGFloat(splitFraction) * totalHeight
-            let bottomHeight   = totalHeight - topHeight - dividerHeight
+        List(selection: $selectedList) {
+            // ── Control strip ──────────────────────────────────────────
+            // No .tag() → not selectable; transparent background so it
+            // reads as a toolbar strip rather than a list row.
+            controlStrip
+                .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
 
+            // ── Folder / list hierarchy ────────────────────────────────
+            ForEach(viewModel.folderContents, id: \.folder.id) { folder, lists in
+                DisclosureGroup(isExpanded: expansionBinding(for: folder)) {
+                    ForEach(lists) { list in
+                        Label(list.name, systemImage: "map")
+                            .tag(list)
+                            .contextMenu {
+                                Button {
+                                    newRoutePreselectedListID = list.id
+                                    showingNewRouteSheet = true
+                                } label: {
+                                    Label("New Route", systemImage: "road.lanes")
+                                }
+                                Button {
+                                    newWaypointPreselectedListID = list.id
+                                    showingNewWaypointSheet = true
+                                } label: {
+                                    Label("New Waypoint", systemImage: "mappin.and.ellipse")
+                                }
+                            }
+                    }
+                } label: {
+                    Label(
+                        folder.name,
+                        systemImage: folder.id == -1 ? "tray.fill" : "folder.fill"
+                    )
+                    .fontWeight(.bold)
+                    .contextMenu {
+                        if folder.id != -1 {
+                            Button {
+                                newListPreselectedFolderID = folder.id
+                                showingNewListSheet = true
+                            } label: {
+                                Label("New List", systemImage: "list.bullet.rectangle.portrait")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .contextMenu {
+            Button {
+                showingNewFolderSheet = true
+            } label: {
+                Label("New Folder", systemImage: "folder.badge.plus")
+            }
+        }
+        // Items panel pinned to the bottom; the List adjusts its own
+        // scroll-content inset automatically to stay above this area.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
-                topPanel
-                    .frame(height: topHeight)
-
-                // Draggable divider
+                // Draggable divider — dragging up enlarges the items panel.
                 Rectangle()
                     .fill(Color(nsColor: .separatorColor))
                     .frame(height: dividerHeight)
                     .gesture(
                         DragGesture(minimumDistance: 1)
                             .onChanged { value in
-                                let proposed = (topHeight + value.translation.height) / totalHeight
-                                splitFraction = Double(proposed.clamped(to: minFraction...maxFraction))
+                                if !isDragging {
+                                    isDragging = true
+                                    dragStartHeight = CGFloat(bottomPanelHeight)
+                                }
+                                // Negative translation (drag up) → panel grows.
+                                let proposed = dragStartHeight - value.translation.height
+                                bottomPanelHeight = Double(
+                                    min(max(proposed, minPanelHeight), maxPanelHeight)
+                                )
                             }
+                            .onEnded { _ in isDragging = false }
                     )
                     .cursor(.resizeUpDown)
 
                 bottomPanel
-                    .frame(height: bottomHeight)
+                    .frame(height: CGFloat(bottomPanelHeight))
             }
+            .background(Color(nsColor: .windowBackgroundColor))
         }
         .navigationTitle("Library")
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    newRoutePreselectedListID = nil
-                    showingNewRouteSheet = true
-                } label: {
-                    Image(systemName: "road.lanes")
-                }
-                .help("New Route")
-            }
-            ToolbarItem {
-                Button {
-                    newWaypointPreselectedListID = nil
-                    showingNewWaypointSheet = true
-                } label: {
-                    Image(systemName: "mappin.and.ellipse")
-                }
-                .help("New Waypoint")
-            }
-            ToolbarItem {
-                Button {
-                    newListPreselectedFolderID = nil
-                    showingNewListSheet = true
-                } label: {
-                    Image(systemName: "rectangle.badge.plus")
-                }
-                .help("New List")
-            }
-            ToolbarItem {
-                Button {
-                    showingNewFolderSheet = true
-                } label: {
-                    Image(systemName: "folder.badge.plus")
-                }
-                .help("New Folder")
-            }
-        }
         .sheet(isPresented: $showingNewFolderSheet) {
             NewFolderSheet(viewModel: viewModel)
         }
@@ -116,17 +145,15 @@ struct LibrarySidebarView: View {
         .sheet(isPresented: $showingNewRouteSheet) {
             NewRouteSheet(viewModel: viewModel, preselectedListID: newRoutePreselectedListID)
         }
-        .focusedValue(\.showNewFolderSheet, $showingNewFolderSheet)
-        .focusedValue(\.showNewListSheet, $showingNewListSheet)
+        .focusedValue(\.showNewFolderSheet,   $showingNewFolderSheet)
+        .focusedValue(\.showNewListSheet,     $showingNewListSheet)
         .focusedValue(\.showNewWaypointSheet, $showingNewWaypointSheet)
-        .focusedValue(\.showNewRouteSheet, $showingNewRouteSheet)
+        .focusedValue(\.showNewRouteSheet,    $showingNewRouteSheet)
         .overlay {
             if viewModel.isLoading {
                 ProgressView()
             }
         }
-        // When the selected list changes, clear the item selection and
-        // load the new list's contents.
         .onChange(of: selectedList) { _, newList in
             selectedItem = nil
             Task {
@@ -137,77 +164,96 @@ struct LibrarySidebarView: View {
                 }
             }
         }
-        // When sort preference changes, reload folders.
-        .onChange(of: sortColumn) { _, _ in
+        .onChange(of: sortColumn)    { _, _ in
             Task { await viewModel.load(sortColumn: sortColumn, ascending: sortAscending) }
         }
         .onChange(of: sortAscending) { _, _ in
             Task { await viewModel.load(sortColumn: sortColumn, ascending: sortAscending) }
         }
-        // Load items for any list that's already selected on first appear.
         .onAppear {
+            dragStartHeight = CGFloat(bottomPanelHeight)
             if let list = selectedList {
                 Task { await viewModel.loadItems(for: list) }
             }
         }
     }
 
-    // MARK: - Top panel
+    // MARK: - Control strip
 
-    private var topPanel: some View {
-        VStack(spacing: 0) {
-            sortToolbar
-            Divider()
-            List(selection: $selectedList) {
-                ForEach(viewModel.folderContents, id: \.folder.id) { folder, lists in
-                    DisclosureGroup(
-                        isExpanded: expansionBinding(for: folder)
-                    ) {
-                        ForEach(lists) { list in
-                            Label(list.name, systemImage: "map")
-                                .tag(list)
-                                .contextMenu {
-                                    Button {
-                                        newRoutePreselectedListID = list.id
-                                        showingNewRouteSheet = true
-                                    } label: {
-                                        Label("New Route", systemImage: "road.lanes")
-                                    }
-                                    Button {
-                                        newWaypointPreselectedListID = list.id
-                                        showingNewWaypointSheet = true
-                                    } label: {
-                                        Label("New Waypoint", systemImage: "mappin.and.ellipse")
-                                    }
-                                }
-                        }
-                    } label: {
-                        Label(
-                            folder.name,
-                            systemImage: folder.id == -1 ? "tray.fill" : "folder.fill"
-                        )
-                        .fontWeight(.bold)
-                        .contextMenu {
-                            if folder.id != -1 {
-                                Button {
-                                    newListPreselectedFolderID = folder.id
-                                    showingNewListSheet = true
-                                } label: {
-                                    Label("New List", systemImage: "list.bullet.rectangle.portrait")
-                                }
-                            }
-                        }
-                    }
+    /// Sort menu on the left; new-item buttons on the right.
+    /// Placed as the first List row with no .tag so it is never selectable.
+    private var controlStrip: some View {
+        HStack(spacing: 16) {
+            // Sort menu
+            Menu {
+                Picker("Sort by", selection: $sortColumn) {
+                    Text("Name").tag("name")
+                    Text("Date Created").tag("created_at")
                 }
-            }
-            .listStyle(.sidebar)
-            .contextMenu {
-                Button {
-                    showingNewFolderSheet = true
-                } label: {
-                    Label("New Folder", systemImage: "folder.badge.plus")
+                .pickerStyle(.inline)
+                Divider()
+                Toggle(isOn: $sortAscending) {
+                    Label(
+                        "Ascending",
+                        systemImage: sortAscending ? "chevron.up" : "chevron.down"
+                    )
                 }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "chevron.up.chevron.down")
+                    Text(sortColumn == "name" ? "Name" : "Date Created")
+                }
+                .foregroundStyle(.secondary)
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .font(.system(size: 16))
+            .help("Sort library")
+
+            Spacer()
+
+            // New Folder (outermost container — leftmost)
+            Button {
+                showingNewFolderSheet = true
+            } label: {
+                Image(systemName: "folder.badge.plus")
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 16))
+            .help("New folder")
+
+            // New List
+            Button {
+                newListPreselectedFolderID = nil
+                showingNewListSheet = true
+            } label: {
+                Image(systemName: "rectangle.badge.plus")
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 16))
+            .help("New list")
+
+            // New Waypoint
+            Button {
+                newWaypointPreselectedListID = nil
+                showingNewWaypointSheet = true
+            } label: {
+                Image(systemName: "mappin.and.ellipse")
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 16))
+            .help("New waypoint")
+
+            // New Route (leaf item — rightmost)
+            Button {
+                newRoutePreselectedListID = nil
+                showingNewRouteSheet = true
+            } label: {
+                Image(systemName: "road.lanes")
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 16))
+            .help("New route")
         }
     }
 
@@ -218,8 +264,13 @@ struct LibrarySidebarView: View {
             if selectedList != nil {
                 List(selection: $selectedItem) {
                     ForEach(viewModel.listItems) { item in
-                        Label(item.name, systemImage: item.type.systemImage)
-                            .tag(item)
+                        Label {
+                            Text(item.name)
+                        } icon: {
+                            Image(systemName: item.type.systemImage)
+                                .foregroundStyle(iconColor(for: item))
+                        }
+                        .tag(item)
                     }
                 }
                 .listStyle(.sidebar)
@@ -237,43 +288,19 @@ struct LibrarySidebarView: View {
         }
     }
 
-    // MARK: - Sort toolbar
-
-    private var sortToolbar: some View {
-        HStack(spacing: 4) {
-            Menu {
-                Picker("Sort by", selection: $sortColumn) {
-                    Text("Name").tag("name")
-                    Text("Date Created").tag("created_at")
-                }
-                .pickerStyle(.inline)
-                Divider()
-                Toggle(isOn: $sortAscending) {
-                    Label(
-                        "Ascending",
-                        systemImage: sortAscending ? "chevron.up" : "chevron.down"
-                    )
-                }
-            } label: {
-                Image(systemName: sortAscending ? "chevron.up.chevron.down" : "chevron.up.chevron.down")
-                    .imageScale(.small)
-                    .foregroundStyle(.secondary)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Sort folders")
-
-            Text(sortColumn == "name" ? "Name" : "Date Created")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Spacer()
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-    }
-
     // MARK: - Helpers
+
+    /// Returns the colour to apply to `item`'s sidebar icon.
+    ///
+    /// Waypoints carry a `colour` hex string populated from `waypoints.color_hex`
+    /// by the fetch query.  Routes and tracks have no colour yet, so they fall
+    /// back to `.secondary`.
+    private func iconColor(for item: Item) -> Color {
+        if let hex = item.colour, !hex.isEmpty {
+            return Color(itemHex: hex)
+        }
+        return .secondary
+    }
 
     /// A `Binding<Bool>` for the expansion state of a folder row.
     private func expansionBinding(for folder: ListFolder) -> Binding<Bool> {
@@ -294,18 +321,24 @@ struct LibrarySidebarView: View {
     }
 }
 
-// MARK: - Comparable clamping
+// MARK: - Color from hex string
 
-private extension Comparable {
-    func clamped(to range: ClosedRange<Self>) -> Self {
-        min(max(self, range.lowerBound), range.upperBound)
+private extension Color {
+    /// Initialises a `Color` from a CSS hex string such as `"#E8453C"`.
+    init(itemHex hex: String) {
+        let clean = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        let value = UInt64(clean, radix: 16) ?? 0x888888
+        let r = Double((value >> 16) & 0xFF) / 255
+        let g = Double((value >> 8)  & 0xFF) / 255
+        let b = Double(value         & 0xFF) / 255
+        self.init(red: r, green: g, blue: b)
     }
 }
 
 // MARK: - Resize cursor
 
 private extension View {
-    /// Sets the cursor to a vertical resize arrow on hover.
+    /// Pushes a vertical-resize cursor while the pointer is over this view.
     func cursor(_ cursor: NSCursor) -> some View {
         onHover { inside in
             if inside { cursor.push() } else { NSCursor.pop() }

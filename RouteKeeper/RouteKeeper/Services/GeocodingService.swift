@@ -90,12 +90,14 @@ final class GeocodingService {
 // MARK: - Nominatim JSON types (private)
 
 private struct NominatimResult: Decodable {
-    let displayName: String
+    let name: String?       // Place's own name — present for named features, absent for addresses
+    let displayName: String // Full formatted address string
     let lat: String
     let lon: String
     let address: NominatimAddress?
 
     enum CodingKeys: String, CodingKey {
+        case name
         case displayName = "display_name"
         case lat, lon, address
     }
@@ -125,8 +127,18 @@ private extension GeocodingResult {
             parts.append(country)
         }
 
-        name     = raw.displayName
-        latitude = lat
+        // Use the place's own name if present; fall back to the first
+        // comma-component of display_name (e.g. "Matlock" from the full address).
+        if let n = raw.name, !n.isEmpty {
+            name = n
+        } else {
+            let first = raw.displayName
+                .components(separatedBy: ",")
+                .first?
+                .trimmingCharacters(in: .whitespaces) ?? ""
+            name = first.isEmpty ? raw.displayName : first
+        }
+        latitude  = lat
         longitude = lon
         subtitle  = parts.isEmpty ? raw.displayName : parts.joined(separator: ", ")
     }

@@ -50,6 +50,12 @@ final class LibraryViewModel {
     /// Waypoints that have stored coordinates, loaded on demand by the New Route sheet.
     private(set) var availableWaypoints: [Waypoint] = []
 
+    /// Maps each item ID to the set of list IDs the item currently belongs to.
+    ///
+    /// Populated alongside ``listItems`` by ``loadItems(for:)`` so that context
+    /// menus can synchronously determine which target lists to show as disabled.
+    private(set) var itemMemberships: [Int64: Set<Int64>] = [:]
+
     // Remembered so createFolder() can reload with the same sort the user last chose.
     private var currentSortColumn: String = "sort_order"
     private var currentSortAscending: Bool = true
@@ -202,14 +208,26 @@ final class LibraryViewModel {
     func loadItems(for list: RouteList) async {
         currentList = list
         do {
+            let items: [Item]
             if list.id == -1 {
-                listItems = try await DatabaseManager.shared.fetchUnclassifiedItems()
+                items = try await DatabaseManager.shared.fetchUnclassifiedItems()
             } else {
                 guard let listId = list.id else { return }
-                listItems = try await DatabaseManager.shared.fetchItems(for: listId)
+                items = try await DatabaseManager.shared.fetchItems(for: listId)
             }
+            listItems = items
+            // Populate the membership lookup so context menus can grey out
+            // lists the item already belongs to without an extra DB round-trip.
+            var memberships: [Int64: Set<Int64>] = [:]
+            for item in items {
+                if let id = item.id {
+                    memberships[id] = try await DatabaseManager.shared.fetchListIds(for: id)
+                }
+            }
+            itemMemberships = memberships
         } catch {
             listItems = []
+            itemMemberships = [:]
         }
     }
 
@@ -217,6 +235,7 @@ final class LibraryViewModel {
     func clearItems() {
         currentList = nil
         listItems = []
+        itemMemberships = [:]
     }
 
     // MARK: - Drag and drop

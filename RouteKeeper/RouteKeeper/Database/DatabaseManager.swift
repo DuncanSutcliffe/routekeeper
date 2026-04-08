@@ -484,6 +484,22 @@ actor DatabaseManager {
         }
     }
 
+    /// Returns the set of list IDs that `itemId` currently belongs to.
+    ///
+    /// Used by the context menu to determine which target lists should be shown
+    /// as disabled (the item is already a member of that list).
+    func fetchListIds(for itemId: Int64) async throws -> Set<Int64> {
+        let q = try requireQueue()
+        return try await q.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT list_id FROM item_list_membership WHERE item_id = ?",
+                arguments: [itemId]
+            )
+            return Set(rows.map { $0["list_id"] as Int64 })
+        }
+    }
+
     // MARK: Private helpers
 
     private func requireQueue() throws -> DatabaseQueue {

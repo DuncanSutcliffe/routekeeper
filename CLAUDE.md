@@ -118,15 +118,16 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–13 complete, schema v5 applied, drag and drop implemented.**
+**Increments 1–14 complete, schema v5 applied, drag and drop and context menus implemented.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
 with Nominatim search integration, sidebar item selection wired to the map, a
 route creation sheet that calls Valhalla and persists the GeoJSON geometry so
 selecting a route in the sidebar draws it on the map with bounds fitting, a
-polished sidebar control strip with correctly coloured item icons, and drag and
-drop to move or copy items between lists.
+polished sidebar control strip with correctly coloured item icons, drag and
+drop to move or copy items between lists, and a right-click context menu on
+item rows providing Move and Copy actions as an alternative to drag and drop.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -525,7 +526,36 @@ RouteKeeper/
   in the Xcode target's Info settings and referenced in code via
   `UTType(exportedAs: "com.routekeeper.libraryitem")`.
 
-Next step: Increment 14 — context menu for move/copy between lists.
+### Increment 14 — Right-click context menu on item rows
+- **Context menu on item rows** — each row in the bottom panel gains a
+  `.contextMenu` with two submenus: "Move to…" and "Copy to…".
+- **Submenu structure** — all real lists are listed grouped by folder,
+  matching the sidebar tree; the Unclassified sentinel is excluded as a
+  target. The list the item is currently being viewed in is excluded from
+  both submenus.
+- **"Copy to…" suppressed from Unclassified** — when the source is the
+  Unclassified list, only "Move to…" is shown; "Copy to…" is omitted
+  entirely (matching the drag-and-drop semantics where Unclassified items
+  can only be moved into a real list).
+- **Greyed-out already-member lists** — lists the item already belongs to
+  are shown disabled and non-selectable in both submenus. Membership data
+  is pre-loaded by `loadItems(for:)` into `LibraryViewModel.itemMemberships`
+  so the context menu reads it synchronously with no extra DB round-trip.
+- **Reuses Increment 13 DB methods** — copy actions call
+  `copyItemToList(itemId:targetListId:)` and move actions call
+  `moveItemBetweenLists(itemId:sourceListId:targetListId:)`.
+- **`DatabaseManager`** gains one new read method:
+  `fetchListIds(for itemId:) -> Set<Int64>` — queries
+  `item_list_membership` to determine which lists an item already belongs
+  to; used to populate `itemMemberships` at load time.
+- **`LibraryViewModel`** gains `private(set) var itemMemberships:
+  [Int64: Set<Int64>]`; `loadItems(for:)` populates it and `clearItems()`
+  clears it alongside `listItems`.
+- **Sidebar auto-refreshes** — after a successful context-menu action the
+  bottom panel reloads via the same `loadItems(for: currentList)` path
+  used by drag and drop.
+
+Next step: Increment 15 — to be decided.
 
 ## File Structure (Planned)
 ```

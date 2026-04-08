@@ -365,6 +365,9 @@ struct LibrarySidebarView: View {
                             itemId: item.id ?? 0,
                             sourceListId: selectedList?.id ?? -1
                         ))
+                        .contextMenu {
+                            itemContextMenu(for: item)
+                        }
                     }
                 }
                 .listStyle(.sidebar)
@@ -383,6 +386,74 @@ struct LibrarySidebarView: View {
     }
 
     // MARK: - Helpers
+
+    /// Builds the "Move to…" / "Copy to…" context menu for an item row.
+    ///
+    /// - From Unclassified: only "Move to…" is shown; the action inserts a
+    ///   membership row (there is no source row to delete).
+    /// - From a real list: both submenus are shown; "Move to…" deletes the
+    ///   source membership and "Copy to…" leaves it in place.
+    /// - Lists the item already belongs to are shown disabled in both submenus.
+    @ViewBuilder
+    private func itemContextMenu(for item: Item) -> some View {
+        let currentListId  = selectedList?.id ?? -1
+        let isUnclassified = currentListId == -1
+        let itemId         = item.id ?? -1
+        let alreadyIn      = viewModel.itemMemberships[itemId] ?? []
+
+        // Real folders only — Unclassified sentinel (id == -1) is not a
+        // valid drop target and is excluded from both submenus.
+        let realFolders = viewModel.folderContents.filter { $0.folder.id != -1 }
+
+        // "Move to…" — always present.
+        Menu("Move to…") {
+            ForEach(realFolders, id: \.folder.id) { folder, lists in
+                let targets = lists.filter { ($0.id ?? -1) != currentListId }
+                if !targets.isEmpty {
+                    Section(folder.name) {
+                        ForEach(targets) { list in
+                            Button(list.name) {
+                                Task {
+                                    if isUnclassified {
+                                        // Unclassified has no membership row to remove.
+                                        await viewModel.copyItem(itemId: itemId, toList: list)
+                                    } else {
+                                        await viewModel.moveItem(
+                                            itemId: itemId,
+                                            fromListId: currentListId,
+                                            toList: list
+                                        )
+                                    }
+                                }
+                            }
+                            .disabled(alreadyIn.contains(list.id ?? -1))
+                        }
+                    }
+                }
+            }
+        }
+
+        // "Copy to…" — suppressed when viewing Unclassified.
+        if !isUnclassified {
+            Menu("Copy to…") {
+                ForEach(realFolders, id: \.folder.id) { folder, lists in
+                    let targets = lists.filter { ($0.id ?? -1) != currentListId }
+                    if !targets.isEmpty {
+                        Section(folder.name) {
+                            ForEach(targets) { list in
+                                Button(list.name) {
+                                    Task {
+                                        await viewModel.copyItem(itemId: itemId, toList: list)
+                                    }
+                                }
+                                .disabled(alreadyIn.contains(list.id ?? -1))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /// Returns the colour to apply to `item`'s sidebar icon.
     ///

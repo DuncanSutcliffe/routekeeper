@@ -280,4 +280,73 @@ final class LibraryViewModel {
             await loadItems(for: current)
         }
     }
+
+    // MARK: - Item removal and deletion
+
+    /// Removes `itemId` from a single list without deleting the item.
+    ///
+    /// If this was the item's only membership it will appear in Unclassified.
+    /// Refreshes the bottom panel after a successful operation.
+    func removeItemFromList(itemId: Int64, listId: Int64) async {
+        do {
+            try await DatabaseManager.shared.removeItemFromList(itemId: itemId, listId: listId)
+        } catch {
+            print("Remove item from list failed: \(error)")
+            return
+        }
+        if let current = currentList {
+            await loadItems(for: current)
+        }
+    }
+
+    /// Permanently deletes an item and all its associated data.
+    ///
+    /// Refreshes the bottom panel after a successful deletion.
+    func deleteItem(itemId: Int64) async {
+        do {
+            try await DatabaseManager.shared.deleteItem(itemId: itemId)
+        } catch {
+            print("Delete item failed: \(error)")
+            return
+        }
+        if let current = currentList {
+            await loadItems(for: current)
+        }
+    }
+
+    // MARK: - List and folder deletion
+
+    /// Deletes `list` if it is empty, then reloads the folder tree.
+    ///
+    /// Silently skips deletion if the list still contains items when this
+    /// method runs (the caller should pre-verify via the context menu check).
+    func deleteList(_ list: RouteList) async {
+        guard let listId = list.id else { return }
+        do {
+            let count = try await DatabaseManager.shared.fetchListItemCount(listId: listId)
+            guard count == 0 else { return }
+            try await DatabaseManager.shared.deleteList(listId: listId)
+        } catch {
+            print("Delete list failed: \(error)")
+            return
+        }
+        await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
+    }
+
+    /// Deletes `folder` and all its lists if all lists are empty, then reloads the folder tree.
+    ///
+    /// Silently skips deletion if any list in the folder contains items when
+    /// this method runs (the caller should pre-verify via the context menu check).
+    func deleteFolder(_ folder: ListFolder) async {
+        guard let folderId = folder.id else { return }
+        do {
+            let hasItems = try await DatabaseManager.shared.folderHasItems(folderId: folderId)
+            guard !hasItems else { return }
+            try await DatabaseManager.shared.deleteFolder(folderId: folderId)
+        } catch {
+            print("Delete folder failed: \(error)")
+            return
+        }
+        await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
+    }
 }

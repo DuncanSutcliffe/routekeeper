@@ -91,6 +91,16 @@ When transferring to a Garmin device, routes should include the
 GPX extension data (gpxx:rpt points) that forces the device to 
 follow the exact planned route rather than recalculating.
 
+## Code Style and Working Practices
+
+- String literals must always be kept on a single line or broken
+  explicitly using the `+` concatenation operator. Do not allow
+  string literals to wrap across lines — this inserts literal
+  newline characters into the string and causes build errors. If
+  a string is too long to fit comfortably, break it deliberately
+  with `+` at a logical point rather than letting the tooling
+  wrap it.
+
 ## Critical Rules
 
 - **NEVER modify .xcodeproj or .pbxproj files under any 
@@ -118,7 +128,7 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–14 complete, schema v5 applied, drag and drop and context menus implemented.**
+**Increments 1–15 complete, schema v5 applied, delete functionality implemented.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
@@ -126,8 +136,10 @@ with Nominatim search integration, sidebar item selection wired to the map, a
 route creation sheet that calls Valhalla and persists the GeoJSON geometry so
 selecting a route in the sidebar draws it on the map with bounds fitting, a
 polished sidebar control strip with correctly coloured item icons, drag and
-drop to move or copy items between lists, and a right-click context menu on
-item rows providing Move and Copy actions as an alternative to drag and drop.
+drop to move or copy items between lists, a right-click context menu on item
+rows providing Move and Copy actions as an alternative to drag and drop, and
+full delete functionality on item, list, and folder rows with appropriate
+confirmation dialogues and explanatory alerts.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -555,7 +567,41 @@ RouteKeeper/
   bottom panel reloads via the same `loadItems(for: currentList)` path
   used by drag and drop.
 
-Next step: Increment 15 — to be decided.
+### Increment 15 — Delete functionality throughout the sidebar
+- **Item rows** gain a divider separating delete actions from the existing
+  Move/Copy actions.
+- **Items in Unclassified** show "Delete" only (no "Remove from this list");
+  a confirmation dialogue warns of permanent deletion.
+- **Items in a regular list** show both "Remove from this list" and "Delete":
+  - If the item belongs to other lists, "Remove from this list" executes
+    immediately with no confirmation; the item disappears from the current
+    list but remains elsewhere.
+  - If this is the item's only list membership, "Remove from this list"
+    shows a confirmation warning that the item will be moved to Unclassified.
+  - "Delete" always shows a confirmation warning of permanent removal from
+    all lists.
+- **List rows** gain "Delete list": if the list contains any items an
+  explanatory alert fires; if the list is empty a confirmation dialogue is
+  shown before deletion.
+- **Folder rows** gain "Delete folder": if any list in the folder contains
+  items an explanatory alert fires; if all lists are empty a confirmation
+  dialogue is shown before deletion (all contained lists are also deleted).
+- **`DatabaseManager`** gains six new methods:
+  `removeItemFromList(itemId:listId:)`,
+  `deleteItem(itemId:)`,
+  `fetchListItemCount(listId:)`,
+  `deleteList(listId:)`,
+  `folderHasItems(folderId:)`,
+  `deleteFolder(folderId:)`.
+- **`LibraryViewModel`** gains four new methods:
+  `removeItemFromList(itemId:listId:)`,
+  `deleteItem(itemId:)`,
+  `deleteList(_:)`,
+  `deleteFolder(_:)`.
+- **All operations refresh the sidebar** on completion; selecting a deleted
+  list or item clears the selection before the deletion fires.
+
+Next step: Increment 16 — to be decided.
 
 ## File Structure (Planned)
 ```

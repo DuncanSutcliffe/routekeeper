@@ -500,6 +500,100 @@ actor DatabaseManager {
         }
     }
 
+    // MARK: - List membership removal and item deletion
+
+    /// Removes a single list membership row for the given item.
+    ///
+    /// The item itself is not deleted — it will appear in Unclassified if this
+    /// was its only membership, since the Unclassified query selects items with
+    /// no `item_list_membership` rows.
+    func removeItemFromList(itemId: Int64, listId: Int64) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "DELETE FROM item_list_membership WHERE item_id = ? AND list_id = ?",
+                arguments: [itemId, listId]
+            )
+        }
+    }
+
+    /// Permanently deletes an item and all its associated data.
+    ///
+    /// Deletes the `items` row; all related rows in `waypoints`, `routes`,
+    /// `tracks`, and `item_list_membership` are removed automatically by
+    /// their `ON DELETE CASCADE` foreign keys.
+    func deleteItem(itemId: Int64) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "DELETE FROM items WHERE id = ?",
+                arguments: [itemId]
+            )
+        }
+    }
+
+    /// Returns the number of items currently assigned to `listId`.
+    func fetchListItemCount(listId: Int64) async throws -> Int {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM item_list_membership WHERE list_id = ?",
+                arguments: [listId]
+            ) ?? 0
+        }
+    }
+
+    /// Permanently deletes a list.
+    ///
+    /// The caller is responsible for verifying the list is empty. Items that
+    /// belonged solely to this list will appear in Unclassified after deletion
+    /// because the `item_list_membership` rows cascade-delete with the list.
+    func deleteList(listId: Int64) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "DELETE FROM lists WHERE id = ?",
+                arguments: [listId]
+            )
+        }
+    }
+
+    /// Returns `true` if any list within `folderId` has at least one item.
+    func folderHasItems(folderId: Int64) async throws -> Bool {
+        let q = try requireQueue()
+        return try await q.read { db in
+            let count = try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(*) FROM item_list_membership
+                    WHERE list_id IN (SELECT id FROM lists WHERE folder_id = ?)
+                    """,
+                arguments: [folderId]
+            ) ?? 0
+            return count > 0
+        }
+    }
+
+    /// Permanently deletes a folder and all lists it contains.
+    ///
+    /// All lists in the folder are deleted first (their `item_list_membership`
+    /// rows cascade-delete automatically), then the folder itself. The caller
+    /// is responsible for verifying that all lists in the folder are empty.
+    func deleteFolder(folderId: Int64) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "DELETE FROM lists WHERE folder_id = ?",
+                arguments: [folderId]
+            )
+            try db.execute(
+                sql: "DELETE FROM list_folders WHERE id = ?",
+                arguments: [folderId]
+            )
+        }
+    }
+
     // MARK: Private helpers
 
     private func requireQueue() throws -> DatabaseQueue {

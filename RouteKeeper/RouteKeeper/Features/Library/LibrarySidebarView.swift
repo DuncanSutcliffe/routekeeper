@@ -123,6 +123,20 @@ struct LibrarySidebarView: View {
     @State private var showingNewRouteSheet    = false
     @State private var newRoutePreselectedListID: Int64?
 
+    // Delete / removal confirmation state
+    @State private var showRemoveItemConfirm    = false
+    @State private var itemScheduledForRemoval: Item?      = nil   // last membership → Unclassified
+    @State private var showDeleteItemConfirm    = false
+    @State private var itemScheduledForDeletion: Item?     = nil   // permanent delete
+
+    @State private var showNotEmptyAlert        = false
+    @State private var notEmptyAlertTitle       = ""
+    @State private var notEmptyAlertMessage     = ""
+    @State private var showDeleteListConfirm    = false
+    @State private var listScheduledForDeletion: RouteList?    = nil
+    @State private var showDeleteFolderConfirm  = false
+    @State private var folderScheduledForDeletion: ListFolder? = nil
+
     private let dividerHeight:  CGFloat = 8
     private let minPanelHeight: CGFloat = 80
     private let maxPanelHeight: CGFloat = 600
@@ -156,6 +170,26 @@ struct LibrarySidebarView: View {
                                 } label: {
                                     Label("New Waypoint", systemImage: "mappin.and.ellipse")
                                 }
+                                if list.id != -1 {
+                                    Divider()
+                                    Button("Delete List…", role: .destructive) {
+                                        Task {
+                                            guard let listId = list.id else { return }
+                                            let count = (try? await DatabaseManager.shared.fetchListItemCount(listId: listId)) ?? 0
+                                            if count > 0 {
+                                                notEmptyAlertTitle   = "Cannot Delete List"
+                                                notEmptyAlertMessage = "\(list.name) " +
+                                                "cannot be deleted because it contains " + "items. Remove all items from the " +
+                                                    "list before deleting it."
+                                                
+                                                showNotEmptyAlert = true
+                                            } else {
+                                                listScheduledForDeletion = list
+                                                showDeleteListConfirm = true
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             .onDrop(
                                 of: [.routeKeeperItem],
@@ -178,6 +212,25 @@ struct LibrarySidebarView: View {
                                 showingNewListSheet = true
                             } label: {
                                 Label("New List", systemImage: "list.bullet.rectangle.portrait")
+                            }
+                            Divider()
+                            Button("Delete Folder…", role: .destructive) {
+                                Task {
+                                    guard let folderId = folder.id else { return }
+                                    let hasItems = (try? await DatabaseManager.shared.folderHasItems(folderId: folderId)) ?? false
+                                    if hasItems {
+                                        notEmptyAlertTitle   = "Cannot Delete Folder"
+                                        notEmptyAlertMessage = "\(folder.name) " +
+                                            "cannot be deleted because " +
+                                            "one or more of its lists contain items. " +
+                                            "Remove all items from the lists before " +
+                                            "deleting the folder."
+                                        showNotEmptyAlert = true
+                                    } else {
+                                        folderScheduledForDeletion = folder
+                                        showDeleteFolderConfirm = true
+                                    }
+                                }
                             }
                         }
                     }
@@ -264,6 +317,90 @@ struct LibrarySidebarView: View {
             dragStartHeight = CGFloat(bottomPanelHeight)
             if let list = selectedList {
                 Task { await viewModel.loadItems(for: list) }
+            }
+        }
+        // "Remove from this list" confirmation — item's last membership; moves to Unclassified.
+        .confirmationDialog(
+            "Remove from this list?",
+            isPresented: $showRemoveItemConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                guard let item = itemScheduledForRemoval,
+                      let itemId = item.id,
+                      let listId = viewModel.currentList?.id
+                else { return }
+                if selectedItem?.id == itemId { selectedItem = nil }
+                Task { await viewModel.removeItemFromList(itemId: itemId, listId: listId) }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            if let item = itemScheduledForRemoval {
+                Text("\(item.name) Item will be removed from this list " +
+                     "and moved to Unclassified.")
+            }
+        }
+        // "Delete item" confirmation — permanent deletion.
+        .confirmationDialog(
+            "Delete item?",
+            isPresented: $showDeleteItemConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                guard let item = itemScheduledForDeletion, let itemId = item.id else { return }
+                if selectedItem?.id == itemId { selectedItem = nil }
+                Task { await viewModel.deleteItem(itemId: itemId) }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            if let item = itemScheduledForDeletion {
+                Text("\(item.name) will be permanently deleted and cannot be recovered.")
+            }
+        }
+        // "List / folder not empty" informational alert.
+        .alert(notEmptyAlertTitle, isPresented: $showNotEmptyAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(notEmptyAlertMessage)
+        }
+        // "Delete list" confirmation.
+        .confirmationDialog(
+            "Delete list?",
+            isPresented: $showDeleteListConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                guard let list = listScheduledForDeletion else { return }
+                if selectedList?.id == list.id {
+                    selectedList = nil
+                    selectedItem = nil
+                }
+                Task { await viewModel.deleteList(list) }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            if let list = listScheduledForDeletion {
+                Text("\(list.name) will be permanently deleted.")
+            }
+        }
+        // "Delete folder" confirmation.
+        .confirmationDialog(
+            "Delete folder?",
+            isPresented: $showDeleteFolderConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                guard let folder = folderScheduledForDeletion else { return }
+                if let selectedFolderId = selectedList?.folderId, selectedFolderId == folder.id {
+                    selectedList = nil
+                    selectedItem = nil
+                }
+                Task { await viewModel.deleteFolder(folder) }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            if let folder = folderScheduledForDeletion {
+                Text("\(folder.name) and all its lists will be permanently deleted.")
             }
         }
     }
@@ -452,6 +589,33 @@ struct LibrarySidebarView: View {
                     }
                 }
             }
+        }
+
+        // Delete / remove section — separated from Move/Copy by a divider.
+        Divider()
+
+        if !isUnclassified {
+            if alreadyIn.count <= 1 {
+                // This is the item's only list membership — removing it sends the
+                // item to Unclassified; a confirmation is required.
+                Button("Remove from this list…") {
+                    itemScheduledForRemoval = item
+                    showRemoveItemConfirm = true
+                }
+            } else {
+                // Item belongs to other lists — safe to remove from this one immediately.
+                Button("Remove from this list") {
+                    Task {
+                        if selectedItem?.id == itemId { selectedItem = nil }
+                        await viewModel.removeItemFromList(itemId: itemId, listId: currentListId)
+                    }
+                }
+            }
+        }
+
+        Button("Delete…", role: .destructive) {
+            itemScheduledForDeletion = item
+            showDeleteItemConfirm = true
         }
     }
 

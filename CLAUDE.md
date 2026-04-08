@@ -128,7 +128,7 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–15 complete, schema v5 applied, delete functionality implemented.**
+**Increments 1–16 complete, schema v5 applied, route start/end markers added.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
@@ -137,9 +137,10 @@ route creation sheet that calls Valhalla and persists the GeoJSON geometry so
 selecting a route in the sidebar draws it on the map with bounds fitting, a
 polished sidebar control strip with correctly coloured item icons, drag and
 drop to move or copy items between lists, a right-click context menu on item
-rows providing Move and Copy actions as an alternative to drag and drop, and
-full delete functionality on item, list, and folder rows with appropriate
-confirmation dialogues and explanatory alerts.
+rows providing Move and Copy actions as an alternative to drag and drop, full
+delete functionality on item, list, and folder rows with appropriate
+confirmation dialogues and explanatory alerts, and start/end flag markers on
+displayed routes rendered from SF Symbols on the Swift side.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -601,7 +602,26 @@ RouteKeeper/
 - **All operations refresh the sidebar** on completion; selecting a deleted
   list or item clears the selection before the deletion fires.
 
-Next step: Increment 16 — to be decided.
+### Increment 16 — Route start and end markers
+- **`sfSymbolBase64(_:color:size:)`** added to `MapView.swift` — renders an SF
+  Symbol with a given `NSColor` to a base64-encoded PNG at 24 pt by applying a
+  `NSImage.SymbolConfiguration` and converting via `tiffRepresentation` →
+  `NSBitmapImageRep` → PNG.
+- **`applyRouteDisplay(_:in:)`** updated — generates a green (`flag.fill`) start
+  icon and a black (`flag.checkered`) end icon before calling `showRoute`, passing
+  both as base64 strings alongside the escaped GeoJSON.
+- **`showRoute` in `MapLibreMap.html`** updated — signature is now
+  `showRoute(geojsonString, startBase64, endBase64)`; a `loadImage(base64)`
+  Promise helper ensures both images are fully decoded before `map.addImage` is
+  called. Start and end coordinates are extracted from `features[0].geometry
+  .coordinates`. A `route-markers-source` / `route-markers-layer` symbol layer
+  is added after the line layer; `icon-anchor: "bottom-left"` gives zoom-
+  independent alignment.
+- **`clearRoute` in `MapLibreMap.html`** updated — also removes
+  `route-markers-layer`, `route-markers-source`, and the two registered images
+  (`route-start`, `route-end`).
+
+Next step: Increment 17 — to be decided.
 
 ## File Structure (Planned)
 ```

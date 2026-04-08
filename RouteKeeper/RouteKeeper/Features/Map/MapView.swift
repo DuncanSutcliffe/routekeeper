@@ -279,12 +279,20 @@ struct MapView: NSViewRepresentable {
 
         /// Calls either `showRoute()` or `clearRoute()` in JS depending on
         /// whether `geojson` is non-nil.
+        ///
+        /// When showing a route, start and end marker icons are generated from
+        /// SF Symbols and passed as base64-encoded PNG strings so the JS side
+        /// can display them without any separate asset loading step.
         func applyRouteDisplay(_ geojson: String?, in webView: WKWebView) {
             if let geojson {
+                let startIcon = sfSymbolBase64("flag.fill", color: NSColor(red: 0.0, green: 0.5, blue: 0.15, alpha: 1.0)) ?? ""
+                let endIcon = sfSymbolBase64("flag.checkered", color: .black) ?? ""
                 let escaped = geojson
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
-                webView.evaluateJavaScript("showRoute(\"\(escaped)\");")
+                    .replacingOccurrences(of: "\n", with: "")
+                let js = "showRoute(\"\(escaped)\", \"\(startIcon)\", \"\(endIcon)\")"
+                webView.evaluateJavaScript(js)
             } else {
                 webView.evaluateJavaScript("clearRoute();")
             }
@@ -338,4 +346,22 @@ struct MapView: NSViewRepresentable {
 #Preview {
     MapView(routeGeoJSON: nil, centerLon: -2.0, centerLat: 54.0, zoom: 5, waypointDisplay: nil, routeDisplay: nil)
         .frame(width: 800, height: 600)
+}
+
+// MARK: - SF Symbol → base64 PNG
+
+/// Renders an SF Symbol with the given colour into a base64-encoded PNG string.
+///
+/// The result is passed directly to `showRoute()` in JavaScript so MapLibre can
+/// display the symbol as a map image without requiring a separate asset file.
+///
+/// Returns `nil` if the symbol name is not found or the bitmap render fails.
+private func sfSymbolBase64(_ name: String, color: NSColor, size: CGFloat = 24) -> String? {
+    let config = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
+        .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+    guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+        .withSymbolConfiguration(config) else { return nil }
+    guard let tiff = image.tiffRepresentation,
+          let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
+    return bitmap.representation(using: .png, properties: [:])?.base64EncodedString()
 }

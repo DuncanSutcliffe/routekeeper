@@ -118,66 +118,97 @@
         // Stored route display (sidebar selection)
         // ---------------------------------------------------------------------------
 
-        /// Shows a stored route on the map by parsing a GeoJSON FeatureCollection string.
+        /// Returns a Promise that resolves to an HTMLImageElement once the
+        /// given base64-encoded PNG has fully loaded.
         ///
-        /// Any previously shown route is removed first. The map is fitted to the
-        /// route bounds with 60 px of padding. If the style is not yet loaded the
-        /// call is deferred until the map is idle.
-        function showRoute(geojsonString) {
-            if (!map.isStyleLoaded()) {
-                map.once("idle", function () { showRoute(geojsonString); });
-                return;
-            }
+        /// MapLibre's addImage() requires a fully loaded image; calling it with
+        /// an unloaded HTMLImageElement silently produces a blank icon.
+        function loadImage(base64) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = 'data:image/png;base64,' + base64;
+            });
+        }
 
+        /// Shows a stored route on the map, with start and end marker icons.
+        ///
+        /// geojsonString — JSON string of the Valhalla GeoJSON FeatureCollection
+        /// startBase64   — base64-encoded PNG for the start marker
+        /// endBase64     — base64-encoded PNG for the end marker
+        ///
+        /// Image loading is Promise-based because HTMLImageElement src loading
+        /// is async — MapLibre silently ignores addImage calls on unloaded images.
+        async function showRoute(geojsonString, startBase64, endBase64) {
             clearRoute();
-
             const geojson = JSON.parse(geojsonString);
+            const coords = geojson.features[0].geometry.coordinates;
+            const startCoord = coords[0];
+            const endCoord = coords[coords.length - 1];
 
-            map.addSource("route-source", {
-                type: "geojson",
-                data: geojson
+            const [startImg, endImg] = await Promise.all([
+                loadImage(startBase64),
+                loadImage(endBase64)
+            ]);
+
+            if (map.hasImage('route-start')) map.removeImage('route-start');
+            if (map.hasImage('route-end'))   map.removeImage('route-end');
+            map.addImage('route-start', startImg);
+            map.addImage('route-end',   endImg);
+
+            map.addSource('route-source', { type: 'geojson', data: geojson });
+            map.addLayer({
+                id: 'route-layer',
+                type: 'line',
+                source: 'route-source',
+                layout: { 'line-cap': 'round', 'line-join': 'round' },
+                paint: { 'line-color': '#2F7CF6', 'line-width': 4 }
             });
 
+            map.addSource('route-markers-source', {
+                type: 'geojson',
+                data: {
+                    type: 'FeatureCollection',
+                    features: [
+                        { type: 'Feature', geometry: { type: 'Point', coordinates: startCoord }, properties: { icon: 'route-start' } },
+                        { type: 'Feature', geometry: { type: 'Point', coordinates: endCoord },   properties: { icon: 'route-end' } }
+                    ]
+                }
+            });
             map.addLayer({
-                id: "route-layer",
-                type: "line",
-                source: "route-source",
+                id: 'route-markers-layer',
+                type: 'symbol',
+                source: 'route-markers-source',
                 layout: {
-                    "line-cap": "round",
-                    "line-join": "round"
-                },
-                paint: {
-                    "line-color": "#2F7CF6",
-                    "line-width": 4
+                    'icon-image': ['get', 'icon'],
+                    'icon-anchor': 'bottom-left',
+                    'icon-allow-overlap': true
                 }
             });
 
-            // Collect all LineString coordinates and fit the viewport to their bounds.
-            const coords = (geojson.features || [])
-                .filter(f => f.geometry && f.geometry.type === "LineString")
-                .flatMap(f => f.geometry.coordinates);
-
-            if (coords.length > 0) {
-                const lngs = coords.map(c => c[0]);
-                const lats = coords.map(c => c[1]);
-                map.fitBounds(
-                    [[Math.min(...lngs), Math.min(...lats)],
-                     [Math.max(...lngs), Math.max(...lats)]],
-                    { padding: 60 }
-                );
-            }
+            const bounds = geojson.features[0].bbox ||
+                coords.reduce((b, c) => [
+                    Math.min(b[0], c[0]), Math.min(b[1], c[1]),
+                    Math.max(b[2], c[0]), Math.max(b[3], c[1])
+                ], [Infinity, Infinity, -Infinity, -Infinity]);
+            map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 60 });
         }
 
-        /// Removes the route layer and source from the map.
+        /// Removes the route line, marker symbols, registered images, and all
+        /// associated sources from the map.
         ///
-        /// Clears both the current "route-source"/"route-layer" ids used by
-        /// showRoute() and the legacy "active-route" id used by drawRoute(),
-        /// so switching between the two mechanisms never leaves orphaned layers.
+        /// Also clears the legacy "active-route" id used by drawRoute() so that
+        /// switching between the two mechanisms never leaves orphaned layers.
         function clearRoute() {
-            if (map.getLayer("route-layer"))   { map.removeLayer("route-layer"); }
-            if (map.getSource("route-source")) { map.removeSource("route-source"); }
-            if (map.getLayer("active-route"))  { map.removeLayer("active-route"); }
-            if (map.getSource("active-route")) { map.removeSource("active-route"); }
+            if (map.getLayer('route-markers-layer')) map.removeLayer('route-markers-layer');
+            if (map.getSource('route-markers-source')) map.removeSource('route-markers-source');
+            if (map.getLayer('route-layer'))   map.removeLayer('route-layer');
+            if (map.getSource('route-source')) map.removeSource('route-source');
+            if (map.hasImage('route-start'))   map.removeImage('route-start');
+            if (map.hasImage('route-end'))     map.removeImage('route-end');
+            if (map.getLayer('active-route'))  map.removeLayer('active-route');
+            if (map.getSource('active-route')) map.removeSource('active-route');
         }
 
         // ---------------------------------------------------------------------------

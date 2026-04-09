@@ -128,6 +128,15 @@ actor DatabaseManager {
             try db.execute(sql: "ALTER TABLE routes ADD COLUMN geometry TEXT")
         }
 
+        // v6 — back-fill route_points.
+        // Routes created before this migration have no route_points rows because
+        // createRoute() did not write them. Remove those empty route shells so
+        // the table is in a clean state; the user will need to recreate affected
+        // routes to obtain proper start/end points for GPX export.
+        migrator.registerMigration("v6") { db in
+            try db.execute(sql: "DELETE FROM route_points")
+        }
+
         try await migrator.migrate(dbQueue)
         _dbQueue = dbQueue
     }
@@ -338,18 +347,28 @@ actor DatabaseManager {
         }
     }
 
-    /// Inserts a new route item, its geometry, and optional list memberships.
+    /// Inserts a new route item, its geometry, optional start/end route points,
+    /// and optional list memberships — all in a single write transaction.
     ///
-    /// All three inserts run inside a single write transaction. Returns the
-    /// database-assigned `items.id` for the new route.
+    /// Returns the database-assigned `items.id` for the new route.
     ///
     /// - Parameters:
     ///   - name: The route name; must be unique across all items.
     ///   - geometry: GeoJSON FeatureCollection string from Valhalla.
     ///   - listIds: Lists to associate the route with. Pass an empty array to
     ///     leave the route unclassified (it will appear in the Unclassified folder).
+    ///   - startWaypoint: When provided, written to `route_points` as sequence 1
+    ///     with `announces_arrival = 1`. Pass `nil` to skip (e.g. in unit tests).
+    ///   - endWaypoint: When provided, written to `route_points` as sequence 2
+    ///     with `announces_arrival = 1`. Pass `nil` to skip.
     @discardableResult
-    func createRoute(name: String, geometry: String, listIds: [Int64]) async throws -> Int64 {
+    func createRoute(
+        name: String,
+        geometry: String,
+        listIds: [Int64],
+        startWaypoint: Waypoint? = nil,
+        endWaypoint: Waypoint? = nil
+    ) async throws -> Int64 {
         let q = try requireQueue()
         return try await q.write { db in
             // 1. Insert into items (type = 'route').
@@ -367,7 +386,31 @@ actor DatabaseManager {
                 arguments: [itemId, "motorcycle", geometry]
             )
 
-            // 3. Associate with requested lists.
+            // 3. Insert route_points for start (seq 1) and end (seq 2) if supplied.
+            if let start = startWaypoint {
+                try db.execute(
+                    sql: """
+                        INSERT INTO route_points
+                            (route_item_id, sequence_number, latitude, longitude,
+                             announces_arrival, name)
+                        VALUES (?, 1, ?, ?, 1, ?)
+                        """,
+                    arguments: [itemId, start.latitude, start.longitude, start.name]
+                )
+            }
+            if let end = endWaypoint {
+                try db.execute(
+                    sql: """
+                        INSERT INTO route_points
+                            (route_item_id, sequence_number, latitude, longitude,
+                             announces_arrival, name)
+                        VALUES (?, 2, ?, ?, 1, ?)
+                        """,
+                    arguments: [itemId, end.latitude, end.longitude, end.name]
+                )
+            }
+
+            // 4. Associate with requested lists.
             for listId in listIds {
                 try db.execute(
                     sql: "INSERT INTO item_list_membership (item_id, list_id) VALUES (?, ?)",
@@ -591,6 +634,163 @@ actor DatabaseManager {
                 sql: "DELETE FROM list_folders WHERE id = ?",
                 arguments: [folderId]
             )
+        }
+    }
+
+    // MARK: - GPX Export
+
+    /// Returns all item IDs that are members of `listId`.
+    ///
+    /// Used to determine which items to export when the user chooses
+    /// "Export GPX…" on a list row.
+    func fetchItemIdsForList(listId: Int64) async throws -> [Int64] {
+        let q = try requireQueue()
+        return try await q.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT item_id FROM item_list_membership WHERE list_id = ?",
+                arguments: [listId]
+            )
+            return rows.map { $0["item_id"] as Int64 }
+        }
+    }
+
+    /// Returns all distinct item IDs that belong to any list inside `folderId`.
+    ///
+    /// Used to determine which items to export when the user chooses
+    /// "Export GPX…" on a folder row.
+    func fetchItemIdsForFolder(folderId: Int64) async throws -> [Int64] {
+        let q = try requireQueue()
+        return try await q.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT DISTINCT item_id FROM item_list_membership
+                    WHERE list_id IN (SELECT id FROM lists WHERE folder_id = ?)
+                    """,
+                arguments: [folderId]
+            )
+            return rows.map { $0["item_id"] as Int64 }
+        }
+    }
+
+    /// Fetches all data needed to export the given items as GPX.
+    ///
+    /// For each item ID the corresponding child-table rows are fetched:
+    /// - Waypoints: coordinates and notes from the v4 `waypoints` table.
+    ///   Items with no v4 row (e.g. legacy seed data) are skipped.
+    /// - Routes: all `route_points` rows in `sequence_number` order.
+    /// - Tracks: all `track_points` rows in `sequence_number` order.
+    ///
+    /// Returns an empty array when `itemIds` is empty.
+    func fetchItemsForExport(itemIds: [Int64]) async throws -> [ExportItem] {
+        guard !itemIds.isEmpty else { return [] }
+        let q = try requireQueue()
+        return try await q.read { db in
+            let placeholders = itemIds.map { _ in "?" }.joined(separator: ", ")
+            let itemSQL = "SELECT id, type, name, description FROM items " +
+                          "WHERE id IN (\(placeholders)) ORDER BY name"
+            let itemRows = try Row.fetchAll(
+                db,
+                sql: itemSQL,
+                arguments: StatementArguments(itemIds)
+            )
+
+            var result: [ExportItem] = []
+
+            for itemRow in itemRows {
+                let itemId: Int64  = itemRow["id"]
+                let type:   String = itemRow["type"]
+                let name:   String = itemRow["name"]
+                let description: String? = itemRow["description"]
+
+                switch type {
+                case "waypoint":
+                    guard let wptRow = try Row.fetchOne(
+                        db,
+                        sql: """
+                            SELECT latitude, longitude, notes
+                            FROM waypoints WHERE item_id = ?
+                            """,
+                        arguments: [itemId]
+                    ) else {
+                        // No v4 waypoints row — skip (legacy seed data).
+                        continue
+                    }
+                    let latitude:  Double  = wptRow["latitude"]
+                    let longitude: Double  = wptRow["longitude"]
+                    let notes:     String? = wptRow["notes"]
+                    let wpt = ExportWaypoint(
+                        name: name,
+                        latitude: latitude,
+                        longitude: longitude,
+                        elevation: nil,
+                        symbol: nil,
+                        description: notes ?? description
+                    )
+                    result.append(.waypoint(wpt))
+
+                case "route":
+                    let ptRows = try Row.fetchAll(
+                        db,
+                        sql: """
+                            SELECT latitude, longitude, elevation,
+                                   announces_arrival, name
+                            FROM route_points
+                            WHERE route_item_id = ?
+                            ORDER BY sequence_number
+                            """,
+                        arguments: [itemId]
+                    )
+                    let points: [ExportRoutePoint] = ptRows.map { pt in
+                        let announcesInt: Int? = pt["announces_arrival"]
+                        return ExportRoutePoint(
+                            name: pt["name"],
+                            latitude: pt["latitude"],
+                            longitude: pt["longitude"],
+                            elevation: pt["elevation"],
+                            announcesArrival: (announcesInt ?? 0) != 0
+                        )
+                    }
+                    let route = ExportRoute(
+                        name: name,
+                        description: description,
+                        points: points
+                    )
+                    result.append(.route(route))
+
+                case "track":
+                    let ptRows = try Row.fetchAll(
+                        db,
+                        sql: """
+                            SELECT latitude, longitude, elevation, recorded_at
+                            FROM track_points
+                            WHERE track_item_id = ?
+                            ORDER BY sequence_number
+                            """,
+                        arguments: [itemId]
+                    )
+                    let points: [ExportTrackPoint] = ptRows.map { pt in
+                        ExportTrackPoint(
+                            latitude: pt["latitude"],
+                            longitude: pt["longitude"],
+                            elevation: pt["elevation"],
+                            timestamp: pt["recorded_at"]
+                        )
+                    }
+                    let track = ExportTrack(
+                        name: name,
+                        description: description,
+                        points: points
+                    )
+                    result.append(.track(track))
+
+                default:
+                    break
+                }
+            }
+
+            return result
         }
     }
 

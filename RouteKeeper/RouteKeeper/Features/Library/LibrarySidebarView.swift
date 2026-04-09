@@ -12,6 +12,7 @@
 //  the first row of the List (no .tag, so it is not selectable).
 //
 
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -123,6 +124,13 @@ struct LibrarySidebarView: View {
     @State private var showingNewRouteSheet    = false
     @State private var newRoutePreselectedListID: Int64?
 
+    // Export state
+    @State private var showingExportSheet       = false
+    @State private var exportItemIds: [Int64]   = []
+    @State private var exportFilename: String   = ""
+    @State private var showExportError          = false
+    @State private var exportErrorMessage       = ""
+
     // Delete / removal confirmation state
     @State private var showRemoveItemConfirm    = false
     @State private var itemScheduledForRemoval: Item?      = nil   // last membership → Unclassified
@@ -172,6 +180,26 @@ struct LibrarySidebarView: View {
                                 }
                                 if list.id != -1 {
                                     Divider()
+                                    Button("Export GPX…") {
+                                        Task {
+                                            guard let listId = list.id else { return }
+                                            let count = (try? await DatabaseManager.shared
+                                                .fetchListItemCount(listId: listId)) ?? 0
+                                            if count == 0 {
+                                                notEmptyAlertTitle   = "Nothing to Export"
+                                                notEmptyAlertMessage = "\(list.name) " +
+                                                    "contains no items to export."
+                                                showNotEmptyAlert = true
+                                            } else {
+                                                let ids = (try? await DatabaseManager.shared
+                                                    .fetchItemIdsForList(listId: listId)) ?? []
+                                                exportItemIds = ids
+                                                exportFilename = list.name
+                                                showingExportSheet = true
+                                            }
+                                        }
+                                    }
+                                    Divider()
                                     Button("Delete List…", role: .destructive) {
                                         Task {
                                             guard let listId = list.id else { return }
@@ -212,6 +240,26 @@ struct LibrarySidebarView: View {
                                 showingNewListSheet = true
                             } label: {
                                 Label("New List", systemImage: "list.bullet.rectangle.portrait")
+                            }
+                            Divider()
+                            Button("Export GPX…") {
+                                Task {
+                                    guard let folderId = folder.id else { return }
+                                    let hasItems = (try? await DatabaseManager.shared
+                                        .folderHasItems(folderId: folderId)) ?? false
+                                    if !hasItems {
+                                        notEmptyAlertTitle   = "Nothing to Export"
+                                        notEmptyAlertMessage = "\(folder.name) " +
+                                            "contains no items to export."
+                                        showNotEmptyAlert = true
+                                    } else {
+                                        let ids = (try? await DatabaseManager.shared
+                                            .fetchItemIdsForFolder(folderId: folderId)) ?? []
+                                        exportItemIds = ids
+                                        exportFilename = folder.name
+                                        showingExportSheet = true
+                                    }
+                                }
                             }
                             Divider()
                             Button("Delete Folder…", role: .destructive) {
@@ -287,6 +335,17 @@ struct LibrarySidebarView: View {
         }
         .sheet(isPresented: $showingNewRouteSheet) {
             NewRouteSheet(viewModel: viewModel, preselectedListID: newRoutePreselectedListID)
+        }
+        .sheet(isPresented: $showingExportSheet) {
+            ExportFormatSheet(defaultFilename: exportFilename) { format in
+                Task { @MainActor in
+                    await performExport(
+                        itemIds: exportItemIds,
+                        format: format,
+                        filename: exportFilename
+                    )
+                }
+            }
         }
         .focusedValue(\.showNewFolderSheet,   $showingNewFolderSheet)
         .focusedValue(\.showNewListSheet,     $showingNewListSheet)
@@ -402,6 +461,12 @@ struct LibrarySidebarView: View {
             if let folder = folderScheduledForDeletion {
                 Text("\(folder.name) and all its lists will be permanently deleted.")
             }
+        }
+        // Export failure alert.
+        .alert("Export Failed", isPresented: $showExportError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(exportErrorMessage)
         }
     }
 
@@ -591,6 +656,16 @@ struct LibrarySidebarView: View {
             }
         }
 
+        // Export section.
+        Divider()
+
+        Button("Export GPX…") {
+            guard item.id != nil else { return }
+            exportItemIds = [itemId]
+            exportFilename = item.name
+            showingExportSheet = true
+        }
+
         // Delete / remove section — separated from Move/Copy by a divider.
         Divider()
 
@@ -629,6 +704,49 @@ struct LibrarySidebarView: View {
             return Color(itemHex: hex)
         }
         return .secondary
+    }
+
+    // MARK: - GPX export
+
+    /// Presents a NSSavePanel then fetches items, generates GPX, and writes the file.
+    @MainActor
+    private func performExport(
+        itemIds: [Int64],
+        format: GPXFormat,
+        filename: String
+    ) async {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = sanitizedFilename(filename) + ".gpx"
+        panel.canCreateDirectories = true
+        if let gpxType = UTType(filenameExtension: "gpx") {
+            panel.allowedContentTypes = [gpxType]
+        }
+
+        // runModal() blocks with a nested AppKit event loop — standard macOS usage.
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let exportItems = try await DatabaseManager.shared.fetchItemsForExport(
+                itemIds: itemIds
+            )
+            let gpxString = GPXExporter.exportGPX(items: exportItems, format: format)
+            guard let data = gpxString.data(using: .utf8) else {
+                exportErrorMessage = "The file couldn't be saved."
+                showExportError = true
+                return
+            }
+            try data.write(to: url)
+        } catch {
+            exportErrorMessage = "The file couldn't be saved. " +
+                "Check that you have permission to write to the chosen location."
+            showExportError = true
+        }
+    }
+
+    /// Strips characters that are invalid in macOS filenames.
+    private func sanitizedFilename(_ name: String) -> String {
+        let invalid = CharacterSet(charactersIn: "/:?*\\\"<>|")
+        return name.components(separatedBy: invalid).joined(separator: "_")
     }
 
     /// A `Binding<Bool>` for the expansion state of a folder row.

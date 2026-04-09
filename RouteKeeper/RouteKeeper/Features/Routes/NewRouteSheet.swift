@@ -250,9 +250,11 @@ struct NewRouteSheet: View {
                     to:   CLLocationCoordinate2D(latitude: end.latitude,   longitude: end.longitude)
                 )
                 await viewModel.createRoute(
-                    name:     trimmedName,
-                    geometry: geojson,
-                    listIds:  Array(selectedListIDs)
+                    name:          trimmedName,
+                    geometry:      geojson,
+                    listIds:       Array(selectedListIDs),
+                    startWaypoint: start,
+                    endWaypoint:   end
                 )
                 if viewModel.creationError == nil {
                     dismiss()

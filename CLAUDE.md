@@ -128,7 +128,7 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–16 complete, schema v5 applied, route start/end markers added.**
+**Increments 1–17 complete, schema v6 applied, GPX export implemented.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
@@ -139,8 +139,10 @@ polished sidebar control strip with correctly coloured item icons, drag and
 drop to move or copy items between lists, a right-click context menu on item
 rows providing Move and Copy actions as an alternative to drag and drop, full
 delete functionality on item, list, and folder rows with appropriate
-confirmation dialogues and explanatory alerts, and start/end flag markers on
-displayed routes rendered from SF Symbols on the Swift side.
+confirmation dialogues and explanatory alerts, start/end flag markers on
+displayed routes rendered from SF Symbols on the Swift side, and GPX export
+accessible from context menus on item rows, list rows, and folder rows with a
+format selector sheet (Standard GPX 1.1 or Garmin GPX 1.1).
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -621,7 +623,46 @@ RouteKeeper/
   `route-markers-layer`, `route-markers-source`, and the two registered images
   (`route-start`, `route-end`).
 
-Next step: Increment 17 — to be decided.
+### Increment 17 — GPX export
+- **`GPXExporter.swift`** (new file, `Features/GPX/`) — pure data-transformation
+  layer with no UI or database dependencies. Defines `GPXFormat` (`.standard` /
+  `.garmin`), export structs (`ExportWaypoint`, `ExportRoutePoint`, `ExportRoute`,
+  `ExportTrackPoint`, `ExportTrack`, `ExportItem`), and
+  `exportGPX(items:format:) -> String`. Standard output is GPX 1.1 with no
+  extensions; Garmin output adds `gpxx`/`gpxtpx` namespace declarations and
+  wraps shaping points (`announcesArrival == false`) in a
+  `gpxx:RoutePointExtension` block with the standard Subclass hex string.
+- **`ExportFormatSheet.swift`** (new file, `Features/GPX/`) — modal sheet with a
+  native SwiftUI segmented `Picker` (`Standard GPX 1.1` / `Garmin GPX 1.1`,
+  standard selected by default), a subtitle that updates to describe the selected
+  format, and Cancel / Export buttons. On Export the sheet dismisses, waits 250 ms
+  for the animation to finish, then fires the `onExport` callback. The parent
+  presents `NSSavePanel`, fetches items, generates GPX, and writes the file.
+- **`DatabaseManager`** — `// MARK: - GPX Export` section with three new methods:
+  `fetchItemIdsForList(listId:)`, `fetchItemIdsForFolder(folderId:)`, and
+  `fetchItemsForExport(itemIds:)`. Waypoints with no v4 row (legacy seed data)
+  are silently skipped. Schema migration **v6** added: `DELETE FROM route_points`
+  clears any routes saved before the fix that writes start/end points.
+- **`DatabaseManager.createRoute`** gains optional `startWaypoint` and
+  `endWaypoint` parameters (default `nil`). When supplied, two `route_points`
+  rows are inserted in the same transaction — sequence 1 (start) and sequence 2
+  (end), both with `announces_arrival = 1`. Existing unit tests are unaffected
+  because the parameters default to `nil`.
+- **`LibraryViewModel.createRoute`** and **`NewRouteSheet.submit()`** updated to
+  thread the selected start and end `Waypoint` values through to the database
+  layer, so every route saved via the UI now has its two `route_points` rows.
+- **`LibrarySidebarView`** — "Export GPX…" menu item (with a preceding `Divider`)
+  added to item-row, list-row, and folder-row context menus. Item exports are
+  immediate; list and folder exports do an async item-count check first and show
+  the existing "Nothing to Export" informational alert for empty collections.
+  A `performExport` helper presents `NSSavePanel`, calls `fetchItemsForExport`,
+  runs `GPXExporter.exportGPX`, and writes the result; an "Export Failed" alert
+  covers file-write errors.
+- **App entitlements** — `com.apple.security.files.user-selected.read-write`
+  added (or `read-only` replaced) to allow `NSSavePanel` file writes under the
+  macOS sandbox.
+
+Next step: Increment 18 — TBD.
 
 ## File Structure (Planned)
 ```

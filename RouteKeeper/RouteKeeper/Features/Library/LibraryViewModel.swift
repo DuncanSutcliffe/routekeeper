@@ -152,11 +152,28 @@ final class LibraryViewModel {
 
     /// Creates a new route with the given name, Valhalla geometry, and list memberships.
     ///
+    /// When `startWaypoint` and `endWaypoint` are supplied their coordinates are
+    /// written to `route_points` (sequence 1 and 2) inside the same transaction,
+    /// enabling GPX export. Both default to `nil` so callers that don't have
+    /// waypoints (e.g. unit tests) are unaffected.
+    ///
     /// Sets `creationError` if a route with that name already exists.
     /// Reloads the sidebar on success.
-    func createRoute(name: String, geometry: String, listIds: [Int64]) async {
+    func createRoute(
+        name: String,
+        geometry: String,
+        listIds: [Int64],
+        startWaypoint: Waypoint? = nil,
+        endWaypoint: Waypoint? = nil
+    ) async {
         do {
-            try await DatabaseManager.shared.createRoute(name: name, geometry: geometry, listIds: listIds)
+            try await DatabaseManager.shared.createRoute(
+                name: name,
+                geometry: geometry,
+                listIds: listIds,
+                startWaypoint: startWaypoint,
+                endWaypoint: endWaypoint
+            )
         } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
             creationError = "A route with that name already exists."
             return

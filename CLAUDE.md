@@ -128,7 +128,7 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–17 complete, schema v6 applied, GPX export implemented.**
+**Increments 1–18 complete, schema v6 applied, GPX export implemented.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
@@ -662,7 +662,38 @@ RouteKeeper/
   added (or `read-only` replaced) to allow `NSSavePanel` file writes under the
   macOS sandbox.
 
-Next step: Increment 18 — TBD.
+### Increment 18 — Intermediate waypoint editing for routes
+- **`RouteEditSheet`** opens via double-click or "Edit Route…" context menu on any
+  route row in the sidebar. The sheet displays the route's `route_points` as an
+  ordered list with Start (green) and End (red) badges on the first and last rows,
+  and Via 1, Via 2, etc. labels on intermediate rows.
+- Each row has a drag handle for reordering (`.onMove`) and a delete button that
+  removes the point from the in-memory array.
+- A `+` button appears after every row (including the last) to insert a new waypoint
+  at that position; tapping it opens `WaypointPickerSheet`.
+- **`WaypointPickerSheet`** lists all saved waypoints (joined from `items` +
+  `waypoints`) with a live search field. Tapping a row inserts a new `RoutePoint`
+  at the chosen index and dismisses the picker.
+- **Save** is disabled when fewer than two points remain. When tapped it replans the
+  full route via `RoutingService.calculateRoute(through:)` (new multi-waypoint
+  overload), writes updated `route_points` and geometry via
+  `DatabaseManager.updateRoutePoints`, then redraws the map by cycling
+  `selectedItem` to re-fire `ContentView`'s `.task(id:)`.
+- **Map** — intermediate waypoints are rendered as numbered circle markers
+  (`route-via-circles` + `route-via-labels` layers) alongside the existing start/end
+  SF Symbol flag markers. `RouteDisplay` struct carries the GeoJSON and a
+  `[ViaWaypoint]` array; `clearRoute` removes via layers before existing cleanup.
+- **Known limitation** — opening the route editor as the very first action after
+  app launch can return empty route points due to a concurrency timing issue;
+  deferred to a future increment.
+- **New files:** `RouteEditSheet.swift`, `WaypointPickerSheet.swift`
+  (both in `Features/Routes/`).
+- **New DatabaseManager methods:** `fetchRoutePoints(routeItemId:)`,
+  `fetchAllWaypoints() -> [WaypointSummary]`, `updateRoutePoints(_:routeItemId:geometry:distanceMetres:durationSecs:)`.
+- **New RoutingService method:** `calculateRoute(through: [CLLocationCoordinate2D])`.
+- **New model types:** `WaypointSummary`, `ViaWaypoint`, `RouteDisplay`.
+
+Next step: Increment 19 — TBD.
 
 ## File Structure (Planned)
 ```

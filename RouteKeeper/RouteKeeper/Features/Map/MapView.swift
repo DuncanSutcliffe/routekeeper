@@ -36,6 +36,25 @@ struct WaypointDisplay: Equatable {
     let colorHex: String
 }
 
+// MARK: - ViaWaypoint
+
+/// A single intermediate waypoint passed to the map for display as a numbered circle.
+struct ViaWaypoint: Equatable {
+    let latitude: Double
+    let longitude: Double
+    /// 1-based display index shown inside the circle marker.
+    let index: Int
+}
+
+// MARK: - RouteDisplay
+
+/// Everything the map needs to render a stored route: the GeoJSON line and any
+/// intermediate via-waypoint circles.
+struct RouteDisplay: Equatable {
+    let geojson: String
+    let viaWaypoints: [ViaWaypoint]
+}
+
 // MARK: - MapViewModel
 
 /// Drives the map's displayed state.
@@ -57,9 +76,9 @@ final class MapViewModel {
     /// Non-nil when a waypoint marker should be shown on the map.
     var waypointDisplay: WaypointDisplay? = nil
 
-    /// Non-nil GeoJSON string when a stored route should be displayed on the map.
+    /// Non-nil when a stored route should be displayed on the map.
     /// Setting this triggers `showRoute()` in JS; setting it to nil triggers `clearRoute()`.
-    var routeDisplay: String? = nil
+    var routeDisplay: RouteDisplay? = nil
 
     /// Draws a GeoJSON route on the map, replacing any previously drawn route.
     func drawRoute(geojson: String) {
@@ -84,8 +103,8 @@ final class MapViewModel {
     }
 
     /// Displays a stored route on the map, fitting the viewport to its bounds.
-    func showRoute(geojson: String) {
-        routeDisplay = geojson
+    func showRoute(_ display: RouteDisplay) {
+        routeDisplay = display
     }
 
     /// Removes the stored route from the map.
@@ -105,8 +124,8 @@ struct MapView: NSViewRepresentable {
     let centerLat: Double
     let zoom: Double
     let waypointDisplay: WaypointDisplay?
-    /// Non-nil GeoJSON from a sidebar-selected stored route; passed to showRoute() in JS.
-    let routeDisplay: String?
+    /// Non-nil when a stored route should be displayed; passed to showRoute() in JS.
+    let routeDisplay: RouteDisplay?
 
     // MARK: NSViewRepresentable
 
@@ -229,9 +248,9 @@ struct MapView: NSViewRepresentable {
         /// Flushed on mapReady if non-nil.
         var pendingWaypointDisplay: WaypointDisplay? = nil
 
-        /// Route GeoJSON queued before the map was ready. Follows the same
+        /// Route display queued before the map was ready. Follows the same
         /// nil-cancels-pending contract as `pendingWaypointDisplay`.
-        var pendingRouteDisplay: String? = nil
+        var pendingRouteDisplay: RouteDisplay? = nil
 
         /// Weak reference to the WKWebView, used to flush pending state
         /// from inside the message handler (which has no other webView reference).
@@ -244,7 +263,7 @@ struct MapView: NSViewRepresentable {
         var lastCenterLat: Double = .nan
         var lastZoom: Double = .nan
         var lastWaypointDisplay: WaypointDisplay? = nil
-        var lastRouteDisplay: String? = nil
+        var lastRouteDisplay: RouteDisplay? = nil
 
         // MARK: JS calls
 
@@ -278,20 +297,32 @@ struct MapView: NSViewRepresentable {
         }
 
         /// Calls either `showRoute()` or `clearRoute()` in JS depending on
-        /// whether `geojson` is non-nil.
+        /// whether `display` is non-nil.
         ///
         /// When showing a route, start and end marker icons are generated from
-        /// SF Symbols and passed as base64-encoded PNG strings so the JS side
-        /// can display them without any separate asset loading step.
-        func applyRouteDisplay(_ geojson: String?, in webView: WKWebView) {
-            if let geojson {
-                let startIcon = sfSymbolBase64("flag.fill", color: NSColor(red: 0.0, green: 0.5, blue: 0.15, alpha: 1.0)) ?? ""
+        /// SF Symbols and passed as base64-encoded PNG strings. Intermediate via
+        /// waypoints are serialised as a JSON array and passed as a fourth argument.
+        func applyRouteDisplay(_ display: RouteDisplay?, in webView: WKWebView) {
+            if let display {
+                let startIcon = sfSymbolBase64(
+                    "flag.fill",
+                    color: NSColor(red: 0.0, green: 0.5, blue: 0.15, alpha: 1.0)
+                ) ?? ""
                 let endIcon = sfSymbolBase64("flag.checkered", color: .black) ?? ""
-                let escaped = geojson
+                let escaped = display.geojson
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
                     .replacingOccurrences(of: "\n", with: "")
-                let js = "showRoute(\"\(escaped)\", \"\(startIcon)\", \"\(endIcon)\")"
+                // Build a compact JSON array of via waypoints and escape it for
+                // embedding inside a JS string literal.
+                let viaItems = display.viaWaypoints.map { wp in
+                    "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude),\"index\":\(wp.index)}"
+                }.joined(separator: ",")
+                let viaRaw = "[\(viaItems)]"
+                let viaEscaped = viaRaw
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                let js = "showRoute(\"\(escaped)\", \"\(startIcon)\", \"\(endIcon)\", \"\(viaEscaped)\")"
                 webView.evaluateJavaScript(js)
             } else {
                 webView.evaluateJavaScript("clearRoute();")

@@ -20,6 +20,19 @@ enum DatabaseManagerError: Error {
     case insertFailed(String)
 }
 
+// MARK: - WaypointSummary
+
+/// Lightweight projection used by `WaypointPickerSheet` to list available
+/// waypoints without pulling full `Waypoint` records.
+struct WaypointSummary: Identifiable, Hashable {
+    let itemId: Int64
+    let name: String
+    let latitude: Double
+    let longitude: Double
+
+    var id: Int64 { itemId }
+}
+
 // MARK: - DatabaseManager
 
 /// Manages the application's SQLite database.
@@ -329,6 +342,45 @@ actor DatabaseManager {
         }
     }
 
+    /// Returns all `RoutePoint` rows for the given route item, ordered by sequence number.
+    func fetchRoutePoints(routeItemId: Int64) async throws -> [RoutePoint] {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try RoutePoint.fetchAll(
+                db,
+                sql: """
+                    SELECT * FROM route_points
+                    WHERE route_item_id = ?
+                    ORDER BY sequence_number ASC
+                    """,
+                arguments: [routeItemId]
+            )
+        }
+    }
+
+    /// Returns a lightweight summary of every waypoint that has coordinates,
+    /// ordered by name.  Used by `WaypointPickerSheet` in the route-edit flow.
+    func fetchAllWaypoints() async throws -> [WaypointSummary] {
+        let q = try requireQueue()
+        return try await q.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT w.item_id, i.name, w.latitude, w.longitude
+                FROM waypoints w
+                JOIN items i ON i.id = w.item_id
+                WHERE w.latitude IS NOT NULL AND w.longitude IS NOT NULL
+                ORDER BY i.name ASC
+                """)
+            return rows.map {
+                WaypointSummary(
+                    itemId:    $0["item_id"],
+                    name:      $0["name"],
+                    latitude:  $0["latitude"],
+                    longitude: $0["longitude"]
+                )
+            }
+        }
+    }
+
     /// Fetches all waypoints that have coordinate rows in the v4 `waypoints` table,
     /// ordered by name.
     ///
@@ -419,6 +471,62 @@ actor DatabaseManager {
             }
 
             return itemId
+        }
+    }
+
+    /// Replaces the route points for an existing route and updates its stored geometry.
+    ///
+    /// All existing `route_points` rows for `routeItemId` are deleted, then the
+    /// supplied points are re-inserted with `sequence_number` set to their array
+    /// index (0-based). The `routes` row is updated with the new geometry and
+    /// optional distance / duration values. All changes execute in one transaction.
+    func updateRoutePoints(
+        _ points: [RoutePoint],
+        routeItemId: Int64,
+        geometry: String,
+        distanceMetres: Double?,
+        durationSecs: Int?
+    ) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            // 1. Remove old points.
+            try db.execute(
+                sql: "DELETE FROM route_points WHERE route_item_id = ?",
+                arguments: [routeItemId]
+            )
+
+            // 2. Re-insert with fresh sequence numbers.
+            for (index, point) in points.enumerated() {
+                try db.execute(
+                    sql: """
+                        INSERT INTO route_points
+                            (route_item_id, sequence_number, latitude, longitude,
+                             elevation, announces_arrival, name)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                    arguments: [
+                        routeItemId,
+                        index,
+                        point.latitude,
+                        point.longitude,
+                        point.elevation,
+                        point.announcesArrival ? 1 : 0,
+                        point.name
+                    ]
+                )
+            }
+
+            // 3. Update the route record.
+            try db.execute(
+                sql: """
+                    UPDATE routes
+                    SET geometry = ?,
+                        distance_metres = ?,
+                        estimated_duration_secs = ?
+                    WHERE item_id = ?
+                    """,
+                arguments: [geometry, distanceMetres, durationSecs, routeItemId]
+            )
         }
     }
 

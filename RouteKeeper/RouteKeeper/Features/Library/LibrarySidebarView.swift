@@ -124,6 +124,10 @@ struct LibrarySidebarView: View {
     @State private var showingNewRouteSheet    = false
     @State private var newRoutePreselectedListID: Int64?
 
+    @State private var showingRouteEditSheet   = false
+    @State private var routeEditItemId: Int64  = 0
+    @State private var routeEditName: String   = ""
+
     // Export state
     @State private var showingExportSheet       = false
     @State private var exportItemIds: [Int64]   = []
@@ -335,6 +339,23 @@ struct LibrarySidebarView: View {
         }
         .sheet(isPresented: $showingNewRouteSheet) {
             NewRouteSheet(viewModel: viewModel, preselectedListID: newRoutePreselectedListID)
+        }
+        .sheet(isPresented: $showingRouteEditSheet) {
+            RouteEditSheet(
+                routeItemId: routeEditItemId,
+                routeName: routeEditName
+            ) {
+                // If the edited route is the currently selected item, cycle
+                // selectedItem through nil so ContentView's .task(id:) re-fires
+                // and redraws the updated geometry on the map.
+                guard let current = selectedItem, current.id == routeEditItemId else { return }
+                let snapshot = current
+                selectedItem = nil
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 50_000_000)   // 50 ms — one layout pass
+                    selectedItem = snapshot
+                }
+            }
         }
         .sheet(isPresented: $showingExportSheet) {
             ExportFormatSheet(defaultFilename: exportFilename) { format in
@@ -570,6 +591,15 @@ struct LibrarySidebarView: View {
                         .contextMenu {
                             itemContextMenu(for: item)
                         }
+                        .overlay(
+                            DoubleClickHandler {
+                                guard item.type == .route, let itemId = item.id else { return }
+                                selectedItem = item
+                                routeEditItemId = itemId
+                                routeEditName = item.name
+                                showingRouteEditSheet = true
+                            }
+                        )
                     }
                 }
                 .listStyle(.sidebar)
@@ -606,6 +636,16 @@ struct LibrarySidebarView: View {
         // Real folders only — Unclassified sentinel (id == -1) is not a
         // valid drop target and is excluded from both submenus.
         let realFolders = viewModel.folderContents.filter { $0.folder.id != -1 }
+
+        // "Edit Route…" — routes only.
+        if item.type == .route {
+            Button("Edit Route…") {
+                routeEditItemId = itemId
+                routeEditName = item.name
+                showingRouteEditSheet = true
+            }
+            Divider()
+        }
 
         // "Move to…" — always present.
         Menu("Move to…") {
@@ -765,6 +805,37 @@ struct LibrarySidebarView: View {
                 }
             }
         )
+    }
+}
+
+// MARK: - Double-click handler
+
+/// An invisible `NSView` background that intercepts AppKit double-click events
+/// and fires a closure, leaving SwiftUI's own gesture recogniser stack (and
+/// therefore list-row selection) completely undisturbed.
+private struct DoubleClickHandler: NSViewRepresentable {
+    let onDoubleClick: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = ClickableNSView()
+        view.onDoubleClick = onDoubleClick
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? ClickableNSView)?.onDoubleClick = onDoubleClick
+    }
+
+    private class ClickableNSView: NSView {
+        var onDoubleClick: (() -> Void)?
+
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 {
+                onDoubleClick?()
+            }
+            // Always pass the event up so single-click selection still works.
+            super.mouseDown(with: event)
+        }
     }
 }
 

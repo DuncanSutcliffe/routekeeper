@@ -92,6 +92,53 @@ actor RoutingService {
         return geojson
     }
 
+    /// Requests a motorcycle route through an ordered list of two or more waypoints.
+    ///
+    /// - Parameter waypoints: Ordered coordinates; must contain at least two entries.
+    /// - Returns: A compact GeoJSON FeatureCollection string containing a single
+    ///   LineString feature representing the combined route shape.
+    /// - Throws: ``RoutingError`` on network failure, non-200 response, or an
+    ///   unexpected response structure.
+    func calculateRoute(through waypoints: [CLLocationCoordinate2D]) async throws -> String {
+        guard waypoints.count >= 2 else {
+            throw RoutingError.noLegsInResponse
+        }
+        let locations = waypoints.map {
+            ValhallaRequest.Location(lon: $0.longitude, lat: $0.latitude)
+        }
+        let body = ValhallaRequest(
+            locations: locations,
+            costing: "motorcycle",
+            directionsOptions: .init(units: "km")
+        )
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw RoutingError.networkFailure(error)
+        }
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw RoutingError.httpError(statusCode: http.statusCode)
+        }
+        let vResponse: ValhallaResponse
+        do {
+            vResponse = try JSONDecoder().decode(ValhallaResponse.self, from: data)
+        } catch {
+            throw RoutingError.decodingFailed
+        }
+        // Concatenate the shape of all legs to produce a single LineString.
+        let allCoords = vResponse.trip.legs.flatMap { Self.decodePolyline($0.shape) }
+        guard !allCoords.isEmpty else {
+            throw RoutingError.noLegsInResponse
+        }
+        return Self.toGeoJSON(allCoords)
+    }
+
     /// Cache key formed from start and end coordinates at 6 decimal places —
     /// matching Valhalla's own precision so cache hits are exact.
     private func cacheKey(

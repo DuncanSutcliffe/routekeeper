@@ -132,15 +132,17 @@
             });
         }
 
-        /// Shows a stored route on the map, with start and end marker icons.
+        /// Shows a stored route on the map, with start and end marker icons and
+        /// numbered circles for any intermediate via waypoints.
         ///
-        /// geojsonString — JSON string of the Valhalla GeoJSON FeatureCollection
-        /// startBase64   — base64-encoded PNG for the start marker
-        /// endBase64     — base64-encoded PNG for the end marker
+        /// geojsonString    — JSON string of the Valhalla GeoJSON FeatureCollection
+        /// startBase64      — base64-encoded PNG for the start marker
+        /// endBase64        — base64-encoded PNG for the end marker
+        /// viaWaypointsJSON — JSON string: array of {lat, lng, index} objects
         ///
         /// Image loading is Promise-based because HTMLImageElement src loading
         /// is async — MapLibre silently ignores addImage calls on unloaded images.
-        async function showRoute(geojsonString, startBase64, endBase64) {
+        async function showRoute(geojsonString, startBase64, endBase64, viaWaypointsJSON) {
             clearRoute();
             const geojson = JSON.parse(geojsonString);
             const coords = geojson.features[0].geometry.coordinates;
@@ -187,6 +189,46 @@
                 }
             });
 
+            // Via waypoint circles — white fill, blue stroke, numbered label.
+            const viaWaypoints = (viaWaypointsJSON && viaWaypointsJSON.length > 2)
+                ? JSON.parse(viaWaypointsJSON) : [];
+            if (viaWaypoints.length > 0) {
+                const viaFeatures = viaWaypoints.map(function(w) {
+                    return {
+                        type: 'Feature',
+                        geometry: { type: 'Point', coordinates: [w.lng, w.lat] },
+                        properties: { index: w.index }
+                    };
+                });
+                map.addSource('route-via-source', {
+                    type: 'geojson',
+                    data: { type: 'FeatureCollection', features: viaFeatures }
+                });
+                map.addLayer({
+                    id: 'route-via-circles',
+                    type: 'circle',
+                    source: 'route-via-source',
+                    paint: {
+                        'circle-radius': 10,
+                        'circle-color': '#FFFFFF',
+                        'circle-stroke-color': '#2F7CF6',
+                        'circle-stroke-width': 2
+                    }
+                });
+                map.addLayer({
+                    id: 'route-via-labels',
+                    type: 'symbol',
+                    source: 'route-via-source',
+                    layout: {
+                        'text-field': ['to-string', ['get', 'index']],
+                        'text-size': 11,
+                        'text-allow-overlap': true,
+                        'text-ignore-placement': true
+                    },
+                    paint: { 'text-color': '#1a1a1a' }
+                });
+            }
+
             const bounds = geojson.features[0].bbox ||
                 coords.reduce((b, c) => [
                     Math.min(b[0], c[0]), Math.min(b[1], c[1]),
@@ -195,12 +237,15 @@
             map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 60 });
         }
 
-        /// Removes the route line, marker symbols, registered images, and all
-        /// associated sources from the map.
+        /// Removes the route line, marker symbols, via circles, registered images,
+        /// and all associated sources from the map.
         ///
         /// Also clears the legacy "active-route" id used by drawRoute() so that
         /// switching between the two mechanisms never leaves orphaned layers.
         function clearRoute() {
+            if (map.getLayer('route-via-labels'))   map.removeLayer('route-via-labels');
+            if (map.getLayer('route-via-circles'))  map.removeLayer('route-via-circles');
+            if (map.getSource('route-via-source'))  map.removeSource('route-via-source');
             if (map.getLayer('route-markers-layer')) map.removeLayer('route-markers-layer');
             if (map.getSource('route-markers-source')) map.removeSource('route-markers-source');
             if (map.getLayer('route-layer'))   map.removeLayer('route-layer');

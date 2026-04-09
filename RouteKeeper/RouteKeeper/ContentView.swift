@@ -91,7 +91,17 @@ struct ContentView: View {
             mapViewModel.clearWaypoint()
             do {
                 if let geometry = try await DatabaseManager.shared.fetchRouteGeometry(itemId: itemId) {
-                    mapViewModel.showRoute(geojson: geometry)
+                    let allPoints = (try? await DatabaseManager.shared.fetchRoutePoints(
+                        routeItemId: itemId
+                    )) ?? []
+                    // Intermediate points are everything except the first and last.
+                    let intermediates = allPoints.count > 2
+                        ? Array(allPoints.dropFirst().dropLast())
+                        : []
+                    let viaWaypoints = intermediates.enumerated().map { i, pt in
+                        ViaWaypoint(latitude: pt.latitude, longitude: pt.longitude, index: i + 1)
+                    }
+                    mapViewModel.showRoute(RouteDisplay(geojson: geometry, viaWaypoints: viaWaypoints))
                 } else {
                     mapViewModel.clearRoute()
                 }

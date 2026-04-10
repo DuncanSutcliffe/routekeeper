@@ -23,6 +23,10 @@ private struct ShowNewRouteSheetKey: FocusedValueKey {
     typealias Value = Binding<Bool>
 }
 
+private struct ShowRoutingProfilesSheetKey: FocusedValueKey {
+    typealias Value = Binding<Bool>
+}
+
 extension FocusedValues {
     /// Binding to the sidebar's `showingNewFolderSheet` state.
     var showNewFolderSheet: Binding<Bool>? {
@@ -47,15 +51,22 @@ extension FocusedValues {
         get { self[ShowNewRouteSheetKey.self] }
         set { self[ShowNewRouteSheetKey.self] = newValue }
     }
+
+    /// Binding to `ContentView`'s `showingRoutingProfilesSheet` state.
+    var showRoutingProfilesSheet: Binding<Bool>? {
+        get { self[ShowRoutingProfilesSheetKey.self] }
+        set { self[ShowRoutingProfilesSheetKey.self] = newValue }
+    }
 }
 
 // MARK: - Commands
 
 struct RouteKeeperCommands: Commands {
-    @FocusedValue(\.showNewListSheet)     private var showNewListSheet:     Binding<Bool>?
-    @FocusedValue(\.showNewFolderSheet)   private var showNewFolderSheet:   Binding<Bool>?
-    @FocusedValue(\.showNewWaypointSheet) private var showNewWaypointSheet: Binding<Bool>?
-    @FocusedValue(\.showNewRouteSheet)    private var showNewRouteSheet:    Binding<Bool>?
+    @FocusedValue(\.showNewListSheet)          private var showNewListSheet:          Binding<Bool>?
+    @FocusedValue(\.showNewFolderSheet)        private var showNewFolderSheet:        Binding<Bool>?
+    @FocusedValue(\.showNewWaypointSheet)      private var showNewWaypointSheet:      Binding<Bool>?
+    @FocusedValue(\.showNewRouteSheet)         private var showNewRouteSheet:         Binding<Bool>?
+    @FocusedValue(\.showRoutingProfilesSheet)  private var showRoutingProfilesSheet:  Binding<Bool>?
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
@@ -82,6 +93,13 @@ struct RouteKeeperCommands: Commands {
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(showNewFolderSheet == nil)
+
+            Divider()
+
+            Button("Route Profiles…") {
+                showRoutingProfilesSheet?.wrappedValue = true
+            }
+            .disabled(showRoutingProfilesSheet == nil)
         }
     }
 }

@@ -128,7 +128,7 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–18 complete, schema v6 applied, GPX export implemented.**
+**Increments 1–18 complete, Increment 19 complete. Routing profiles management implemented. Schema rebuilt as single migration. GPX export implemented.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
@@ -693,7 +693,62 @@ RouteKeeper/
 - **New RoutingService method:** `calculateRoute(through: [CLLocationCoordinate2D])`.
 - **New model types:** `WaypointSummary`, `ViaWaypoint`, `RouteDisplay`.
 
-Next step: Increment 19 — TBD.
+### Increment 19, Step 1 — Routing profiles database foundation
+- **Single clean migration** — the previous numbered migration chain (v1–v6) has
+  been replaced with one definitive `"v1"` `DatabaseMigrator` registration that
+  builds the entire schema from scratch. The old database file must be deleted
+  before first launch on this version.
+- **`routing_profiles` table** — new table with `id`, `name` (UNIQUE), `is_default`,
+  `avoid_motorways`, `avoid_tolls`, `avoid_unpaved`, `avoid_ferries`,
+  `shortest_route`, `created_at`. Seeded with four built-in profiles:
+  - **All paved roads** (`is_default = 1`, `avoid_unpaved = 1`)
+  - **Avoiding tolls** (`avoid_tolls = 1`)
+  - **Avoiding motorways** (`avoid_motorways = 1`)
+  - **Allow unpaved** (all criteria = 0)
+- **`routes` table** gains six new columns: `applied_profile_name TEXT` (nullable)
+  and `avoid_motorways`, `avoid_tolls`, `avoid_unpaved`, `avoid_ferries`,
+  `shortest_route` (all `INTEGER NOT NULL DEFAULT 0`).
+- **`categories` table** seeding restored — 12 built-in waypoint categories seeded
+  in alphabetical order on fresh install.
+- **All example content seeding removed** — folders, lists, waypoints, routes,
+  and tracks are no longer seeded on first launch.
+- **`RoutingProfileRecords.swift`** (new file, `Models/`) — `RoutingProfile` struct:
+  `Codable`, `FetchableRecord`, `PersistableRecord`, `Identifiable`, `Hashable` on
+  `id`. Flag columns stored as `INTEGER` via custom `encode(to:)`, decoded as `Bool`.
+  **Must be added to the Xcode target manually.**
+- **New `DatabaseManager` methods:** `fetchRoutingProfiles()`,
+  `fetchDefaultRoutingProfile()`, `saveRoutingProfile(_:)`,
+  `deleteRoutingProfile(id:)`, `setDefaultRoutingProfile(id:)`.
+
+### Increment 19, Step 2 — Routing profiles management sheet
+- **`RoutingProfilesSheet.swift`** (new file, `Features/RoutingProfiles/`) — full
+  management sheet accessible via File → "Route Profiles…". **Must be added to the
+  Xcode target manually.**
+- **Title bar** — "Routing Profiles" heading with "Done" button (⏎ / Return shortcut)
+  at the top of the sheet.
+- **Profile list** — `List(selection: $selectedProfileId)` with `.listStyle(.bordered)`,
+  fixed 180 pt height. Selected row shows an inline `TextField` for renaming; non-
+  selected rows show `Text`. Rename committed on Return, focus loss, or row change.
+  Default profile labelled with a tinted "Default" badge.
+- **List toolbar** — `+` (add) and `−` (delete) buttons below the list.
+  Delete disabled when fewer than 2 profiles exist or the selected profile is the default.
+  Delete shows a `confirmationDialog` before executing. New profiles are named
+  "New Profile" (or "New Profile N" if that already exists) and the name field is
+  focused automatically.
+- **Criteria section** — four `Toggle` rows ("Avoid motorways", "Avoid toll roads",
+  "Avoid unpaved roads", "Avoid ferries") plus a "Route optimisation" row with a
+  segmented `Picker` ("Fastest" = `false` / "Shortest" = `true`). All changes
+  persisted immediately via `saveRoutingProfile`.
+- **Make Default section** — full-width "Make Default" button below the criteria when
+  a non-default profile is selected; muted "Default Profile" text when the default
+  is selected; invisible placeholder when nothing is selected.
+- **Wiring** — `showingRoutingProfilesSheet: Bool` state in `ContentView` with
+  `.sheet` and `.focusedValue(\.showRoutingProfilesSheet, ...)`. `ShowRoutingProfilesSheetKey`
+  `FocusedValueKey` and `showRoutingProfilesSheet` `FocusedValues` extension in
+  `RouteKeeperApp.swift`. File menu item "Route Profiles…" with no keyboard shortcut
+  (intentional), disabled when focused value is nil.
+
+Next step: Increment 20 — TBD.
 
 ## File Structure (Planned)
 ```

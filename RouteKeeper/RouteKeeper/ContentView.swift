@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var selectedItem: Item?
     @State private var libraryViewModel = LibraryViewModel()
     @State private var mapViewModel = MapViewModel()
+    @State private var showingRoutingProfilesSheet = false
 
     var body: some View {
         NavigationSplitView {
@@ -54,6 +55,10 @@ struct ContentView: View {
         .task(id: selectedItem?.id) {
             await handleItemSelection(selectedItem)
         }
+        .sheet(isPresented: $showingRoutingProfilesSheet) {
+            RoutingProfilesSheet()
+        }
+        .focusedValue(\.showRoutingProfilesSheet, $showingRoutingProfilesSheet)
     }
 
     // MARK: - Item selection

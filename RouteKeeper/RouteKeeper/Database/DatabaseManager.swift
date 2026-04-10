@@ -73,81 +73,12 @@ actor DatabaseManager {
         }
         var migrator = DatabaseMigrator()
 
-        // v1 — full schema creation and seed data.
-        // The guard lets this migration run safely on databases that were created
-        // before DatabaseMigrator was adopted: those already have the schema in
-        // place, so we skip creation and let v2 apply the uniqueness indexes.
+        // v1 — complete schema including routing_profiles.
+        // This is the definitive single migration for fresh databases.
         migrator.registerMigration("v1") { db in
-            guard try !db.tableExists("app_settings") else { return }
-            try Self.createSchemaV1(db)
-            try Self.seedIfNeeded(db)
-        }
-
-        // v2 — unique-name constraints.
-        // Uses named indexes rather than table recreation (SQLite has no
-        // ALTER TABLE … ADD CONSTRAINT). On databases created after the v1
-        // DDL update, this adds a second index alongside the implicit
-        // sqlite_autoindex_* created by the UNIQUE clause — redundant but
-        // harmless. On pre-v2 databases the index is the sole constraint.
-        migrator.registerMigration("v2") { db in
-            try db.execute(sql: """
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_list_folders_name
-                    ON list_folders(name);
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_lists_name_folder
-                    ON lists(name, folder_id);
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_items_name
-                    ON items(name);
-                """)
-        }
-
-        // v3 — standalone waypoints model.
-        // Drops the old satellite `waypoints` table (item_id → items.id,
-        // Garmin-style) and replaces it with a `categories` lookup table
-        // and a new standalone `waypoints` table for favourite POIs.
-        migrator.registerMigration("v3") { db in
-            try db.execute(sql: "DROP TABLE IF EXISTS waypoints")
-            try Self.createCategoriesAndWaypoints(db)
-        }
-
-        // v4 — waypoints linked to items via item_id PK.
-        // The v3 standalone waypoints table had its own autoincrement id,
-        // preventing waypoints from participating in item_list_membership.
-        // This migration drops that table and recreates waypoints with
-        // item_id as both the primary key and a foreign key to items.id,
-        // matching the pattern used by routes and tracks.
-        migrator.registerMigration("v4") { db in
-            try db.execute(sql: "DROP TABLE IF EXISTS waypoints")
-            try db.execute(sql: """
-                CREATE TABLE waypoints (
-                    item_id     INTEGER  PRIMARY KEY
-                                         REFERENCES items(id) ON DELETE CASCADE,
-                    name        TEXT     NOT NULL,
-                    latitude    REAL     NOT NULL,
-                    longitude   REAL     NOT NULL,
-                    category_id INTEGER  REFERENCES categories(id) ON DELETE SET NULL,
-                    color_hex   TEXT     NOT NULL DEFAULT '#E8453C',
-                    notes       TEXT,
-                    created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
-                )
-                """)
-        }
-
-        // v5 — geometry column on routes.
-        // Adds a nullable TEXT column to store the Valhalla-calculated GeoJSON
-        // FeatureCollection produced by the route-creation flow. Existing rows
-        // receive NULL, which is correct since no geometry has been calculated
-        // for them yet.
-        migrator.registerMigration("v5") { db in
-            try db.execute(sql: "ALTER TABLE routes ADD COLUMN geometry TEXT")
-        }
-
-        // v6 — back-fill route_points.
-        // Routes created before this migration have no route_points rows because
-        // createRoute() did not write them. Remove those empty route shells so
-        // the table is in a clean state; the user will need to recreate affected
-        // routes to obtain proper start/end points for GPX export.
-        migrator.registerMigration("v6") { db in
-            try db.execute(sql: "DELETE FROM route_points")
+            try Self.createCompleteSchema(db)
+            try Self.seedRoutingProfiles(db)
+            try Self.seedCategories(db)
         }
 
         try await migrator.migrate(dbQueue)
@@ -165,7 +96,7 @@ actor DatabaseManager {
         return db
     }
 
-    // MARK: Queries
+    // MARK: - Queries
 
     /// Fetches all list folders paired with their contained lists.
     ///
@@ -209,7 +140,9 @@ actor DatabaseManager {
                 sql: "SELECT * FROM list_folders WHERE id = ?",
                 arguments: [id]
             ) else {
-                throw DatabaseManagerError.insertFailed("Could not fetch newly created folder (id: \(id))")
+                throw DatabaseManagerError.insertFailed(
+                    "Could not fetch newly created folder (id: \(id))"
+                )
             }
             return folder
         }
@@ -233,7 +166,9 @@ actor DatabaseManager {
                 sql: "SELECT * FROM lists WHERE id = ?",
                 arguments: [id]
             ) else {
-                throw DatabaseManagerError.insertFailed("Could not fetch newly created list (id: \(id))")
+                throw DatabaseManagerError.insertFailed(
+                    "Could not fetch newly created list (id: \(id))"
+                )
             }
             return list
         }
@@ -316,9 +251,6 @@ actor DatabaseManager {
 
     /// Returns the stored GeoJSON geometry string for the given route item id,
     /// or `nil` if no row exists or the geometry column is NULL.
-    ///
-    /// Used when a route item is selected in the sidebar to retrieve the
-    /// geometry for display via `showRoute()` in MapLibreMap.html.
     func fetchRouteGeometry(itemId: Int64) async throws -> String? {
         let q = try requireQueue()
         return try await q.read { db in
@@ -381,13 +313,8 @@ actor DatabaseManager {
         }
     }
 
-    /// Fetches all waypoints that have coordinate rows in the v4 `waypoints` table,
-    /// ordered by name.
-    ///
-    /// Only waypoints created through the `NewWaypointSheet` flow have rows here;
-    /// seed-data items of type `"waypoint"` do not (their geometry was lost during
-    /// the v3/v4 schema migrations). This method is used to populate the start/end
-    /// point pickers in `NewRouteSheet`.
+    /// Fetches all waypoints that have coordinate rows in the `waypoints` table,
+    /// ordered by name.  Used to populate the start/end point pickers in `NewRouteSheet`.
     func fetchWaypointsWithCoordinates() async throws -> [Waypoint] {
         let q = try requireQueue()
         return try await q.read { db in
@@ -403,16 +330,6 @@ actor DatabaseManager {
     /// and optional list memberships — all in a single write transaction.
     ///
     /// Returns the database-assigned `items.id` for the new route.
-    ///
-    /// - Parameters:
-    ///   - name: The route name; must be unique across all items.
-    ///   - geometry: GeoJSON FeatureCollection string from Valhalla.
-    ///   - listIds: Lists to associate the route with. Pass an empty array to
-    ///     leave the route unclassified (it will appear in the Unclassified folder).
-    ///   - startWaypoint: When provided, written to `route_points` as sequence 1
-    ///     with `announces_arrival = 1`. Pass `nil` to skip (e.g. in unit tests).
-    ///   - endWaypoint: When provided, written to `route_points` as sequence 2
-    ///     with `announces_arrival = 1`. Pass `nil` to skip.
     @discardableResult
     func createRoute(
         name: String,
@@ -531,9 +448,6 @@ actor DatabaseManager {
     }
 
     /// Returns the waypoint row for the given item id, or `nil` if no row exists.
-    ///
-    /// Used when an item is selected in the sidebar to retrieve its coordinates
-    /// and colour for display on the map.
     func fetchWaypointDetails(itemId: Int64) async throws -> Waypoint? {
         let q = try requireQueue()
         return try await q.read { db in
@@ -572,7 +486,7 @@ actor DatabaseManager {
     /// Copies an item into a list by inserting a membership row.
     ///
     /// Uses `INSERT OR IGNORE` so this is a no-op if the item is already a
-    /// member of the target list — dropping an item onto its own list is safe.
+    /// member of the target list.
     func copyItemToList(itemId: Int64, targetListId: Int64) async throws {
         let q = try requireQueue()
         try await q.write { db in
@@ -584,11 +498,6 @@ actor DatabaseManager {
     }
 
     /// Moves an item from one list to another in a single write transaction.
-    ///
-    /// Deletes the `(itemId, sourceListId)` membership row, then inserts a new
-    /// `(itemId, targetListId)` row.  `INSERT OR IGNORE` ensures a pre-existing
-    /// target membership is not treated as an error.  No other list memberships
-    /// for the item are affected.
     ///
     /// Calling this with `sourceListId == targetListId` is a no-op.
     func moveItemBetweenLists(
@@ -636,9 +545,6 @@ actor DatabaseManager {
     }
 
     /// Returns the set of list IDs that `itemId` currently belongs to.
-    ///
-    /// Used by the context menu to determine which target lists should be shown
-    /// as disabled (the item is already a member of that list).
     func fetchListIds(for itemId: Int64) async throws -> Set<Int64> {
         let q = try requireQueue()
         return try await q.read { db in
@@ -654,10 +560,6 @@ actor DatabaseManager {
     // MARK: - List membership removal and item deletion
 
     /// Removes a single list membership row for the given item.
-    ///
-    /// The item itself is not deleted — it will appear in Unclassified if this
-    /// was its only membership, since the Unclassified query selects items with
-    /// no `item_list_membership` rows.
     func removeItemFromList(itemId: Int64, listId: Int64) async throws {
         let q = try requireQueue()
         try await q.write { db in
@@ -670,9 +572,9 @@ actor DatabaseManager {
 
     /// Permanently deletes an item and all its associated data.
     ///
-    /// Deletes the `items` row; all related rows in `waypoints`, `routes`,
-    /// `tracks`, and `item_list_membership` are removed automatically by
-    /// their `ON DELETE CASCADE` foreign keys.
+    /// All related rows in `waypoints`, `routes`, `tracks`, and
+    /// `item_list_membership` are removed automatically by their ON DELETE CASCADE
+    /// foreign keys.
     func deleteItem(itemId: Int64) async throws {
         let q = try requireQueue()
         try await q.write { db in
@@ -696,10 +598,6 @@ actor DatabaseManager {
     }
 
     /// Permanently deletes a list.
-    ///
-    /// The caller is responsible for verifying the list is empty. Items that
-    /// belonged solely to this list will appear in Unclassified after deletion
-    /// because the `item_list_membership` rows cascade-delete with the list.
     func deleteList(listId: Int64) async throws {
         let q = try requireQueue()
         try await q.write { db in
@@ -727,10 +625,6 @@ actor DatabaseManager {
     }
 
     /// Permanently deletes a folder and all lists it contains.
-    ///
-    /// All lists in the folder are deleted first (their `item_list_membership`
-    /// rows cascade-delete automatically), then the folder itself. The caller
-    /// is responsible for verifying that all lists in the folder are empty.
     func deleteFolder(folderId: Int64) async throws {
         let q = try requireQueue()
         try await q.write { db in
@@ -745,12 +639,64 @@ actor DatabaseManager {
         }
     }
 
+    // MARK: - Routing profiles
+
+    /// Returns all routing profiles ordered by name.
+    func fetchRoutingProfiles() async throws -> [RoutingProfile] {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try RoutingProfile.order(Column("name")).fetchAll(db)
+        }
+    }
+
+    /// Returns the profile whose `is_default` column is 1, or `nil` if none is set.
+    func fetchDefaultRoutingProfile() async throws -> RoutingProfile? {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try RoutingProfile.fetchOne(
+                db,
+                sql: "SELECT * FROM routing_profiles WHERE is_default = 1"
+            )
+        }
+    }
+
+    /// Inserts a new profile or updates an existing one (matched on `id`).
+    func saveRoutingProfile(_ profile: RoutingProfile) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try profile.save(db)
+        }
+    }
+
+    /// Permanently deletes the routing profile with the given id.
+    func deleteRoutingProfile(id: Int64) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "DELETE FROM routing_profiles WHERE id = ?",
+                arguments: [id]
+            )
+        }
+    }
+
+    /// Sets `is_default = 1` on the given profile and `is_default = 0` on all
+    /// others, in a single write transaction.
+    func setDefaultRoutingProfile(id: Int64) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "UPDATE routing_profiles SET is_default = 0"
+            )
+            try db.execute(
+                sql: "UPDATE routing_profiles SET is_default = 1 WHERE id = ?",
+                arguments: [id]
+            )
+        }
+    }
+
     // MARK: - GPX Export
 
     /// Returns all item IDs that are members of `listId`.
-    ///
-    /// Used to determine which items to export when the user chooses
-    /// "Export GPX…" on a list row.
     func fetchItemIdsForList(listId: Int64) async throws -> [Int64] {
         let q = try requireQueue()
         return try await q.read { db in
@@ -764,9 +710,6 @@ actor DatabaseManager {
     }
 
     /// Returns all distinct item IDs that belong to any list inside `folderId`.
-    ///
-    /// Used to determine which items to export when the user chooses
-    /// "Export GPX…" on a folder row.
     func fetchItemIdsForFolder(folderId: Int64) async throws -> [Int64] {
         let q = try requireQueue()
         return try await q.read { db in
@@ -785,8 +728,8 @@ actor DatabaseManager {
     /// Fetches all data needed to export the given items as GPX.
     ///
     /// For each item ID the corresponding child-table rows are fetched:
-    /// - Waypoints: coordinates and notes from the v4 `waypoints` table.
-    ///   Items with no v4 row (e.g. legacy seed data) are skipped.
+    /// - Waypoints: coordinates and notes from the `waypoints` table.
+    ///   Items with no waypoints row are skipped.
     /// - Routes: all `route_points` rows in `sequence_number` order.
     /// - Tracks: all `track_points` rows in `sequence_number` order.
     ///
@@ -807,22 +750,18 @@ actor DatabaseManager {
             var result: [ExportItem] = []
 
             for itemRow in itemRows {
-                let itemId: Int64  = itemRow["id"]
-                let type:   String = itemRow["type"]
-                let name:   String = itemRow["name"]
+                let itemId:      Int64   = itemRow["id"]
+                let type:        String  = itemRow["type"]
+                let name:        String  = itemRow["name"]
                 let description: String? = itemRow["description"]
 
                 switch type {
                 case "waypoint":
                     guard let wptRow = try Row.fetchOne(
                         db,
-                        sql: """
-                            SELECT latitude, longitude, notes
-                            FROM waypoints WHERE item_id = ?
-                            """,
+                        sql: "SELECT latitude, longitude, notes FROM waypoints WHERE item_id = ?",
                         arguments: [itemId]
                     ) else {
-                        // No v4 waypoints row — skip (legacy seed data).
                         continue
                     }
                     let latitude:  Double  = wptRow["latitude"]
@@ -902,7 +841,7 @@ actor DatabaseManager {
         }
     }
 
-    // MARK: Private helpers
+    // MARK: - Private helpers
 
     private func requireQueue() throws -> DatabaseQueue {
         guard let q = _dbQueue else {
@@ -924,11 +863,14 @@ actor DatabaseManager {
         return try DatabaseQueue(path: path)
     }
 
-    // MARK: Migrations
+    // MARK: - Schema creation
 
-    private static func createSchemaV1(_ db: Database) throws {
-        // Execute the complete v1 schema as a single batch.
-        // sqlite3_exec handles multiple semicolon-separated statements.
+    /// Creates the complete database schema from scratch.
+    ///
+    /// Called by the single "v1" migration on every new database. Contains all
+    /// tables including `routing_profiles` and the routing-option columns on
+    /// `routes` added for Increment 19.
+    private static func createCompleteSchema(_ db: Database) throws {
         try db.execute(sql: """
             CREATE TABLE items (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -941,22 +883,39 @@ actor DatabaseManager {
                 modified_at TEXT    NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE categories (
+                id         INTEGER  PRIMARY KEY AUTOINCREMENT,
+                name       TEXT     NOT NULL UNIQUE,
+                icon_name  TEXT     NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE waypoints (
-                item_id    INTEGER PRIMARY KEY
-                           REFERENCES items(id) ON DELETE CASCADE,
-                latitude   REAL NOT NULL,
-                longitude  REAL NOT NULL,
-                elevation  REAL,
-                symbol     TEXT
+                item_id     INTEGER  PRIMARY KEY
+                             REFERENCES items(id) ON DELETE CASCADE,
+                name        TEXT     NOT NULL,
+                latitude    REAL     NOT NULL,
+                longitude   REAL     NOT NULL,
+                category_id INTEGER  REFERENCES categories(id) ON DELETE SET NULL,
+                color_hex   TEXT     NOT NULL DEFAULT '#E8453C',
+                notes       TEXT,
+                created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
             );
 
             CREATE TABLE routes (
                 item_id                 INTEGER PRIMARY KEY
                                         REFERENCES items(id) ON DELETE CASCADE,
                 geojson                 TEXT,
+                geometry                TEXT,
                 distance_metres         REAL,
                 estimated_duration_secs INTEGER,
-                routing_profile         TEXT NOT NULL DEFAULT 'motorcycle'
+                routing_profile         TEXT    NOT NULL DEFAULT 'motorcycle',
+                applied_profile_name    TEXT,
+                avoid_motorways         INTEGER NOT NULL DEFAULT 0,
+                avoid_tolls             INTEGER NOT NULL DEFAULT 0,
+                avoid_unpaved           INTEGER NOT NULL DEFAULT 0,
+                avoid_ferries           INTEGER NOT NULL DEFAULT 0,
+                shortest_route          INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE route_points (
@@ -1027,39 +986,64 @@ actor DatabaseManager {
                 PRIMARY KEY (item_id, list_id)
             );
 
+            CREATE TABLE routing_profiles (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                name             TEXT    NOT NULL UNIQUE,
+                is_default       INTEGER NOT NULL DEFAULT 0,
+                avoid_motorways  INTEGER NOT NULL DEFAULT 0,
+                avoid_tolls      INTEGER NOT NULL DEFAULT 0,
+                avoid_unpaved    INTEGER NOT NULL DEFAULT 0,
+                avoid_ferries    INTEGER NOT NULL DEFAULT 0,
+                shortest_route   INTEGER NOT NULL DEFAULT 0,
+                created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE app_settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT
             );
 
-            INSERT INTO app_settings (key, value) VALUES ('schema_version', '1');
+            CREATE UNIQUE INDEX idx_list_folders_name ON list_folders(name);
+            CREATE UNIQUE INDEX idx_lists_name_folder ON lists(name, folder_id);
+            CREATE UNIQUE INDEX idx_items_name        ON items(name);
             """)
     }
 
-    /// Creates the `categories` and `waypoints` tables (v3 schema) and seeds
-    /// the twelve default categories in alphabetical order.
-    private static func createCategoriesAndWaypoints(_ db: Database) throws {
-        try db.execute(sql: """
-            CREATE TABLE categories (
-                id         INTEGER  PRIMARY KEY AUTOINCREMENT,
-                name       TEXT     NOT NULL UNIQUE,
-                icon_name  TEXT     NOT NULL,
-                created_at DATETIME NOT NULL DEFAULT (datetime('now'))
-            );
+    /// Seeds the four built-in routing profiles.
+    ///
+    /// Called once from the "v1" migration immediately after schema creation.
+    /// These are the only rows inserted on a fresh install; all other tables
+    /// start empty.
+    private static func seedRoutingProfiles(_ db: Database) throws {
+        let profiles: [(name: String, isDefault: Int, avoidMotorways: Int,
+                        avoidTolls: Int, avoidUnpaved: Int,
+                        avoidFerries: Int, shortestRoute: Int)] = [
+            ("All paved roads",      1, 0, 0, 1, 0, 0),
+            ("Allow unpaved",        0, 0, 0, 0, 0, 0),
+            ("Avoiding motorways",   0, 1, 0, 0, 0, 0),
+            ("Avoiding tolls",       0, 0, 1, 0, 0, 0),
+        ]
+        for p in profiles {
+            try db.execute(
+                sql: """
+                    INSERT INTO routing_profiles
+                        (name, is_default, avoid_motorways, avoid_tolls,
+                         avoid_unpaved, avoid_ferries, shortest_route)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    p.name, p.isDefault, p.avoidMotorways,
+                    p.avoidTolls, p.avoidUnpaved, p.avoidFerries, p.shortestRoute
+                ]
+            )
+        }
+    }
 
-            CREATE TABLE waypoints (
-                id          INTEGER  PRIMARY KEY AUTOINCREMENT,
-                name        TEXT     NOT NULL UNIQUE,
-                latitude    REAL     NOT NULL,
-                longitude   REAL     NOT NULL,
-                category_id INTEGER  REFERENCES categories(id) ON DELETE SET NULL,
-                color_hex   TEXT     NOT NULL DEFAULT '#E8453C',
-                notes       TEXT,
-                created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
-            );
-            """)
-
-        let defaults: [(name: String, iconName: String)] = [
+    /// Seeds the twelve built-in waypoint categories in alphabetical order.
+    ///
+    /// Called once from the "v1" migration immediately after routing profiles.
+    private static func seedCategories(_ db: Database) throws {
+        let categories: [(name: String, iconName: String)] = [
             ("Café",        "cup.and.saucer.fill"),
             ("Campsite",    "tent.fill"),
             ("Ferry",       "ferry.fill"),
@@ -1073,178 +1057,11 @@ actor DatabaseManager {
             ("Viewpoint",   "binoculars.fill"),
             ("Workshop",    "wrench.and.screwdriver.fill"),
         ]
-        for row in defaults {
+        for c in categories {
             try db.execute(
                 sql: "INSERT INTO categories (name, icon_name) VALUES (?, ?)",
-                arguments: [row.name, row.iconName]
+                arguments: [c.name, c.iconName]
             )
         }
-    }
-
-    // MARK: Seeding
-
-    /// Inserts placeholder folders and lists when the database is empty.
-    private static func seedIfNeeded(_ db: Database) throws {
-        let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM list_folders") ?? 0
-        guard count == 0 else { return }
-
-        try db.execute(
-            sql: "INSERT INTO list_folders (name, sort_order) VALUES (?, ?)",
-            arguments: ["Europe Tours", 0]
-        )
-        guard let europeFolderId = try Int64.fetchOne(
-            db, sql: "SELECT last_insert_rowid()"
-        ) else {
-            throw DatabaseManagerError.seedingFailed("Could not retrieve Europe Tours folder ID")
-        }
-
-        try db.execute(
-            sql: "INSERT INTO list_folders (name, sort_order) VALUES (?, ?)",
-            arguments: ["Day Rides", 1]
-        )
-        guard let dayRidesFolderId = try Int64.fetchOne(
-            db, sql: "SELECT last_insert_rowid()"
-        ) else {
-            throw DatabaseManagerError.seedingFailed("Could not retrieve Day Rides folder ID")
-        }
-
-        try db.execute(
-            sql: """
-                INSERT INTO lists (name, folder_id, sort_order) VALUES
-                    (?, ?, 0),
-                    (?, ?, 1),
-                    (?, ?, 0),
-                    (?, ?, 1)
-                """,
-            arguments: [
-                "Alps Loop 2024",     europeFolderId,
-                "Pyrenees Run",       europeFolderId,
-                "Morning Coastal",    dayRidesFolderId,
-                "Peak District Loop", dayRidesFolderId,
-            ]
-        )
-
-        try seedItems(db)
-    }
-
-    /// Inserts placeholder items and associates them with the seed lists.
-    ///
-    /// Called once from ``seedIfNeeded(_:)`` immediately after the lists are
-    /// created. List IDs are looked up by name — safe because the names are
-    /// unique within the seed data.
-    private static func seedItems(_ db: Database) throws {
-
-        // Resolve list IDs by name.
-        func listID(_ name: String) throws -> Int64 {
-            guard let id = try Int64.fetchOne(
-                db, sql: "SELECT id FROM lists WHERE name = ?", arguments: [name]
-            ) else {
-                throw DatabaseManagerError.seedingFailed("List '\(name)' not found")
-            }
-            return id
-        }
-
-        let alpsID        = try listID("Alps Loop 2024")
-        let pyreneesID    = try listID("Pyrenees Run")
-        let coastalID     = try listID("Morning Coastal")
-        let peakDistID    = try listID("Peak District Loop")
-
-        // Helper: insert an item row and return its new id.
-        func insertItem(type: String, name: String) throws -> Int64 {
-            try db.execute(
-                sql: "INSERT INTO items (type, name) VALUES (?, ?)",
-                arguments: [type, name]
-            )
-            guard let id = try Int64.fetchOne(db, sql: "SELECT last_insert_rowid()") else {
-                throw DatabaseManagerError.seedingFailed("Could not retrieve item id for '\(name)'")
-            }
-            return id
-        }
-
-        // Helper: link an item to a list.
-        func associate(itemId: Int64, listId: Int64, order: Int = 0) throws {
-            try db.execute(
-                sql: "INSERT INTO item_list_membership (item_id, list_id, sort_order) VALUES (?, ?, ?)",
-                arguments: [itemId, listId, order]
-            )
-        }
-
-        // ── Alps Loop 2024 ────────────────────────────────────────────────
-
-        let galibier = try insertItem(type: "waypoint", name: "Col du Galibier")
-        try db.execute(
-            sql: "INSERT INTO waypoints (item_id, latitude, longitude, elevation, symbol) VALUES (?, ?, ?, ?, ?)",
-            arguments: [galibier, 45.0643, 6.4078, 2642.0, "Summit"]
-        )
-        try associate(itemId: galibier, listId: alpsID, order: 0)
-
-        let chamonixAnnecy = try insertItem(type: "route", name: "Chamonix to Annecy")
-        try db.execute(
-            sql: "INSERT INTO routes (item_id, routing_profile) VALUES (?, ?)",
-            arguments: [chamonixAnnecy, "motorcycle"]
-        )
-        try associate(itemId: chamonixAnnecy, listId: alpsID, order: 1)
-
-        let montBlancTrack = try insertItem(type: "track", name: "Tour du Mont Blanc")
-        try db.execute(
-            sql: "INSERT INTO tracks (item_id) VALUES (?)",
-            arguments: [montBlancTrack]
-        )
-        try associate(itemId: montBlancTrack, listId: alpsID, order: 2)
-
-        // ── Pyrenees Run ─────────────────────────────────────────────────
-
-        let aubisque = try insertItem(type: "waypoint", name: "Col d'Aubisque")
-        try db.execute(
-            sql: "INSERT INTO waypoints (item_id, latitude, longitude, elevation, symbol) VALUES (?, ?, ?, ?, ?)",
-            arguments: [aubisque, 42.9697, -0.3375, 1709.0, "Summit"]
-        )
-        try associate(itemId: aubisque, listId: pyreneesID, order: 0)
-
-        let lourdesBiarritz = try insertItem(type: "route", name: "Lourdes to Biarritz")
-        try db.execute(
-            sql: "INSERT INTO routes (item_id, routing_profile) VALUES (?, ?)",
-            arguments: [lourdesBiarritz, "motorcycle"]
-        )
-        try associate(itemId: lourdesBiarritz, listId: pyreneesID, order: 1)
-
-        // ── Morning Coastal ───────────────────────────────────────────────
-
-        let beachyHead = try insertItem(type: "waypoint", name: "Beachy Head")
-        try db.execute(
-            sql: "INSERT INTO waypoints (item_id, latitude, longitude, symbol) VALUES (?, ?, ?, ?)",
-            arguments: [beachyHead, 50.7361, 0.2450, "Scenic Area"]
-        )
-        try associate(itemId: beachyHead, listId: coastalID, order: 0)
-
-        let sevenSisters = try insertItem(type: "track", name: "Seven Sisters Ride")
-        try db.execute(
-            sql: "INSERT INTO tracks (item_id) VALUES (?)",
-            arguments: [sevenSisters]
-        )
-        try associate(itemId: sevenSisters, listId: coastalID, order: 1)
-
-        // ── Peak District Loop ────────────────────────────────────────────
-
-        let matlockBath = try insertItem(type: "waypoint", name: "Matlock Bath")
-        try db.execute(
-            sql: "INSERT INTO waypoints (item_id, latitude, longitude, symbol) VALUES (?, ?, ?, ?)",
-            arguments: [matlockBath, 53.1283, -1.5604, "Flag, Blue"]
-        )
-        try associate(itemId: matlockBath, listId: peakDistID, order: 0)
-
-        let matlockBuxton = try insertItem(type: "route", name: "Matlock to Buxton")
-        try db.execute(
-            sql: "INSERT INTO routes (item_id, routing_profile) VALUES (?, ?)",
-            arguments: [matlockBuxton, "motorcycle"]
-        )
-        try associate(itemId: matlockBuxton, listId: peakDistID, order: 1)
-
-        let stanage = try insertItem(type: "waypoint", name: "Stanage Edge")
-        try db.execute(
-            sql: "INSERT INTO waypoints (item_id, latitude, longitude, symbol) VALUES (?, ?, ?, ?)",
-            arguments: [stanage, 53.3667, -1.6333, "Scenic Area"]
-        )
-        try associate(itemId: stanage, listId: peakDistID, order: 2)
     }
 }

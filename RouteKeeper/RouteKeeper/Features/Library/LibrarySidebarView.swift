@@ -124,9 +124,10 @@ struct LibrarySidebarView: View {
     @State private var showingNewRouteSheet    = false
     @State private var newRoutePreselectedListID: Int64?
 
-    @State private var showingRouteEditSheet   = false
-    @State private var routeEditItemId: Int64  = 0
-    @State private var routeEditName: String   = ""
+    @State private var showingRoutePropertiesSheet = false
+    @State private var showingRouteWaypointSheet   = false  // opened directly from context menu
+    @State private var routeEditItemId: Int64      = 0
+    @State private var routeEditName: String       = ""
 
     // Export state
     @State private var showingExportSheet       = false
@@ -340,8 +341,27 @@ struct LibrarySidebarView: View {
         .sheet(isPresented: $showingNewRouteSheet) {
             NewRouteSheet(viewModel: viewModel, preselectedListID: newRoutePreselectedListID)
         }
-        .sheet(isPresented: $showingRouteEditSheet) {
-            RouteEditSheet(
+        .sheet(isPresented: $showingRoutePropertiesSheet) {
+            RoutePropertiesSheet(
+                routeItemId: routeEditItemId,
+                initialName: routeEditName,
+                onSave: {
+                    Task { await viewModel.reload() }
+                    // Cycle selectedItem so ContentView's .task(id:) re-fires and
+                    // redraws the updated geometry if this route is currently shown.
+                    guard let current = selectedItem,
+                          current.id == routeEditItemId else { return }
+                    let snapshot = current
+                    selectedItem = nil
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                        selectedItem = snapshot
+                    }
+                }
+            )
+        }
+        .sheet(isPresented: $showingRouteWaypointSheet) {
+            RouteWaypointSheet(
                 routeItemId: routeEditItemId,
                 routeName: routeEditName
             ) {
@@ -352,7 +372,7 @@ struct LibrarySidebarView: View {
                 let snapshot = current
                 selectedItem = nil
                 Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 50_000_000)   // 50 ms — one layout pass
+                    try? await Task.sleep(nanoseconds: 50_000_000)
                     selectedItem = snapshot
                 }
             }
@@ -597,7 +617,7 @@ struct LibrarySidebarView: View {
                                 selectedItem = item
                                 routeEditItemId = itemId
                                 routeEditName = item.name
-                                showingRouteEditSheet = true
+                                showingRoutePropertiesSheet = true
                             }
                         )
                     }
@@ -637,12 +657,17 @@ struct LibrarySidebarView: View {
         // valid drop target and is excluded from both submenus.
         let realFolders = viewModel.folderContents.filter { $0.folder.id != -1 }
 
-        // "Edit Route…" — routes only.
+        // "Edit Route" actions — routes only.
         if item.type == .route {
             Button("Edit Route…") {
                 routeEditItemId = itemId
                 routeEditName = item.name
-                showingRouteEditSheet = true
+                showingRoutePropertiesSheet = true
+            }
+            Button("Edit Route Waypoints…") {
+                routeEditItemId = itemId
+                routeEditName = item.name
+                showingRouteWaypointSheet = true
             }
             Divider()
         }

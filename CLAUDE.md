@@ -128,7 +128,7 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–18 complete, Increment 19 complete. Routing profiles management implemented. Schema rebuilt as single migration. GPX export implemented.**
+**Increments 1–18 complete, Increment 19 Steps 1–2 complete. Routing profiles management implemented. Schema rebuilt as single migration. GPX export implemented.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
@@ -722,19 +722,18 @@ RouteKeeper/
 
 ### Increment 19, Step 2 — Routing profiles management sheet
 - **`RoutingProfilesSheet.swift`** (new file, `Features/RoutingProfiles/`) — full
-  management sheet accessible via File → "Route Profiles…". **Must be added to the
-  Xcode target manually.**
+  management sheet accessible via File → "Route Profiles…", separated from the GPX
+  export items by a `Divider()`. **Must be added to the Xcode target manually.**
 - **Title bar** — "Routing Profiles" heading with "Done" button (⏎ / Return shortcut)
   at the top of the sheet.
 - **Profile list** — `List(selection: $selectedProfileId)` with `.listStyle(.bordered)`,
   fixed 180 pt height. Selected row shows an inline `TextField` for renaming; non-
   selected rows show `Text`. Rename committed on Return, focus loss, or row change.
   Default profile labelled with a tinted "Default" badge.
-- **List toolbar** — `+` (add) and `−` (delete) buttons below the list.
-  Delete disabled when fewer than 2 profiles exist or the selected profile is the default.
-  Delete shows a `confirmationDialog` before executing. New profiles are named
-  "New Profile" (or "New Profile N" if that already exists) and the name field is
-  focused automatically.
+- **List toolbar** — `+` (add) and `−` (delete) buttons below the list. Delete
+  disabled when only one profile remains or the selected profile is the default.
+  Delete shows a `confirmationDialog` before executing. New profiles named "New
+  Profile" (or "New Profile N") with the name field focused automatically.
 - **Criteria section** — four `Toggle` rows ("Avoid motorways", "Avoid toll roads",
   "Avoid unpaved roads", "Avoid ferries") plus a "Route optimisation" row with a
   segmented `Picker` ("Fastest" = `false` / "Shortest" = `true`). All changes
@@ -748,7 +747,7 @@ RouteKeeper/
   `RouteKeeperApp.swift`. File menu item "Route Profiles…" with no keyboard shortcut
   (intentional), disabled when focused value is nil.
 
-Next step: Increment 20 — TBD.
+Next step: Increment 19 Step 3 — profile picker and criteria display in the route creation sheet.
 
 ## File Structure (Planned)
 ```

@@ -67,6 +67,11 @@ final class LibraryViewModel {
     /// - Parameters:
     ///   - sortColumn: Column to sort `list_folders` by (`"name"` or `"created_at"`).
     ///   - ascending: Sort direction.
+    /// Reloads using the sort state from the most recent `load` call.
+    func reload() async {
+        await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
+    }
+
     func load(sortColumn: String = "sort_order", ascending: Bool = true) async {
         currentSortColumn = sortColumn
         currentSortAscending = ascending
@@ -164,7 +169,13 @@ final class LibraryViewModel {
         geometry: String,
         listIds: [Int64],
         startWaypoint: Waypoint? = nil,
-        endWaypoint: Waypoint? = nil
+        endWaypoint: Waypoint? = nil,
+        appliedProfileName: String? = nil,
+        avoidMotorways: Bool = false,
+        avoidTolls: Bool = false,
+        avoidUnpaved: Bool = false,
+        avoidFerries: Bool = false,
+        shortestRoute: Bool = false
     ) async {
         do {
             try await DatabaseManager.shared.createRoute(
@@ -172,7 +183,13 @@ final class LibraryViewModel {
                 geometry: geometry,
                 listIds: listIds,
                 startWaypoint: startWaypoint,
-                endWaypoint: endWaypoint
+                endWaypoint: endWaypoint,
+                appliedProfileName: appliedProfileName,
+                avoidMotorways: avoidMotorways,
+                avoidTolls: avoidTolls,
+                avoidUnpaved: avoidUnpaved,
+                avoidFerries: avoidFerries,
+                shortestRoute: shortestRoute
             )
         } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
             creationError = "A route with that name already exists."

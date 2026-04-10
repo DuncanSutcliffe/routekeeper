@@ -92,24 +92,46 @@ actor RoutingService {
         return geojson
     }
 
-    /// Requests a motorcycle route through an ordered list of two or more waypoints.
+    /// Requests a motorcycle route through an ordered list of two or more waypoints,
+    /// applying the given routing criteria as Valhalla costing options.
     ///
-    /// - Parameter waypoints: Ordered coordinates; must contain at least two entries.
+    /// - Parameters:
+    ///   - waypoints: Ordered coordinates; must contain at least two entries.
+    ///   - avoidMotorways: Omit motorways from the route (`use_highways: 0.0`).
+    ///   - avoidTolls: Omit toll roads (`use_tolls: 0.0`).
+    ///   - avoidUnpaved: Omit unpaved roads (`use_trails: 0.0`).
+    ///   - avoidFerries: Omit ferries (`use_ferry: 0.0`).
+    ///   - shortestRoute: Optimise for distance rather than time (`shortest: true`).
     /// - Returns: A compact GeoJSON FeatureCollection string containing a single
     ///   LineString feature representing the combined route shape.
     /// - Throws: ``RoutingError`` on network failure, non-200 response, or an
     ///   unexpected response structure.
-    func calculateRoute(through waypoints: [CLLocationCoordinate2D]) async throws -> String {
+    func calculateRoute(
+        through waypoints: [CLLocationCoordinate2D],
+        avoidMotorways: Bool = false,
+        avoidTolls: Bool     = false,
+        avoidUnpaved: Bool   = false,
+        avoidFerries: Bool   = false,
+        shortestRoute: Bool  = false
+    ) async throws -> String {
         guard waypoints.count >= 2 else {
             throw RoutingError.noLegsInResponse
         }
         let locations = waypoints.map {
             ValhallaRequest.Location(lon: $0.longitude, lat: $0.latitude)
         }
+        let motorcycleOptions = ValhallaRequest.MotorcycleOptions(
+            useHighways: avoidMotorways ? 0.0 : nil,
+            useTolls:    avoidTolls    ? 0.0 : nil,
+            useTrails:   avoidUnpaved  ? 0.0 : nil,
+            useFerry:    avoidFerries  ? 0.0 : nil,
+            shortest:    shortestRoute ? true : nil
+        )
         let body = ValhallaRequest(
             locations: locations,
             costing: "motorcycle",
-            directionsOptions: .init(units: "km")
+            directionsOptions: .init(units: "km"),
+            costingOptions: .init(motorcycle: motorcycleOptions)
         )
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -162,7 +184,11 @@ actor RoutingService {
                 .init(lon: destination.longitude, lat: destination.latitude),
             ],
             costing: "motorcycle",
-            directionsOptions: .init(units: "km")
+            directionsOptions: .init(units: "km"),
+            costingOptions: .init(motorcycle: .init(
+                useHighways: nil, useTolls: nil,
+                useTrails: nil, useFerry: nil, shortest: nil
+            ))
         )
 
         var request = URLRequest(url: endpoint)
@@ -235,10 +261,12 @@ private struct ValhallaRequest: Encodable {
     let locations: [Location]
     let costing: String
     let directionsOptions: DirectionsOptions
+    let costingOptions: CostingOptions
 
     enum CodingKeys: String, CodingKey {
         case locations, costing
         case directionsOptions = "directions_options"
+        case costingOptions    = "costing_options"
     }
 
     struct Location: Encodable {
@@ -248,6 +276,43 @@ private struct ValhallaRequest: Encodable {
 
     struct DirectionsOptions: Encodable {
         let units: String
+    }
+
+    /// Top-level costing options wrapper required by the Valhalla API.
+    struct CostingOptions: Encodable {
+        let motorcycle: MotorcycleOptions
+    }
+
+    /// Per-criterion overrides for Valhalla's motorcycle costing model.
+    /// Only keys whose values are non-nil are included in the encoded JSON.
+    struct MotorcycleOptions: Encodable {
+        /// `0.0` to discourage motorways; omit to use the default.
+        let useHighways: Double?
+        /// `0.0` to discourage toll roads; omit to use the default.
+        let useTolls: Double?
+        /// `0.0` to discourage unpaved roads; omit to use the default.
+        let useTrails: Double?
+        /// `0.0` to discourage ferries; omit to use the default.
+        let useFerry: Double?
+        /// `true` to optimise for shortest distance; omit for fastest time.
+        let shortest: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case useHighways = "use_highways"
+            case useTolls    = "use_tolls"
+            case useTrails   = "use_trails"
+            case useFerry    = "use_ferry"
+            case shortest
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(useHighways, forKey: .useHighways)
+            try c.encodeIfPresent(useTolls,    forKey: .useTolls)
+            try c.encodeIfPresent(useTrails,   forKey: .useTrails)
+            try c.encodeIfPresent(useFerry,    forKey: .useFerry)
+            try c.encodeIfPresent(shortest,    forKey: .shortest)
+        }
     }
 }
 

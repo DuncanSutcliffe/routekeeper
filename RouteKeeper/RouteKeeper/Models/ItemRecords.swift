@@ -97,10 +97,22 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
     var distanceMetres: Double?
     var estimatedDurationSecs: Int?
     var routingProfile: String
+    /// Name of the routing profile applied when the route was created or last edited.
+    var appliedProfileName: String?
+    var avoidMotorways: Bool
+    var avoidTolls: Bool
+    var avoidUnpaved: Bool
+    var avoidFerries: Bool
+    var shortestRoute: Bool
 
     init(itemId: Int64, routingProfile: String = "motorcycle") {
         self.itemId = itemId
         self.routingProfile = routingProfile
+        self.avoidMotorways = false
+        self.avoidTolls     = false
+        self.avoidUnpaved   = false
+        self.avoidFerries   = false
+        self.shortestRoute  = false
     }
 
     enum CodingKeys: String, CodingKey {
@@ -110,6 +122,12 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
         case distanceMetres = "distance_metres"
         case estimatedDurationSecs = "estimated_duration_secs"
         case routingProfile = "routing_profile"
+        case appliedProfileName = "applied_profile_name"
+        case avoidMotorways = "avoid_motorways"
+        case avoidTolls     = "avoid_tolls"
+        case avoidUnpaved   = "avoid_unpaved"
+        case avoidFerries   = "avoid_ferries"
+        case shortestRoute  = "shortest_route"
     }
 }
 

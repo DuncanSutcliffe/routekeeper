@@ -29,6 +29,19 @@ struct NewRouteSheet: View {
 
     @State private var selectedListIDs: Set<Int64> = []
 
+    // MARK: - Routing profile state
+
+    @State private var profiles: [RoutingProfile] = []
+    /// The profile whose criteria were last loaded into the fields below.
+    @State private var baselineProfile: RoutingProfile? = nil
+    /// Stored on the route record; not changed when the user tweaks criteria manually.
+    @State private var appliedProfileName: String? = nil
+    @State private var avoidMotorways = false
+    @State private var avoidTolls     = false
+    @State private var avoidUnpaved   = false
+    @State private var avoidFerries   = false
+    @State private var shortestRoute  = false
+
     // MARK: - Async / error state
 
     @State private var isCalculating = false
@@ -49,6 +62,36 @@ struct NewRouteSheet: View {
     private var endWaypointOptions: [Waypoint] {
         guard let start = startWaypoint else { return viewModel.availableWaypoints }
         return viewModel.availableWaypoints.filter { $0.itemId != start.itemId }
+    }
+
+    /// True when the user has manually changed a criterion away from the loaded profile's values.
+    private var criteriaModified: Bool {
+        guard let base = baselineProfile else { return false }
+        return avoidMotorways != base.avoidMotorways ||
+               avoidTolls     != base.avoidTolls     ||
+               avoidUnpaved   != base.avoidUnpaved   ||
+               avoidFerries   != base.avoidFerries   ||
+               shortestRoute  != base.shortestRoute
+    }
+
+    /// Binding for the profile picker.  Returns nil (the "modified" virtual entry)
+    /// when criteria have drifted from the loaded profile; returns the profile id otherwise.
+    private var pickerBinding: Binding<Int64?> {
+        Binding(
+            get: { self.criteriaModified ? nil : self.baselineProfile?.id },
+            set: { newId in
+                guard let id = newId,
+                      let profile = self.profiles.first(where: { $0.id == id })
+                else { return }
+                self.baselineProfile   = profile
+                self.appliedProfileName = profile.name
+                self.avoidMotorways    = profile.avoidMotorways
+                self.avoidTolls        = profile.avoidTolls
+                self.avoidUnpaved      = profile.avoidUnpaved
+                self.avoidFerries      = profile.avoidFerries
+                self.shortestRoute     = profile.shortestRoute
+            }
+        )
     }
 
     private var canSubmit: Bool {
@@ -74,6 +117,7 @@ struct NewRouteSheet: View {
                     nameSection
                     startSection
                     endSection
+                    profileSection
                     listsSection
                 }
                 .padding(20)
@@ -113,7 +157,23 @@ struct NewRouteSheet: View {
             if let listID = preselectedListID {
                 selectedListIDs.insert(listID)
             }
-            Task { await viewModel.loadAvailableWaypoints() }
+            Task {
+                await viewModel.loadAvailableWaypoints()
+                do {
+                    profiles = try await DatabaseManager.shared.fetchRoutingProfiles()
+                    if let defaultProfile = try await DatabaseManager.shared.fetchDefaultRoutingProfile() {
+                        baselineProfile    = defaultProfile
+                        appliedProfileName = defaultProfile.name
+                        avoidMotorways     = defaultProfile.avoidMotorways
+                        avoidTolls         = defaultProfile.avoidTolls
+                        avoidUnpaved       = defaultProfile.avoidUnpaved
+                        avoidFerries       = defaultProfile.avoidFerries
+                        shortestRoute      = defaultProfile.shortestRoute
+                    }
+                } catch {
+                    // profiles stays empty; section shows disabled picker
+                }
+            }
         }
         .alert("Route Calculation Failed", isPresented: $showRoutingError) {
             Button("OK", role: .cancel) {}
@@ -190,6 +250,62 @@ struct NewRouteSheet: View {
         }
     }
 
+    private var profileSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Routing Profile", systemImage: "slider.horizontal.3")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+
+            Picker("Routing Profile", selection: pickerBinding) {
+                if criteriaModified {
+                    Text("\(appliedProfileName ?? "") (modified)").tag(nil as Int64?)
+                }
+                ForEach(profiles) { profile in
+                    Text(profile.name).tag(profile.id)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .disabled(profiles.isEmpty)
+
+            VStack(alignment: .leading, spacing: 0) {
+                criteriaToggle("Avoid motorways",     isOn: $avoidMotorways)
+                Divider().padding(.leading, 16)
+                criteriaToggle("Avoid toll roads",    isOn: $avoidTolls)
+                Divider().padding(.leading, 16)
+                criteriaToggle("Avoid unpaved roads", isOn: $avoidUnpaved)
+                Divider().padding(.leading, 16)
+                criteriaToggle("Avoid ferries",       isOn: $avoidFerries)
+                Divider().padding(.leading, 16)
+                routeOptimisationRow
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func criteriaToggle(_ label: String, isOn: Binding<Bool>) -> some View {
+        Toggle(label, isOn: isOn)
+            .toggleStyle(.switch)
+            .padding(.vertical, 6)
+    }
+
+    private var routeOptimisationRow: some View {
+        HStack {
+            Text("Route optimisation")
+            Spacer()
+            Picker("", selection: $shortestRoute) {
+                Text("Fastest").tag(false)
+                Text("Shortest").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 150)
+        }
+        .padding(.vertical, 6)
+    }
+
     private var listsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Add to Lists", systemImage: "list.bullet")
@@ -246,15 +362,28 @@ struct NewRouteSheet: View {
         Task {
             do {
                 let geojson = try await RoutingService.shared.calculateRoute(
-                    from: CLLocationCoordinate2D(latitude: start.latitude, longitude: start.longitude),
-                    to:   CLLocationCoordinate2D(latitude: end.latitude,   longitude: end.longitude)
+                    through: [
+                        CLLocationCoordinate2D(latitude: start.latitude, longitude: start.longitude),
+                        CLLocationCoordinate2D(latitude: end.latitude,   longitude: end.longitude)
+                    ],
+                    avoidMotorways: avoidMotorways,
+                    avoidTolls:     avoidTolls,
+                    avoidUnpaved:   avoidUnpaved,
+                    avoidFerries:   avoidFerries,
+                    shortestRoute:  shortestRoute
                 )
                 await viewModel.createRoute(
-                    name:          trimmedName,
-                    geometry:      geojson,
-                    listIds:       Array(selectedListIDs),
-                    startWaypoint: start,
-                    endWaypoint:   end
+                    name:               trimmedName,
+                    geometry:           geojson,
+                    listIds:            Array(selectedListIDs),
+                    startWaypoint:      start,
+                    endWaypoint:        end,
+                    appliedProfileName: appliedProfileName,
+                    avoidMotorways:     avoidMotorways,
+                    avoidTolls:         avoidTolls,
+                    avoidUnpaved:       avoidUnpaved,
+                    avoidFerries:       avoidFerries,
+                    shortestRoute:      shortestRoute
                 )
                 if viewModel.creationError == nil {
                     dismiss()

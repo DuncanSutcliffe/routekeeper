@@ -336,7 +336,13 @@ actor DatabaseManager {
         geometry: String,
         listIds: [Int64],
         startWaypoint: Waypoint? = nil,
-        endWaypoint: Waypoint? = nil
+        endWaypoint: Waypoint? = nil,
+        appliedProfileName: String? = nil,
+        avoidMotorways: Bool = false,
+        avoidTolls: Bool = false,
+        avoidUnpaved: Bool = false,
+        avoidFerries: Bool = false,
+        shortestRoute: Bool = false
     ) async throws -> Int64 {
         let q = try requireQueue()
         return try await q.write { db in
@@ -349,10 +355,16 @@ actor DatabaseManager {
                 throw DatabaseManagerError.insertFailed("Could not retrieve new item ID")
             }
 
-            // 2. Insert route-specific data.
+            // 2. Insert route-specific data including applied profile criteria.
             try db.execute(
-                sql: "INSERT INTO routes (item_id, routing_profile, geometry) VALUES (?, ?, ?)",
-                arguments: [itemId, "motorcycle", geometry]
+                sql: "INSERT INTO routes " +
+                     "(item_id, routing_profile, geometry, applied_profile_name, " +
+                     "avoid_motorways, avoid_tolls, avoid_unpaved, avoid_ferries, shortest_route) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                arguments: [itemId, "motorcycle", geometry, appliedProfileName,
+                            avoidMotorways ? 1 : 0, avoidTolls ? 1 : 0,
+                            avoidUnpaved ? 1 : 0, avoidFerries ? 1 : 0,
+                            shortestRoute ? 1 : 0]
             )
 
             // 3. Insert route_points for start (seq 1) and end (seq 2) if supplied.
@@ -443,6 +455,52 @@ actor DatabaseManager {
                     WHERE item_id = ?
                     """,
                 arguments: [geometry, distanceMetres, durationSecs, routeItemId]
+            )
+        }
+    }
+
+    /// Updates only the `geometry` column on the given route row.
+    ///
+    /// Used after a Valhalla recalculation to persist the new GeoJSON without
+    /// touching waypoints or other route metadata.
+    func updateRouteGeometry(itemId: Int64, geometry: String) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "UPDATE routes SET geometry = ? WHERE item_id = ?",
+                arguments: [geometry, itemId]
+            )
+        }
+    }
+
+    /// Updates the route name (in `items`) and all five routing criteria columns
+    /// (in `routes`) in a single write transaction.
+    func updateRouteProperties(
+        itemId: Int64,
+        name: String,
+        appliedProfileName: String?,
+        avoidMotorways: Bool,
+        avoidTolls: Bool,
+        avoidUnpaved: Bool,
+        avoidFerries: Bool,
+        shortestRoute: Bool
+    ) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "UPDATE items SET name = ? WHERE id = ?",
+                arguments: [name, itemId]
+            )
+            try db.execute(
+                sql: "UPDATE routes " +
+                     "SET applied_profile_name = ?, " +
+                     "avoid_motorways = ?, avoid_tolls = ?, " +
+                     "avoid_unpaved = ?, avoid_ferries = ?, shortest_route = ? " +
+                     "WHERE item_id = ?",
+                arguments: [appliedProfileName,
+                            avoidMotorways ? 1 : 0, avoidTolls ? 1 : 0,
+                            avoidUnpaved ? 1 : 0, avoidFerries ? 1 : 0,
+                            shortestRoute ? 1 : 0, itemId]
             )
         }
     }

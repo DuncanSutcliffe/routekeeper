@@ -128,7 +128,7 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–18 complete, Increment 19 Steps 1–2 complete. Routing profiles management implemented. Schema rebuilt as single migration. GPX export implemented.**
+**Increments 1–19 complete. Routing profiles and criteria-based routing implemented. Schema rebuilt as single migration. GPX export implemented.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
@@ -747,7 +747,59 @@ RouteKeeper/
   `RouteKeeperApp.swift`. File menu item "Route Profiles…" with no keyboard shortcut
   (intentional), disabled when focused value is nil.
 
-Next step: Increment 19 Step 3 — profile picker and criteria display in the route creation sheet.
+### Increment 19, Step 3 — Criteria in route creation and editing
+- **`NewRouteSheet`** gains a profile picker and five criteria controls (four toggles
+  plus Fastest/Shortest segmented picker) above the list assignment section. Selecting
+  a profile copies its five criteria values into local state; manually changing a
+  criterion appends "(modified)" to the picker label without changing `appliedProfileName`.
+  All five criteria and `appliedProfileName` persisted on save.
+- **`RouteEditSheet.swift` renamed to `RouteWaypointSheet.swift`** (struct renamed to
+  `RouteWaypointSheet`). **Remove `RouteEditSheet.swift` from the Xcode target; add
+  `RouteWaypointSheet.swift` instead.**
+- **`RoutePropertiesSheet.swift`** (new file, `Features/Routes/`) — sheet for editing
+  route name, profile picker, and five criteria. `routingCriteriaChanged` computes
+  against originals snapshotted on appear. "Edit Route Waypoints" button presents
+  `RouteWaypointSheet` as a layered sheet on top so the user returns here on dismissal.
+  **Must be added to the Xcode target manually.**
+- **Context menu** on route rows gains two items: "Edit Route…" (opens
+  `RoutePropertiesSheet`) and "Edit Route Waypoints…" (opens `RouteWaypointSheet`
+  directly). Double-click on a route row opens `RoutePropertiesSheet`.
+- **`Route` struct** in `ItemRecords.swift` gains `appliedProfileName`, `avoidMotorways`,
+  `avoidTolls`, `avoidUnpaved`, `avoidFerries`, `shortestRoute` fields so
+  `fetchRouteRecord` decodes the new columns.
+- **`DatabaseManager`** gains `updateRouteProperties(itemId:name:appliedProfileName:
+  avoidMotorways:avoidTolls:avoidUnpaved:avoidFerries:shortestRoute:)` — updates
+  `items.name` and all five criteria columns in a single write transaction.
+- **`LibraryViewModel`** gains `reload()` convenience method that reloads with the
+  last-used sort state.
+
+### Increment 19, Step 4 — Criteria-based Valhalla routing
+- **`RoutingService.calculateRoute(through:avoidMotorways:avoidTolls:avoidUnpaved:`
+  `avoidFerries:shortestRoute:)`** — the multi-waypoint method gains five criteria
+  parameters (all defaulting to `false`). They are included in the Valhalla request
+  as `costing_options.motorcycle` keys; each key is only emitted when its value is
+  non-default (`encodeIfPresent` pattern). Mapping:
+  `avoidMotorways` → `use_highways: 0.0`, `avoidTolls` → `use_tolls: 0.0`,
+  `avoidUnpaved` → `use_trails: 0.0`, `avoidFerries` → `use_ferry: 0.0`,
+  `shortestRoute` → `shortest: true`.
+- **`RoutePropertiesSheet`** — when `routingCriteriaChanged` is true on Save,
+  replaces the sheet content with a blocking `ProgressView` ("Recalculating route…"),
+  fetches the route's waypoints, calls `RoutingService.calculateRoute(through:)` with
+  the new criteria, then persists the new GeoJSON via the new
+  `DatabaseManager.updateRouteGeometry(itemId:geometry:)`. On success, calls `onSave`
+  and dismisses; on failure, shows an alert explaining settings were saved but the
+  route was not redrawn, then dismisses.
+- **`DatabaseManager.updateRouteGeometry(itemId:geometry:)`** — new method that
+  updates only the `geometry` column on the matching `routes` row.
+- **`NewRouteSheet`** updated to call `calculateRoute(through:)` with a two-element
+  coordinate array, passing the five current criteria state values.
+- **`RouteWaypointSheet`** updated to fetch the route's stored `Route` record before
+  recalculating, passing its stored criteria to `calculateRoute(through:)`.
+- **`LibrarySidebarView`** `onSave` callback for `RoutePropertiesSheet` now also
+  cycles `selectedItem` through nil (50 ms delay) to trigger a map redraw when the
+  edited route is currently selected.
+
+Next step: Increment 20 — TBD.
 
 ## File Structure (Planned)
 ```

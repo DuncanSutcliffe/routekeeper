@@ -752,6 +752,32 @@ actor DatabaseManager {
         }
     }
 
+    // MARK: - App Settings
+
+    /// Returns the value stored for `key` in `app_settings`, or `nil` if no row exists.
+    func fetchSetting(key: String) async throws -> String? {
+        let q = try requireQueue()
+        return try await q.read { db in
+            let row = try Row.fetchOne(
+                db,
+                sql: "SELECT value FROM app_settings WHERE key = ?",
+                arguments: [key]
+            )
+            return row?["value"] as String?
+        }
+    }
+
+    /// Writes `value` for `key` into `app_settings`, inserting or replacing any existing row.
+    func saveSetting(key: String, value: String) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
+                arguments: [key, value]
+            )
+        }
+    }
+
     // MARK: - GPX Export
 
     /// Returns all item IDs that are members of `listId`.

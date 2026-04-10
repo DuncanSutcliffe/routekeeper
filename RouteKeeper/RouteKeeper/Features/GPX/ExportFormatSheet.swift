@@ -16,7 +16,8 @@ struct ExportFormatSheet: View {
     /// Called with the chosen format after the sheet is dismissed.
     let onExport: (GPXFormat) -> Void
 
-    @State private var selectedFormat: GPXFormat = .standard
+    @State private var selectedFormat: GPXFormat = PreferencesManager.shared.defaultExportFormat == "garmin"
+        ? .garmin : .standard
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {

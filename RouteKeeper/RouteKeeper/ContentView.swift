@@ -47,6 +47,7 @@ struct ContentView: View {
             } catch {
                 print("Database setup failed: \(error)")
             }
+            await PreferencesManager.shared.load()
             await libraryViewModel.load()
         }
         // Re-fires whenever the selected item changes (including when it is

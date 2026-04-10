@@ -116,5 +116,19 @@ struct RouteKeeperApp: App {
         .commands {
             RouteKeeperCommands()
         }
+
+        Settings {
+            TabView {
+                GeneralSettingsView()
+                    .tabItem {
+                        Label("General", systemImage: "gearshape")
+                    }
+                ExportSettingsView()
+                    .tabItem {
+                        Label("Export", systemImage: "square.and.arrow.up")
+                    }
+            }
+            .frame(width: 400)
+        }
     }
 }

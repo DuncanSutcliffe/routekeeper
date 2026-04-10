@@ -338,7 +338,7 @@ struct RoutePropertiesSheet: View {
                     let coords = points.map {
                         CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
                     }
-                    let geometry = try await RoutingService.shared.calculateRoute(
+                    let result = try await RoutingService.shared.calculateRoute(
                         through:        coords,
                         avoidMotorways: avoidMotorways,
                         avoidTolls:     avoidTolls,
@@ -346,8 +346,11 @@ struct RoutePropertiesSheet: View {
                         avoidFerries:   avoidFerries,
                         shortestRoute:  shortestRoute
                     )
-                    try await DatabaseManager.shared.updateRouteGeometry(
-                        itemId: routeItemId, geometry: geometry
+                    try await DatabaseManager.shared.updateRouteGeometryAndStats(
+                        itemId:          routeItemId,
+                        geometry:        result.geometry,
+                        distanceKm:      result.distanceKm,
+                        durationSeconds: result.durationSeconds
                     )
                 } catch {
                     // Properties are already saved; only geometry update failed.

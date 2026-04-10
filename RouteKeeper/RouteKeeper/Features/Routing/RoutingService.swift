@@ -28,6 +28,18 @@ enum RoutingError: LocalizedError {
     }
 }
 
+// MARK: - RouteResult
+
+/// The result returned by a successful route calculation.
+struct RouteResult {
+    /// Compact GeoJSON FeatureCollection string ready to pass to MapLibre.
+    let geometry: String
+    /// Total route distance in kilometres, from Valhalla's `summary.length`.
+    let distanceKm: Double
+    /// Total route duration in seconds, from Valhalla's `summary.time`.
+    let durationSeconds: Int
+}
+
 // MARK: - RoutingService
 
 /// Calculates motorcycle routes via the Valhalla API.
@@ -102,8 +114,8 @@ actor RoutingService {
     ///   - avoidUnpaved: Omit unpaved roads (`use_trails: 0.0`).
     ///   - avoidFerries: Omit ferries (`use_ferry: 0.0`).
     ///   - shortestRoute: Optimise for distance rather than time (`shortest: true`).
-    /// - Returns: A compact GeoJSON FeatureCollection string containing a single
-    ///   LineString feature representing the combined route shape.
+    /// - Returns: A ``RouteResult`` containing the GeoJSON geometry, total distance
+    ///   in kilometres, and total duration in seconds.
     /// - Throws: ``RoutingError`` on network failure, non-200 response, or an
     ///   unexpected response structure.
     func calculateRoute(
@@ -113,7 +125,7 @@ actor RoutingService {
         avoidUnpaved: Bool   = false,
         avoidFerries: Bool   = false,
         shortestRoute: Bool  = false
-    ) async throws -> String {
+    ) async throws -> RouteResult {
         guard waypoints.count >= 2 else {
             throw RoutingError.noLegsInResponse
         }
@@ -158,7 +170,11 @@ actor RoutingService {
         guard !allCoords.isEmpty else {
             throw RoutingError.noLegsInResponse
         }
-        return Self.toGeoJSON(allCoords)
+        return RouteResult(
+            geometry:        Self.toGeoJSON(allCoords),
+            distanceKm:      vResponse.trip.summary.length,
+            durationSeconds: Int(vResponse.trip.summary.time)
+        )
     }
 
     /// Cache key formed from start and end coordinates at 6 decimal places —
@@ -321,6 +337,14 @@ private struct ValhallaResponse: Decodable {
 
     struct Trip: Decodable {
         let legs: [Leg]
+        let summary: Summary
+    }
+
+    struct Summary: Decodable {
+        /// Total route distance in kilometres (Valhalla returns km when `units: "km"` is set).
+        let length: Double
+        /// Total route duration in seconds.
+        let time: Double
     }
 
     struct Leg: Decodable {

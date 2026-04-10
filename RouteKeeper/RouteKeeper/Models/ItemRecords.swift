@@ -94,8 +94,8 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
     var geojson: String?
     /// GeoJSON FeatureCollection string stored by the route-creation flow (schema v5).
     var geometry: String?
-    var distanceMetres: Double?
-    var estimatedDurationSecs: Int?
+    var distanceKm: Double?
+    var durationSeconds: Int?
     var routingProfile: String
     /// Name of the routing profile applied when the route was created or last edited.
     var appliedProfileName: String?
@@ -119,8 +119,8 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
         case itemId = "item_id"
         case geojson
         case geometry
-        case distanceMetres = "distance_metres"
-        case estimatedDurationSecs = "estimated_duration_secs"
+        case distanceKm = "distance_km"
+        case durationSeconds = "duration_seconds"
         case routingProfile = "routing_profile"
         case appliedProfileName = "applied_profile_name"
         case avoidMotorways = "avoid_motorways"

@@ -167,6 +167,8 @@ final class LibraryViewModel {
     func createRoute(
         name: String,
         geometry: String,
+        distanceKm: Double? = nil,
+        durationSeconds: Int? = nil,
         listIds: [Int64],
         startWaypoint: Waypoint? = nil,
         endWaypoint: Waypoint? = nil,
@@ -181,6 +183,8 @@ final class LibraryViewModel {
             try await DatabaseManager.shared.createRoute(
                 name: name,
                 geometry: geometry,
+                distanceKm: distanceKm,
+                durationSeconds: durationSeconds,
                 listIds: listIds,
                 startWaypoint: startWaypoint,
                 endWaypoint: endWaypoint,

@@ -109,7 +109,7 @@ struct RouteWaypointSheet: View {
                 }
                 // Fetch the stored routing criteria so the recalculation honours them.
                 let route = try? await DatabaseManager.shared.fetchRouteRecord(itemId: routeItemId)
-                let geometry = try await RoutingService.shared.calculateRoute(
+                let result = try await RoutingService.shared.calculateRoute(
                     through:        coords,
                     avoidMotorways: route?.avoidMotorways ?? false,
                     avoidTolls:     route?.avoidTolls     ?? false,
@@ -119,10 +119,10 @@ struct RouteWaypointSheet: View {
                 )
                 try await DatabaseManager.shared.updateRoutePoints(
                     points,
-                    routeItemId: routeItemId,
-                    geometry: geometry,
-                    distanceMetres: nil,
-                    durationSecs: nil
+                    routeItemId:     routeItemId,
+                    geometry:        result.geometry,
+                    distanceKm:      result.distanceKm,
+                    durationSeconds: result.durationSeconds
                 )
                 onSave()
                 dismiss()

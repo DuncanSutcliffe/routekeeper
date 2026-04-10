@@ -334,6 +334,8 @@ actor DatabaseManager {
     func createRoute(
         name: String,
         geometry: String,
+        distanceKm: Double? = nil,
+        durationSeconds: Int? = nil,
         listIds: [Int64],
         startWaypoint: Waypoint? = nil,
         endWaypoint: Waypoint? = nil,
@@ -358,10 +360,12 @@ actor DatabaseManager {
             // 2. Insert route-specific data including applied profile criteria.
             try db.execute(
                 sql: "INSERT INTO routes " +
-                     "(item_id, routing_profile, geometry, applied_profile_name, " +
-                     "avoid_motorways, avoid_tolls, avoid_unpaved, avoid_ferries, shortest_route) " +
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                arguments: [itemId, "motorcycle", geometry, appliedProfileName,
+                     "(item_id, routing_profile, geometry, distance_km, duration_seconds, " +
+                     "applied_profile_name, avoid_motorways, avoid_tolls, " +
+                     "avoid_unpaved, avoid_ferries, shortest_route) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                arguments: [itemId, "motorcycle", geometry, distanceKm, durationSeconds,
+                            appliedProfileName,
                             avoidMotorways ? 1 : 0, avoidTolls ? 1 : 0,
                             avoidUnpaved ? 1 : 0, avoidFerries ? 1 : 0,
                             shortestRoute ? 1 : 0]
@@ -413,8 +417,8 @@ actor DatabaseManager {
         _ points: [RoutePoint],
         routeItemId: Int64,
         geometry: String,
-        distanceMetres: Double?,
-        durationSecs: Int?
+        distanceKm: Double?,
+        durationSeconds: Int?
     ) async throws {
         let q = try requireQueue()
         try await q.write { db in
@@ -450,25 +454,33 @@ actor DatabaseManager {
                 sql: """
                     UPDATE routes
                     SET geometry = ?,
-                        distance_metres = ?,
-                        estimated_duration_secs = ?
+                        distance_km = ?,
+                        duration_seconds = ?
                     WHERE item_id = ?
                     """,
-                arguments: [geometry, distanceMetres, durationSecs, routeItemId]
+                arguments: [geometry, distanceKm, durationSeconds, routeItemId]
             )
         }
     }
 
-    /// Updates only the `geometry` column on the given route row.
+    /// Updates the `geometry`, `distance_km`, and `duration_seconds` columns on the
+    /// given route row in a single write transaction.
     ///
-    /// Used after a Valhalla recalculation to persist the new GeoJSON without
-    /// touching waypoints or other route metadata.
-    func updateRouteGeometry(itemId: Int64, geometry: String) async throws {
+    /// Used after a Valhalla recalculation to persist the new GeoJSON and stats
+    /// without touching waypoints or other route metadata.
+    func updateRouteGeometryAndStats(
+        itemId: Int64,
+        geometry: String,
+        distanceKm: Double?,
+        durationSeconds: Int?
+    ) async throws {
         let q = try requireQueue()
         try await q.write { db in
             try db.execute(
-                sql: "UPDATE routes SET geometry = ? WHERE item_id = ?",
-                arguments: [geometry, itemId]
+                sql: "UPDATE routes " +
+                     "SET geometry = ?, distance_km = ?, duration_seconds = ? " +
+                     "WHERE item_id = ?",
+                arguments: [geometry, distanceKm, durationSeconds, itemId]
             )
         }
     }
@@ -987,19 +999,19 @@ actor DatabaseManager {
             );
 
             CREATE TABLE routes (
-                item_id                 INTEGER PRIMARY KEY
-                                        REFERENCES items(id) ON DELETE CASCADE,
-                geojson                 TEXT,
-                geometry                TEXT,
-                distance_metres         REAL,
-                estimated_duration_secs INTEGER,
-                routing_profile         TEXT    NOT NULL DEFAULT 'motorcycle',
-                applied_profile_name    TEXT,
-                avoid_motorways         INTEGER NOT NULL DEFAULT 0,
-                avoid_tolls             INTEGER NOT NULL DEFAULT 0,
-                avoid_unpaved           INTEGER NOT NULL DEFAULT 0,
-                avoid_ferries           INTEGER NOT NULL DEFAULT 0,
-                shortest_route          INTEGER NOT NULL DEFAULT 0
+                item_id              INTEGER PRIMARY KEY
+                                     REFERENCES items(id) ON DELETE CASCADE,
+                geojson              TEXT,
+                geometry             TEXT,
+                distance_km          REAL,
+                duration_seconds     INTEGER,
+                routing_profile      TEXT    NOT NULL DEFAULT 'motorcycle',
+                applied_profile_name TEXT,
+                avoid_motorways      INTEGER NOT NULL DEFAULT 0,
+                avoid_tolls          INTEGER NOT NULL DEFAULT 0,
+                avoid_unpaved        INTEGER NOT NULL DEFAULT 0,
+                avoid_ferries        INTEGER NOT NULL DEFAULT 0,
+                shortest_route       INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE route_points (

@@ -361,7 +361,7 @@ struct NewRouteSheet: View {
         isCalculating = true
         Task {
             do {
-                let geojson = try await RoutingService.shared.calculateRoute(
+                let result = try await RoutingService.shared.calculateRoute(
                     through: [
                         CLLocationCoordinate2D(latitude: start.latitude, longitude: start.longitude),
                         CLLocationCoordinate2D(latitude: end.latitude,   longitude: end.longitude)
@@ -374,7 +374,9 @@ struct NewRouteSheet: View {
                 )
                 await viewModel.createRoute(
                     name:               trimmedName,
-                    geometry:           geojson,
+                    geometry:           result.geometry,
+                    distanceKm:         result.distanceKm,
+                    durationSeconds:    result.durationSeconds,
                     listIds:            Array(selectedListIDs),
                     startWaypoint:      start,
                     endWaypoint:        end,

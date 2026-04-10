@@ -14,6 +14,8 @@ struct ContentView: View {
     @State private var libraryViewModel = LibraryViewModel()
     @State private var mapViewModel = MapViewModel()
     @State private var showingRoutingProfilesSheet = false
+    @State private var routeDistanceKm: Double? = nil
+    @State private var routeDurationSeconds: Int? = nil
 
     var body: some View {
         NavigationSplitView {
@@ -28,14 +30,20 @@ struct ContentView: View {
                 // Reading mapViewModel properties here establishes SwiftUI observation:
                 // when any MapViewModel property changes, ContentView re-renders
                 // and updateNSView is called on MapView with the new values.
-                MapView(
-                    routeGeoJSON:    mapViewModel.routeGeoJSON,
-                    centerLon:       mapViewModel.centerLon,
-                    centerLat:       mapViewModel.centerLat,
-                    zoom:            mapViewModel.zoom,
-                    waypointDisplay: mapViewModel.waypointDisplay,
-                    routeDisplay:    mapViewModel.routeDisplay
-                )
+                ZStack(alignment: .bottom) {
+                    MapView(
+                        routeGeoJSON:    mapViewModel.routeGeoJSON,
+                        centerLon:       mapViewModel.centerLon,
+                        centerLat:       mapViewModel.centerLat,
+                        zoom:            mapViewModel.zoom,
+                        waypointDisplay: mapViewModel.waypointDisplay,
+                        routeDisplay:    mapViewModel.routeDisplay
+                    )
+                    if let distKm = routeDistanceKm, let durSecs = routeDurationSeconds {
+                        RouteStatsOverlay(distanceKm: distKm, durationSeconds: durSecs)
+                            .padding(.bottom, 16)
+                    }
+                }
             } else {
                 Text("Select a list to view its contents")
                     .foregroundStyle(.secondary)
@@ -74,11 +82,15 @@ struct ContentView: View {
         guard let item, let itemId = item.id else {
             mapViewModel.clearWaypoint()
             mapViewModel.clearRoute()
+            routeDistanceKm = nil
+            routeDurationSeconds = nil
             return
         }
         switch item.type {
         case .waypoint:
             mapViewModel.clearRoute()
+            routeDistanceKm = nil
+            routeDurationSeconds = nil
             do {
                 if let wp = try await DatabaseManager.shared.fetchWaypointDetails(itemId: itemId) {
                     mapViewModel.showWaypoint(
@@ -95,29 +107,30 @@ struct ContentView: View {
             }
         case .route:
             mapViewModel.clearWaypoint()
-            do {
-                if let geometry = try await DatabaseManager.shared.fetchRouteGeometry(itemId: itemId) {
-                    let allPoints = (try? await DatabaseManager.shared.fetchRoutePoints(
-                        routeItemId: itemId
-                    )) ?? []
-                    // Intermediate points are everything except the first and last.
-                    let intermediates = allPoints.count > 2
-                        ? Array(allPoints.dropFirst().dropLast())
-                        : []
-                    let viaWaypoints = intermediates.enumerated().map { i, pt in
-                        ViaWaypoint(latitude: pt.latitude, longitude: pt.longitude, index: i + 1)
-                    }
-                    mapViewModel.showRoute(RouteDisplay(geojson: geometry, viaWaypoints: viaWaypoints))
-                } else {
-                    mapViewModel.clearRoute()
+            // Fetch route record for geometry and stats in one query.
+            let routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(itemId: itemId)
+            routeDistanceKm      = routeRecord?.distanceKm
+            routeDurationSeconds = routeRecord?.durationSeconds
+            if let geometry = routeRecord?.geometry {
+                let allPoints = (try? await DatabaseManager.shared.fetchRoutePoints(
+                    routeItemId: itemId
+                )) ?? []
+                // Intermediate points are everything except the first and last.
+                let intermediates = allPoints.count > 2
+                    ? Array(allPoints.dropFirst().dropLast())
+                    : []
+                let viaWaypoints = intermediates.enumerated().map { i, pt in
+                    ViaWaypoint(latitude: pt.latitude, longitude: pt.longitude, index: i + 1)
                 }
-            } catch {
-                print("fetchRouteGeometry failed: \(error)")
+                mapViewModel.showRoute(RouteDisplay(geojson: geometry, viaWaypoints: viaWaypoints))
+            } else {
                 mapViewModel.clearRoute()
             }
         case .track:
             mapViewModel.clearWaypoint()
             mapViewModel.clearRoute()
+            routeDistanceKm = nil
+            routeDurationSeconds = nil
         }
     }
 }

@@ -128,7 +128,7 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–19 complete. Routing profiles and criteria-based routing implemented. Schema rebuilt as single migration. GPX export implemented.**
+**Increments 1–20 complete. Native macOS Settings window added. Routing profiles and criteria-based routing implemented. Schema rebuilt as single migration. GPX export implemented.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
@@ -140,9 +140,11 @@ drop to move or copy items between lists, a right-click context menu on item
 rows providing Move and Copy actions as an alternative to drag and drop, full
 delete functionality on item, list, and folder rows with appropriate
 confirmation dialogues and explanatory alerts, start/end flag markers on
-displayed routes rendered from SF Symbols on the Swift side, and GPX export
+displayed routes rendered from SF Symbols on the Swift side, GPX export
 accessible from context menus on item rows, list rows, and folder rows with a
-format selector sheet (Standard GPX 1.1 or Garmin GPX 1.1).
+format selector sheet (Standard GPX 1.1 or Garmin GPX 1.1), and a native
+Settings window (⌘,) with General and Export preference panes backed by
+the app_settings table.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -799,7 +801,35 @@ RouteKeeper/
   cycles `selectedItem` through nil (50 ms delay) to trigger a map redraw when the
   edited route is currently selected.
 
-Next step: Increment 20 — TBD.
+### Increment 20 — Native macOS Settings window
+- **`Managers/PreferencesManager.swift`** (new file) — `@MainActor @Observable final class`
+  singleton. Owns two properties: `units: String` ("metric" / "imperial", default "metric")
+  and `defaultExportFormat: String` ("standard" / "garmin", default "standard"). `load()`
+  reads both keys from `app_settings` via `DatabaseManager.fetchSetting`; absent keys are
+  written immediately using their defaults so subsequent launches always find them. `save()`
+  writes both values back via `DatabaseManager.saveSetting`. **Must be added to the Xcode
+  target manually.**
+- **`DatabaseManager`** gains two new methods under `// MARK: - App Settings`:
+  `fetchSetting(key:) -> String?` and `saveSetting(key:value:)`, both using
+  `INSERT OR REPLACE` semantics on the existing `app_settings` table.
+- **`Features/Settings/GeneralSettingsView.swift`** (new file) — `Form` with a single
+  `Picker` labelled "Units": "Metric (km)" → `"metric"`, "Imperial (miles)" → `"imperial"`.
+  Bound to `PreferencesManager.shared.units`; calls `save()` on change. **Must be added to
+  the Xcode target manually.**
+- **`Features/Settings/ExportSettingsView.swift`** (new file) — `Form` with a segmented
+  `Picker` labelled "Default GPX Format": "Standard GPX 1.1" → `"standard"`, "Garmin GPX
+  1.1" → `"garmin"`. Bound to `PreferencesManager.shared.defaultExportFormat`; calls
+  `save()` on change. **Must be added to the Xcode target manually.**
+- **`RouteKeeperApp.swift`** — `Settings { TabView { … } }` scene added alongside the
+  existing `WindowGroup`. SwiftUI provides the ⌘, shortcut and RouteKeeper → Settings…
+  menu item automatically. No manual menu wiring.
+- **`ContentView.swift`** — `await PreferencesManager.shared.load()` called in the `.task`
+  block immediately after `DatabaseManager.shared.setUp()`, before `libraryViewModel.load()`.
+- **`ExportFormatSheet.swift`** — `@State private var selectedFormat` initialised from
+  `PreferencesManager.shared.defaultExportFormat` instead of always defaulting to
+  `.standard`. One-off per-export overrides still work normally.
+
+Next step: Increment 21 — route distance and duration display on the map, using the units preference.
 
 ## File Structure (Planned)
 ```

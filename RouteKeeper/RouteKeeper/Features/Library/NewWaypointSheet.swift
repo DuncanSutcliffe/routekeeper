@@ -15,6 +15,9 @@ struct NewWaypointSheet: View {
     let viewModel: LibraryViewModel
     /// List to pre-check in the list-assignment panel. Pass `nil` for no pre-selection.
     let preselectedListID: Int64?
+    /// When non-nil the sheet opens with the location already confirmed at this
+    /// coordinate (from a map right-click), skipping the search step entirely.
+    var prefilledCoordinate: MapCoordinate? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -109,11 +112,31 @@ struct NewWaypointSheet: View {
         .frame(minHeight: 560)
         .onAppear {
             viewModel.creationError = nil
-            searchFieldFocused = true
             if let listID = preselectedListID {
                 selectedListIDs.insert(listID)
             }
             Task { await viewModel.loadCategories() }
+
+            if let coord = prefilledCoordinate {
+                // Confirm the location immediately from the map tap coordinate,
+                // showing the chip without requiring a Nominatim search first.
+                selectedLocation = GeocodingResult(
+                    name: "Map location",
+                    latitude: coord.latitude,
+                    longitude: coord.longitude,
+                    subtitle: "Map location"
+                )
+                fetchElevation(latitude: coord.latitude, longitude: coord.longitude)
+                Task {
+                    if let result = await GeocodingService.shared.reverseGeocode(
+                        latitude: coord.latitude, longitude: coord.longitude
+                    ), waypointName.isEmpty {
+                        waypointName = result.name
+                    }
+                }
+            } else {
+                searchFieldFocused = true
+            }
         }
     }
 

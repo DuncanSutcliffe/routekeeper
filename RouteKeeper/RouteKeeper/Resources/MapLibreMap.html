@@ -20,10 +20,34 @@
             width: 100%;
             height: 100%;
         }
+        #map-context-menu {
+            position: absolute;
+            background: white;
+            border-radius: 6px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.18);
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 13px;
+            z-index: 1000;
+            display: none;
+            min-width: 160px;
+            overflow: hidden;
+            user-select: none;
+        }
+        .map-context-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            color: #1a1a1a;
+        }
+        .map-context-item:hover {
+            background: #f0f0f0;
+        }
     </style>
 </head>
 <body>
     <div id="map"></div>
+    <div id="map-context-menu">
+        <div class="map-context-item" onclick="addWaypointHere()">New waypoint here</div>
+    </div>
 
     <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
     <script>
@@ -309,6 +333,193 @@
             if (map.getSource("waypoint-source")) {
                 map.removeSource("waypoint-source");
             }
+        }
+
+        // ---------------------------------------------------------------------------
+        // Multi-item display (list selection and multi-select)
+        // ---------------------------------------------------------------------------
+
+        /// Renders multiple waypoints and routes simultaneously, then fits the
+        /// viewport to contain all of them.
+        ///
+        /// itemsJson — a JSON string containing an array of item objects, each with:
+        ///   { type: "waypoint", lat, lng, color }
+        ///   { type: "route", geojson, startIcon, endIcon }
+        ///
+        /// Clears any previously displayed single-item content and multi-item
+        /// content before rendering. Always calls fitBounds regardless of the
+        /// current viewport position.
+        async function showMultipleItems(itemsJson) {
+            if (!map.isStyleLoaded()) {
+                map.once("idle", function () { showMultipleItems(itemsJson); });
+                return;
+            }
+
+            clearMultipleItems();
+            clearRoute();
+            clearWaypoint();
+
+            const items = JSON.parse(itemsJson);
+            const waypointFeatures = [];
+            const routeLineFeatures = [];
+            const routeMarkerFeatures = [];
+
+            // Load route start/end icons once — all routes share the same icons.
+            const firstRoute = items.find(function(i) { return i.type === "route"; });
+            if (firstRoute) {
+                const startImg = await loadImage(firstRoute.startIcon);
+                const endImg   = await loadImage(firstRoute.endIcon);
+                if (!map.hasImage("multi-route-start")) map.addImage("multi-route-start", startImg);
+                if (!map.hasImage("multi-route-end"))   map.addImage("multi-route-end",   endImg);
+            }
+
+            for (var i = 0; i < items.length; i++) {
+                var item = items[i];
+                if (item.type === "waypoint") {
+                    waypointFeatures.push({
+                        type: "Feature",
+                        geometry: { type: "Point", coordinates: [item.lng, item.lat] },
+                        properties: { color: item.color }
+                    });
+                } else if (item.type === "route") {
+                    var geojson = JSON.parse(item.geojson);
+                    var allLineCoords = [];
+                    for (var j = 0; j < geojson.features.length; j++) {
+                        var f = geojson.features[j];
+                        if (f.geometry.type === "LineString") {
+                            routeLineFeatures.push(f);
+                            allLineCoords = allLineCoords.concat(f.geometry.coordinates);
+                        }
+                    }
+                    if (allLineCoords.length > 0) {
+                        routeMarkerFeatures.push(
+                            {
+                                type: "Feature",
+                                geometry: { type: "Point", coordinates: allLineCoords[0] },
+                                properties: { icon: "multi-route-start" }
+                            },
+                            {
+                                type: "Feature",
+                                geometry: { type: "Point", coordinates: allLineCoords[allLineCoords.length - 1] },
+                                properties: { icon: "multi-route-end" }
+                            }
+                        );
+                    }
+                }
+            }
+
+            if (routeLineFeatures.length > 0) {
+                map.addSource("multi-routes-source", {
+                    type: "geojson",
+                    data: { type: "FeatureCollection", features: routeLineFeatures }
+                });
+                map.addLayer({
+                    id: "multi-routes-layer",
+                    type: "line",
+                    source: "multi-routes-source",
+                    layout: { "line-cap": "round", "line-join": "round" },
+                    paint: { "line-color": "#2F7CF6", "line-width": 4 }
+                });
+            }
+
+            if (routeMarkerFeatures.length > 0) {
+                map.addSource("multi-markers-source", {
+                    type: "geojson",
+                    data: { type: "FeatureCollection", features: routeMarkerFeatures }
+                });
+                map.addLayer({
+                    id: "multi-markers-layer",
+                    type: "symbol",
+                    source: "multi-markers-source",
+                    layout: {
+                        "icon-image": ["get", "icon"],
+                        "icon-anchor": "bottom-left",
+                        "icon-allow-overlap": true
+                    }
+                });
+            }
+
+            if (waypointFeatures.length > 0) {
+                map.addSource("multi-waypoints-source", {
+                    type: "geojson",
+                    data: { type: "FeatureCollection", features: waypointFeatures }
+                });
+                map.addLayer({
+                    id: "multi-waypoints-layer",
+                    type: "circle",
+                    source: "multi-waypoints-source",
+                    paint: {
+                        "circle-radius": 10,
+                        "circle-color": ["get", "color"],
+                        "circle-stroke-width": 2,
+                        "circle-stroke-color": "#FFFFFF"
+                    }
+                });
+            }
+
+            // Fit viewport to the combined extent of all rendered content.
+            var allCoords = [];
+            for (var k = 0; k < waypointFeatures.length; k++) {
+                allCoords.push(waypointFeatures[k].geometry.coordinates);
+            }
+            for (var l = 0; l < routeLineFeatures.length; l++) {
+                allCoords = allCoords.concat(routeLineFeatures[l].geometry.coordinates);
+            }
+            if (allCoords.length > 0) {
+                var bounds = allCoords.reduce(function(b, c) {
+                    return [
+                        Math.min(b[0], c[0]),
+                        Math.min(b[1], c[1]),
+                        Math.max(b[2], c[0]),
+                        Math.max(b[3], c[1])
+                    ];
+                }, [Infinity, Infinity, -Infinity, -Infinity]);
+                map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 60 });
+            }
+        }
+
+        // ---------------------------------------------------------------------------
+        // Map context menu
+        // ---------------------------------------------------------------------------
+
+        var contextMenuCoord = { lat: 0, lng: 0 };
+
+        function dismissContextMenu() {
+            document.getElementById('map-context-menu').style.display = 'none';
+        }
+
+        function addWaypointHere() {
+            dismissContextMenu();
+            postToSwift({ type: 'addWaypointAtCoordinate',
+                          lat: contextMenuCoord.lat, lng: contextMenuCoord.lng });
+        }
+
+        map.on('contextmenu', function(e) {
+            contextMenuCoord.lat = e.lngLat.lat;
+            contextMenuCoord.lng = e.lngLat.lng;
+            var menu = document.getElementById('map-context-menu');
+            menu.style.left = e.point.x + 'px';
+            menu.style.top  = e.point.y + 'px';
+            menu.style.display = 'block';
+        });
+
+        map.on('click', function() { dismissContextMenu(); });
+        map.on('move',  function() { dismissContextMenu(); });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') { dismissContextMenu(); }
+        });
+
+        /// Removes all layers, sources, and images added by showMultipleItems().
+        function clearMultipleItems() {
+            if (map.getLayer("multi-waypoints-layer"))  map.removeLayer("multi-waypoints-layer");
+            if (map.getSource("multi-waypoints-source")) map.removeSource("multi-waypoints-source");
+            if (map.getLayer("multi-routes-layer"))     map.removeLayer("multi-routes-layer");
+            if (map.getSource("multi-routes-source"))   map.removeSource("multi-routes-source");
+            if (map.getLayer("multi-markers-layer"))    map.removeLayer("multi-markers-layer");
+            if (map.getSource("multi-markers-source"))  map.removeSource("multi-markers-source");
+            if (map.hasImage("multi-route-start"))      map.removeImage("multi-route-start");
+            if (map.hasImage("multi-route-end"))        map.removeImage("multi-route-end");
         }
 </script>
 </body>

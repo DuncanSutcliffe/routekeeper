@@ -36,6 +36,14 @@ struct WaypointDisplay: Equatable {
     let colorHex: String
 }
 
+// MARK: - MapCoordinate
+
+/// A coordinate pair returned from a map interaction (e.g. context-menu tap).
+struct MapCoordinate: Equatable {
+    let latitude: Double
+    let longitude: Double
+}
+
 // MARK: - ViaWaypoint
 
 /// A single intermediate waypoint passed to the map for display as a numbered circle.
@@ -80,6 +88,10 @@ final class MapViewModel {
     /// Setting this triggers `showRoute()` in JS; setting it to nil triggers `clearRoute()`.
     var routeDisplay: RouteDisplay? = nil
 
+    /// Non-nil when multiple items should be displayed simultaneously via
+    /// `showMultipleItems()` in JS. Holds the pre-serialised JSON string.
+    var multiDisplay: String? = nil
+
     /// Draws a GeoJSON route on the map, replacing any previously drawn route.
     func drawRoute(geojson: String) {
         routeGeoJSON = geojson
@@ -111,6 +123,18 @@ final class MapViewModel {
     func clearRoute() {
         routeDisplay = nil
     }
+
+    /// Renders multiple items simultaneously using the `showMultipleItems()` JS function.
+    ///
+    /// - Parameter json: Pre-serialised JSON array of item descriptors.
+    func showMultipleItems(_ json: String) {
+        multiDisplay = json
+    }
+
+    /// Removes all multi-item display content from the map.
+    func clearMultiDisplay() {
+        multiDisplay = nil
+    }
 }
 
 // MARK: - MapView
@@ -126,6 +150,11 @@ struct MapView: NSViewRepresentable {
     let waypointDisplay: WaypointDisplay?
     /// Non-nil when a stored route should be displayed; passed to showRoute() in JS.
     let routeDisplay: RouteDisplay?
+    /// Non-nil when multiple items should be rendered simultaneously via showMultipleItems().
+    let multiDisplay: String?
+    /// Called on the main thread when the user selects "New waypoint here" from the map
+    /// context menu. Receives the WGS-84 latitude and longitude of the right-click point.
+    let onAddWaypointAtCoordinate: ((Double, Double) -> Void)?
 
     // MARK: NSViewRepresentable
 
@@ -204,6 +233,20 @@ struct MapView: NSViewRepresentable {
                 coordinator.pendingRouteDisplay = routeDisplay
             }
         }
+
+        // Apply a multi-item display change if it has changed.
+        if multiDisplay != coordinator.lastMultiDisplay {
+            coordinator.lastMultiDisplay = multiDisplay
+            if coordinator.mapIsReady {
+                coordinator.applyMultiDisplay(multiDisplay, in: nsView)
+            } else {
+                coordinator.pendingMultiDisplay = multiDisplay
+            }
+        }
+
+        // Keep the callback current so the Coordinator always calls back into
+        // the latest ContentView closure, even after SwiftUI re-renders.
+        coordinator.onAddWaypointAtCoordinate = onAddWaypointAtCoordinate
     }
 
     // MARK: Private helpers
@@ -252,6 +295,9 @@ struct MapView: NSViewRepresentable {
         /// nil-cancels-pending contract as `pendingWaypointDisplay`.
         var pendingRouteDisplay: RouteDisplay? = nil
 
+        /// Multi-item display queued before the map was ready.
+        var pendingMultiDisplay: String? = nil
+
         /// Weak reference to the WKWebView, used to flush pending state
         /// from inside the message handler (which has no other webView reference).
         weak var webView: WKWebView?
@@ -264,6 +310,11 @@ struct MapView: NSViewRepresentable {
         var lastZoom: Double = .nan
         var lastWaypointDisplay: WaypointDisplay? = nil
         var lastRouteDisplay: RouteDisplay? = nil
+        var lastMultiDisplay: String? = nil
+
+        /// Callback set by `MapView.updateNSView` each render pass.
+        /// Called when the JS context menu fires an `addWaypointAtCoordinate` message.
+        var onAddWaypointAtCoordinate: ((Double, Double) -> Void)? = nil
 
         // MARK: JS calls
 
@@ -293,6 +344,23 @@ struct MapView: NSViewRepresentable {
                 )
             } else {
                 webView.evaluateJavaScript("clearWaypoint();")
+            }
+        }
+
+        /// Calls either `showMultipleItems()` or `clearMultipleItems()` in JS depending
+        /// on whether `json` is non-nil.
+        ///
+        /// The JSON string is escaped for embedding inside a JS string literal using
+        /// the same backslash-then-quote sequence used by `applyRouteDisplay`.
+        func applyMultiDisplay(_ json: String?, in webView: WKWebView) {
+            if let json {
+                let escaped = json
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                    .replacingOccurrences(of: "\n", with: "")
+                webView.evaluateJavaScript("showMultipleItems(\"\(escaped)\");")
+            } else {
+                webView.evaluateJavaScript("clearMultipleItems();")
             }
         }
 
@@ -342,6 +410,13 @@ struct MapView: NSViewRepresentable {
 
             guard let type = body["type"] as? String else { return }
 
+            if type == "addWaypointAtCoordinate" {
+                guard let lat = body["lat"] as? Double,
+                      let lng = body["lng"] as? Double else { return }
+                onAddWaypointAtCoordinate?(lat, lng)
+                return
+            }
+
             if type == "mapReady" {
                 mapIsReady = true
                 guard let wv = webView else { return }
@@ -369,25 +444,36 @@ struct MapView: NSViewRepresentable {
                     applyRouteDisplay(pending, in: wv)
                     pendingRouteDisplay = nil
                 }
+
+                // Flush any multi-item display that arrived before the map was ready.
+                if let pending = pendingMultiDisplay {
+                    applyMultiDisplay(pending, in: wv)
+                    pendingMultiDisplay = nil
+                }
             }
         }
     }
 }
 
 #Preview {
-    MapView(routeGeoJSON: nil, centerLon: -2.0, centerLat: 54.0, zoom: 5, waypointDisplay: nil, routeDisplay: nil)
-        .frame(width: 800, height: 600)
+    MapView(
+        routeGeoJSON: nil, centerLon: -2.0, centerLat: 54.0, zoom: 5,
+        waypointDisplay: nil, routeDisplay: nil, multiDisplay: nil,
+        onAddWaypointAtCoordinate: nil
+    )
+    .frame(width: 800, height: 600)
 }
 
 // MARK: - SF Symbol → base64 PNG
 
 /// Renders an SF Symbol with the given colour into a base64-encoded PNG string.
 ///
-/// The result is passed directly to `showRoute()` in JavaScript so MapLibre can
-/// display the symbol as a map image without requiring a separate asset file.
+/// The result is passed directly to `showRoute()` or `showMultipleItems()` in
+/// JavaScript so MapLibre can display the symbol as a map image without requiring
+/// a separate asset file.
 ///
 /// Returns `nil` if the symbol name is not found or the bitmap render fails.
-private func sfSymbolBase64(_ name: String, color: NSColor, size: CGFloat = 24) -> String? {
+func sfSymbolBase64(_ name: String, color: NSColor, size: CGFloat = 24) -> String? {
     let config = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
         .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
     guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?

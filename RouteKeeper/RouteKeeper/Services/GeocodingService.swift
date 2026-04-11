@@ -47,6 +47,25 @@ final class GeocodingService {
 
     // MARK: Public API
 
+    /// Returns the best available place name for the given coordinate using
+    /// Nominatim reverse geocoding. Returns `nil` if the request fails or
+    /// produces no parseable result.
+    func reverseGeocode(latitude: Double, longitude: Double) async -> GeocodingResult? {
+        var components = URLComponents(string: "https://nominatim.openstreetmap.org/reverse")!
+        components.queryItems = [
+            URLQueryItem(name: "lat",            value: String(latitude)),
+            URLQueryItem(name: "lon",            value: String(longitude)),
+            URLQueryItem(name: "format",         value: "json"),
+            URLQueryItem(name: "addressdetails", value: "1"),
+        ]
+        guard let url = components.url else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue("RouteKeeper/1.0", forHTTPHeaderField: "User-Agent")
+        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
+        guard let raw = try? JSONDecoder().decode(NominatimResult.self, from: data) else { return nil }
+        return GeocodingResult(nominatim: raw)
+    }
+
     /// Returns up to eight places matching `query`, debounced by 300 ms.
     ///
     /// Cancels any in-flight search before starting a new one.

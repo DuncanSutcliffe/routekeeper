@@ -123,7 +123,7 @@ private struct NewItemPresentation: Identifiable {
 struct LibrarySidebarView: View {
     let viewModel: LibraryViewModel
     @Binding var selectedList: RouteList?
-    @Binding var selectedItem: Item?
+    @Binding var selectedItems: Set<Item>
 
     // Sort preference — persisted across launches.
     @AppStorage("library.sortColumn")        private var sortColumn: String    = "name"
@@ -135,6 +135,11 @@ struct LibrarySidebarView: View {
     // Drag state — not persisted; initialised from bottomPanelHeight on appear.
     @State private var isDragging      = false
     @State private var dragStartHeight: CGFloat = 200
+
+    /// Set to `true` immediately before clearing `selectedList` in response to item
+    /// selection, so that `onChange(of: selectedList)` knows not to call `clearItems()`.
+    /// The items panel must stay populated while item selections are active.
+    @State private var itemSelectionClearedList = false
 
     @State private var showingNewFolderSheet   = false
     @State private var showingNewListSheet     = false
@@ -391,7 +396,8 @@ struct LibrarySidebarView: View {
         .sheet(item: $newWaypointPresentation) { presentation in
             NewWaypointSheet(
                 viewModel: viewModel,
-                preselectedListID: presentation.preselectedListID
+                preselectedListID: presentation.preselectedListID,
+                prefilledCoordinate: nil
             )
         }
         .sheet(item: $newRoutePresentation) { presentation in
@@ -406,15 +412,14 @@ struct LibrarySidebarView: View {
                 initialName: identity.name,
                 onSave: {
                     Task { await viewModel.reload() }
-                    // Cycle selectedItem so ContentView's .task(id:) re-fires and
+                    // Cycle selectedItems so ContentView's .task(id:) re-fires and
                     // redraws the updated geometry if this route is currently shown.
-                    guard let current = selectedItem,
-                          current.id == identity.id else { return }
-                    let snapshot = current
-                    selectedItem = nil
+                    guard selectedItems.contains(where: { $0.id == identity.id }) else { return }
+                    let snapshot = selectedItems
+                    selectedItems = []
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 50_000_000)
-                        selectedItem = snapshot
+                        selectedItems = snapshot
                     }
                 }
             )
@@ -424,15 +429,14 @@ struct LibrarySidebarView: View {
                 routeItemId: identity.id,
                 routeName: identity.name
             ) {
-                // If the edited route is the currently selected item, cycle
-                // selectedItem through nil so ContentView's .task(id:) re-fires
-                // and redraws the updated geometry on the map.
-                guard let current = selectedItem, current.id == identity.id else { return }
-                let snapshot = current
-                selectedItem = nil
+                // Cycle selectedItems so ContentView's .task(id:) re-fires and
+                // redraws the updated geometry if this route is currently shown.
+                guard selectedItems.contains(where: { $0.id == identity.id }) else { return }
+                let snapshot = selectedItems
+                selectedItems = []
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 50_000_000)
-                    selectedItem = snapshot
+                    selectedItems = snapshot
                 }
             }
         }
@@ -442,14 +446,14 @@ struct LibrarySidebarView: View {
                 waypointItemId: identity.id
             ) {
                 Task { await viewModel.reload() }
-                // Cycle selectedItem so ContentView re-fires its .task(id:)
+                // Cycle selectedItems so ContentView re-fires its .task(id:)
                 // and refreshes the map marker with the updated coordinates.
-                guard let current = selectedItem, current.id == identity.id else { return }
-                let snapshot = current
-                selectedItem = nil
+                guard selectedItems.contains(where: { $0.id == identity.id }) else { return }
+                let snapshot = selectedItems
+                selectedItems = []
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 50_000_000)
-                    selectedItem = snapshot
+                    selectedItems = snapshot
                 }
             }
         }
@@ -471,7 +475,7 @@ struct LibrarySidebarView: View {
             set: { show in
                 if show {
                     newWaypointPresentation = NewItemPresentation(
-                        preselectedListID: selectedList?.id
+                        preselectedListID: viewModel.currentList?.id
                     )
                 } else {
                     newWaypointPresentation = nil
@@ -483,7 +487,7 @@ struct LibrarySidebarView: View {
             set: { show in
                 if show {
                     newRoutePresentation = NewItemPresentation(
-                        preselectedListID: selectedList?.id
+                        preselectedListID: viewModel.currentList?.id
                     )
                 } else {
                     newRoutePresentation = nil
@@ -496,7 +500,13 @@ struct LibrarySidebarView: View {
             }
         }
         .onChange(of: selectedList) { _, newList in
-            selectedItem = nil
+            // When selectedList was cleared because items were selected, suppress
+            // the items-panel teardown so the panel stays visible and populated.
+            if itemSelectionClearedList {
+                itemSelectionClearedList = false
+                return
+            }
+            selectedItems = []
             Task {
                 if let list = newList {
                     await viewModel.loadItems(for: list)
@@ -504,6 +514,14 @@ struct LibrarySidebarView: View {
                     viewModel.clearItems()
                 }
             }
+        }
+        // When items are selected, deselect the list in the top panel so the two
+        // selection axes are mutually exclusive.  The items panel stays populated
+        // because clearItems() is NOT called (handled by the flag above).
+        .onChange(of: selectedItems) { _, newItems in
+            guard !newItems.isEmpty, selectedList != nil else { return }
+            itemSelectionClearedList = true
+            selectedList = nil
         }
         .onChange(of: sortColumn)    { _, _ in
             Task { await viewModel.load(sortColumn: sortColumn, ascending: sortAscending) }
@@ -528,7 +546,7 @@ struct LibrarySidebarView: View {
                       let itemId = item.id,
                       let listId = viewModel.currentList?.id
                 else { return }
-                if selectedItem?.id == itemId { selectedItem = nil }
+                selectedItems = selectedItems.filter { $0.id != itemId }
                 Task { await viewModel.removeItemFromList(itemId: itemId, listId: listId) }
             }
             Button("Cancel", role: .cancel) { }
@@ -546,7 +564,7 @@ struct LibrarySidebarView: View {
         ) {
             Button("Delete", role: .destructive) {
                 guard let item = itemScheduledForDeletion, let itemId = item.id else { return }
-                if selectedItem?.id == itemId { selectedItem = nil }
+                selectedItems = selectedItems.filter { $0.id != itemId }
                 Task { await viewModel.deleteItem(itemId: itemId) }
             }
             Button("Cancel", role: .cancel) { }
@@ -569,9 +587,9 @@ struct LibrarySidebarView: View {
         ) {
             Button("Delete", role: .destructive) {
                 guard let list = listScheduledForDeletion else { return }
-                if selectedList?.id == list.id {
+                if selectedList?.id == list.id || viewModel.currentList?.id == list.id {
                     selectedList = nil
-                    selectedItem = nil
+                    selectedItems = []
                 }
                 Task { await viewModel.deleteList(list) }
             }
@@ -589,9 +607,10 @@ struct LibrarySidebarView: View {
         ) {
             Button("Delete", role: .destructive) {
                 guard let folder = folderScheduledForDeletion else { return }
-                if let selectedFolderId = selectedList?.folderId, selectedFolderId == folder.id {
+                let currentFolderId = selectedList?.folderId ?? viewModel.currentList?.folderId
+                if let fid = currentFolderId, fid == folder.id {
                     selectedList = nil
-                    selectedItem = nil
+                    selectedItems = []
                 }
                 Task { await viewModel.deleteFolder(folder) }
             }
@@ -667,7 +686,7 @@ struct LibrarySidebarView: View {
             // New Waypoint
             Button {
                 newWaypointPresentation = NewItemPresentation(
-                    preselectedListID: selectedList?.id
+                    preselectedListID: viewModel.currentList?.id
                 )
             } label: {
                 Image(systemName: "mappin.and.ellipse")
@@ -679,7 +698,7 @@ struct LibrarySidebarView: View {
             // New Route (leaf item — rightmost)
             Button {
                 newRoutePresentation = NewItemPresentation(
-                    preselectedListID: selectedList?.id
+                    preselectedListID: viewModel.currentList?.id
                 )
             } label: {
                 Image(systemName: "road.lanes")
@@ -694,8 +713,11 @@ struct LibrarySidebarView: View {
 
     private var bottomPanel: some View {
         Group {
-            if selectedList != nil {
-                List(selection: $selectedItem) {
+            // Show the items panel when a list is selected OR when items have been loaded
+            // but the list selection was cleared because items are now selected instead.
+            // viewModel.currentList is set by loadItems(for:) and cleared by clearItems().
+            if viewModel.currentList != nil {
+                List(selection: $selectedItems) {
                     ForEach(viewModel.listItems) { item in
                         Label {
                             Text(item.name)
@@ -708,7 +730,7 @@ struct LibrarySidebarView: View {
                         .tag(item)
                         .draggable(DraggableItem(
                             itemId: item.id ?? 0,
-                            sourceListId: selectedList?.id ?? -1
+                            sourceListId: viewModel.currentList?.id ?? -1
                         ))
                         .contextMenu {
                             itemContextMenu(for: item)
@@ -716,7 +738,7 @@ struct LibrarySidebarView: View {
                         .overlay(
                             DoubleClickHandler {
                                 guard let itemId = item.id else { return }
-                                selectedItem = item
+                                selectedItems = [item]
                                 if item.type == .route {
                                     routePropertiesTarget = RouteIdentity(
                                         id: itemId, name: item.name
@@ -756,7 +778,7 @@ struct LibrarySidebarView: View {
     /// - Lists the item already belongs to are shown disabled in both submenus.
     @ViewBuilder
     private func itemContextMenu(for item: Item) -> some View {
-        let currentListId  = selectedList?.id ?? -1
+        let currentListId  = viewModel.currentList?.id ?? -1
         let isUnclassified = currentListId == -1
         let itemId         = item.id ?? -1
         let alreadyIn      = viewModel.itemMemberships[itemId] ?? []
@@ -855,7 +877,7 @@ struct LibrarySidebarView: View {
                 // Item belongs to other lists — safe to remove from this one immediately.
                 Button("Remove from this list") {
                     Task {
-                        if selectedItem?.id == itemId { selectedItem = nil }
+                        selectedItems = selectedItems.filter { $0.id != itemId }
                         await viewModel.removeItemFromList(itemId: itemId, listId: currentListId)
                     }
                 }
@@ -1003,7 +1025,7 @@ private extension View {
         LibrarySidebarView(
             viewModel: LibraryViewModel(),
             selectedList: .constant(nil),
-            selectedItem: .constant(nil)
+            selectedItems: .constant([])
         )
     } detail: {
         Text("Select a list to view its contents")

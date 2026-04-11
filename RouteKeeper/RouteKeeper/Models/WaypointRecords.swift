@@ -78,6 +78,9 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     /// Map pin colour as a CSS hex string, e.g. `"#E8453C"`.
     var colorHex: String
     var notes: String?
+    /// Elevation in metres, fetched from the MapTiler Elevation API on creation
+    /// or when the location is changed in the edit sheet. `nil` when unknown.
+    var elevation: Double?
     /// Populated by the database on insert; read back when fetched.
     var createdAt: String = ""
 
@@ -88,7 +91,8 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
         longitude: Double,
         categoryId: Int64? = nil,
         colorHex: String = "#E8453C",
-        notes: String? = nil
+        notes: String? = nil,
+        elevation: Double? = nil
     ) {
         self.itemId     = itemId
         self.name       = name
@@ -97,6 +101,7 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
         self.categoryId = categoryId
         self.colorHex   = colorHex
         self.notes      = notes
+        self.elevation  = elevation
     }
 
     enum CodingKeys: String, CodingKey {
@@ -104,7 +109,7 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
         case name, latitude, longitude
         case categoryId = "category_id"
         case colorHex   = "color_hex"
-        case notes
+        case notes, elevation
         case createdAt  = "created_at"
     }
 
@@ -116,6 +121,7 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
         container["category_id"] = categoryId
         container["color_hex"]   = colorHex
         container["notes"]       = notes
+        container["elevation"]   = elevation
         // created_at omitted — database provides default.
     }
 

@@ -1,56 +1,72 @@
 //
-//  NewWaypointSheet.swift
+//  EditWaypointSheet.swift
 //  RouteKeeper
 //
-//  Sheet for creating a new favourite waypoint.
+//  Sheet for editing an existing waypoint.
 //
-//  The user searches for a place using the Nominatim geocoding service,
-//  picks a result to set the coordinates, fills in a name, category, colour,
-//  and optional notes, then optionally assigns the waypoint to one or more lists.
+//  On open the sheet pre-populates all fields from the stored waypoint record
+//  and ticks the list-assignment checkboxes to match the waypoint's current
+//  memberships.  The location chip is shown immediately; the user can clear it
+//  to search for a new location via Nominatim.
 //
 
 import SwiftUI
 
-struct NewWaypointSheet: View {
+struct EditWaypointSheet: View {
     let viewModel: LibraryViewModel
-    /// List to pre-check in the list-assignment panel. Pass `nil` for no pre-selection.
-    let preselectedListID: Int64?
+    /// The `items.id` / `waypoints.item_id` of the waypoint being edited.
+    let waypointItemId: Int64
+    /// Called after a successful save so the caller can reload the sidebar and
+    /// refresh the map marker.
+    let onSave: () -> Void
 
     @Environment(\.dismiss) private var dismiss
 
-    // MARK: Location search state
+    // MARK: - Location state
 
-    @State private var searchQuery = ""
-    @State private var searchResults: [GeocodingResult] = []
-    @State private var selectedLocation: GeocodingResult?
-    @State private var isSearching = false
-    @FocusState private var searchFieldFocused: Bool
-
-    /// Elevation in metres fetched from MapTiler after a location is confirmed.
-    /// `nil` if the fetch failed or has not yet completed — stored silently.
+    /// `true` while the chip is shown (either pre-populated or newly confirmed).
+    @State private var isLocationConfirmed: Bool = true
+    /// Top-line text shown inside the chip.
+    @State private var chipDisplayName: String = ""
+    /// Secondary-line text shown inside the chip.
+    @State private var chipSubtitle: String = ""
+    /// Current coordinates — pre-populated from the stored waypoint; updated
+    /// when the user picks a new Nominatim result.
+    @State private var confirmedLatitude: Double = 0
+    @State private var confirmedLongitude: Double = 0
+    /// Elevation in metres — fetched from MapTiler when a new location is
+    /// confirmed.  Carries the stored value until the location is changed.
     @State private var confirmedElevation: Double? = nil
 
-    // MARK: Waypoint detail state
+    @State private var searchQuery: String = ""
+    @State private var searchResults: [GeocodingResult] = []
+    @State private var isSearching: Bool = false
+    @FocusState private var searchFieldFocused: Bool
 
-    @State private var waypointName = ""
+    // MARK: - Detail state
+
+    @State private var waypointName: String = ""
     @State private var selectedCategoryId: Int64? = nil
-    @State private var selectedColorHex = "#E8453C"
-    @State private var notes = ""
+    @State private var selectedColorHex: String = "#E8453C"
+    @State private var notes: String = ""
 
-    // MARK: List assignment state
+    // MARK: - List assignment state
 
     @State private var selectedListIDs: Set<Int64> = []
 
-    // MARK: Constants
+    // MARK: - Loading state
+
+    @State private var isLoaded: Bool = false
+
+    // MARK: - Constants
 
     private static let presetColours = [
         "#E8453C", "#E8873C", "#E8D83C", "#4CAF50",
         "#2196F3", "#9C27B0", "#795548", "#607D8B",
     ]
 
-    // MARK: Derived
+    // MARK: - Derived
 
-    /// All non-sentinel lists, flattened from every real folder.
     private var allLists: [(list: RouteList, folderName: String)] {
         viewModel.folderContents
             .filter { guard let id = $0.folder.id else { return false }; return id != -1 }
@@ -60,15 +76,16 @@ struct NewWaypointSheet: View {
     }
 
     private var canSubmit: Bool {
-        selectedLocation != nil &&
-        !waypointName.trimmingCharacters(in: .whitespaces).isEmpty
+        isLocationConfirmed &&
+        !waypointName.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !selectedListIDs.isEmpty
     }
 
-    // MARK: Body
+    // MARK: - Body
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("New Waypoint")
+            Text("Edit Waypoint")
                 .font(.headline)
                 .padding(.horizontal, 20)
                 .padding(.top, 20)
@@ -76,13 +93,18 @@ struct NewWaypointSheet: View {
 
             Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    locationSection
-                    detailsSection
-                    listsSection
+            if !isLoaded {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        locationSection
+                        detailsSection
+                        listsSection
+                    }
+                    .padding(20)
                 }
-                .padding(20)
             }
 
             Divider()
@@ -99,21 +121,19 @@ struct NewWaypointSheet: View {
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Add Waypoint") { submit() }
+                Button("Save") { submit() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!canSubmit)
+                    .disabled(!canSubmit || !isLoaded)
             }
             .padding(20)
         }
         .frame(width: 460)
         .frame(minHeight: 560)
+        .task {
+            await loadWaypointData()
+        }
         .onAppear {
             viewModel.creationError = nil
-            searchFieldFocused = true
-            if let listID = preselectedListID {
-                selectedListIDs.insert(listID)
-            }
-            Task { await viewModel.loadCategories() }
         }
     }
 
@@ -125,22 +145,22 @@ struct NewWaypointSheet: View {
                 .font(.subheadline)
                 .fontWeight(.semibold)
 
-            if let loc = selectedLocation {
-                // Confirmed location — show a summary chip with a clear button.
+            if isLocationConfirmed {
+                // Chip showing the current (stored or newly confirmed) location.
                 HStack {
                     Image(systemName: "mappin.circle.fill")
                         .foregroundStyle(.red)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(waypointName.isEmpty ? loc.name : waypointName)
+                        Text(waypointName.isEmpty ? chipDisplayName : waypointName)
                             .lineLimit(1)
-                        Text(loc.subtitle)
+                        Text(chipSubtitle)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                     Spacer()
                     Button {
-                        selectedLocation = nil
+                        isLocationConfirmed = false
                         searchResults = []
                         searchQuery = ""
                         searchFieldFocused = true
@@ -149,12 +169,12 @@ struct NewWaypointSheet: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Clear location")
+                    .help("Change location")
                 }
                 .padding(10)
                 .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 8))
             } else {
-                // Search field + live results list.
+                // Nominatim search field.
                 HStack(spacing: 6) {
                     TextField("Search for a place…", text: $searchQuery)
                         .textFieldStyle(.roundedBorder)
@@ -239,7 +259,10 @@ struct NewWaypointSheet: View {
                     .foregroundStyle(.secondary)
                 HStack(spacing: 8) {
                     ForEach(Self.presetColours, id: \.self) { hex in
-                        ColourSwatch(hex: hex, isSelected: selectedColorHex == hex) {
+                        EditWaypointColourSwatch(
+                            hex: hex,
+                            isSelected: selectedColorHex == hex
+                        ) {
                             selectedColorHex = hex
                         }
                     }
@@ -265,12 +288,12 @@ struct NewWaypointSheet: View {
 
     private var listsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Add to Lists", systemImage: "list.bullet")
+            Label("Lists", systemImage: "list.bullet")
                 .font(.subheadline)
                 .fontWeight(.semibold)
 
             if allLists.isEmpty {
-                Text("No lists available. Create a list first.")
+                Text("No lists available.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -278,7 +301,9 @@ struct NewWaypointSheet: View {
                     ForEach(allLists, id: \.list.id) { item in
                         Toggle(
                             isOn: Binding(
-                                get: { item.list.id.map { selectedListIDs.contains($0) } ?? false },
+                                get: {
+                                    item.list.id.map { selectedListIDs.contains($0) } ?? false
+                                },
                                 set: { checked in
                                     guard let id = item.list.id else { return }
                                     if checked { selectedListIDs.insert(id) }
@@ -311,41 +336,40 @@ struct NewWaypointSheet: View {
 
     // MARK: - Private helpers
 
+    /// Loads the waypoint record and its current list memberships from the database.
+    private func loadWaypointData() async {
+        await viewModel.loadCategories()
+        if let wp = try? await DatabaseManager.shared.fetchWaypointDetails(
+            itemId: waypointItemId
+        ) {
+            confirmedLatitude  = wp.latitude
+            confirmedLongitude = wp.longitude
+            confirmedElevation = wp.elevation
+            chipDisplayName    = wp.name
+            chipSubtitle       = String(format: "%.5f, %.5f", wp.latitude, wp.longitude)
+            waypointName       = wp.name
+            selectedCategoryId = wp.categoryId
+            selectedColorHex   = wp.colorHex
+            notes              = wp.notes ?? ""
+        }
+        if let ids = try? await DatabaseManager.shared.fetchListIds(for: waypointItemId) {
+            selectedListIDs = ids
+        }
+        isLoaded = true
+    }
+
     private func selectResult(_ result: GeocodingResult) {
-        selectedLocation = result
-        searchResults = []
-        // Pre-fill name from the result title (place's own name or first
-        // component of display_name) if the field is still empty.
+        confirmedLatitude  = result.latitude
+        confirmedLongitude = result.longitude
+        confirmedElevation = nil   // reset until the fetch completes
+        chipDisplayName    = result.name
+        chipSubtitle       = result.subtitle
+        isLocationConfirmed = true
+        searchResults      = []
         if waypointName.isEmpty {
             waypointName = result.name
         }
         fetchElevation(latitude: result.latitude, longitude: result.longitude)
-    }
-
-    /// Fetches the elevation for the given coordinate from the MapTiler Elevation API.
-    ///
-    /// Updates `confirmedElevation` on success. Fails silently on any error
-    /// since elevation is supplementary data and not critical to waypoint creation.
-    private func fetchElevation(latitude: Double, longitude: Double) {
-        let key = ConfigService.mapTilerAPIKey
-        guard !key.isEmpty else { return }
-        let urlStr = "https://api.maptiler.com/elevation/point" +
-            "?coordinates=\(longitude),\(latitude)&key=\(key)"
-        guard let url = URL(string: urlStr) else { return }
-        Task {
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let geometry = json["geometry"] as? [String: Any],
-                   let coords = geometry["coordinates"] as? [Any],
-                   coords.count >= 3,
-                   let elev = coords[2] as? Double {
-                    confirmedElevation = elev
-                }
-            } catch {
-                // Fail silently — elevation is non-critical.
-            }
-        }
     }
 
     private func performSearch(query: String) {
@@ -360,7 +384,7 @@ struct NewWaypointSheet: View {
                 let results = try await GeocodingService.shared.search(trimmed)
                 searchResults = results
             } catch is CancellationError {
-                // Superseded by a newer search — results will arrive from the later call.
+                // Superseded by a newer search.
             } catch {
                 searchResults = []
             }
@@ -368,31 +392,58 @@ struct NewWaypointSheet: View {
         }
     }
 
+    /// Fetches the elevation for the given coordinate from the MapTiler Elevation API.
+    ///
+    /// Updates `confirmedElevation` on success. Fails silently — elevation is
+    /// supplementary and not critical to saving the waypoint.
+    private func fetchElevation(latitude: Double, longitude: Double) {
+        let key = ConfigService.mapTilerAPIKey
+        guard !key.isEmpty else { return }
+        let urlStr = "https://api.maptiler.com/elevation/point" +
+            "?coordinates=\(longitude),\(latitude)&key=\(key)"
+        guard let url = URL(string: urlStr) else { return }
+        Task {
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let geometry = json["geometry"] as? [String: Any],
+                   let coords   = geometry["coordinates"] as? [Any],
+                   coords.count >= 3,
+                   let elev = coords[2] as? Double {
+                    confirmedElevation = elev
+                }
+            } catch {
+                // Fail silently.
+            }
+        }
+    }
+
     private func submit() {
         let trimmedName = waypointName.trimmingCharacters(in: .whitespaces)
-        guard let location = selectedLocation, !trimmedName.isEmpty else { return }
-        let listIds = Array(selectedListIDs)
+        guard isLocationConfirmed, !trimmedName.isEmpty else { return }
         Task {
-            await viewModel.createWaypoint(
+            await viewModel.updateWaypoint(
+                itemId: waypointItemId,
                 name: trimmedName,
-                latitude: location.latitude,
-                longitude: location.longitude,
+                latitude: confirmedLatitude,
+                longitude: confirmedLongitude,
                 elevation: confirmedElevation,
                 categoryId: selectedCategoryId,
                 colorHex: selectedColorHex,
                 notes: notes.isEmpty ? nil : notes,
-                listIds: listIds
+                selectedListIds: selectedListIDs
             )
             if viewModel.creationError == nil {
+                onSave()
                 dismiss()
             }
         }
     }
 }
 
-// MARK: - ColourSwatch
+// MARK: - ColourSwatch (private to this file)
 
-private struct ColourSwatch: View {
+private struct EditWaypointColourSwatch: View {
     let hex: String
     let isSelected: Bool
     let action: () -> Void
@@ -401,7 +452,7 @@ private struct ColourSwatch: View {
         Button(action: action) {
             ZStack {
                 Circle()
-                    .fill(Color(hex: hex))
+                    .fill(Color(editHex: hex))
                     .frame(width: 24, height: 24)
                 if isSelected {
                     Circle()
@@ -418,11 +469,10 @@ private struct ColourSwatch: View {
     }
 }
 
-// MARK: - Color+hex
+// MARK: - Color+hex (private to this file)
 
 private extension Color {
-    /// Initialises a `Color` from a CSS hex string such as `"#E8453C"`.
-    init(hex: String) {
+    init(editHex hex: String) {
         let clean = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
         let value = UInt64(clean, radix: 16) ?? 0xFF0000
         let r = Double((value >> 16) & 0xFF) / 255
@@ -430,8 +480,4 @@ private extension Color {
         let b = Double(value         & 0xFF) / 255
         self.init(red: r, green: g, blue: b)
     }
-}
-
-#Preview {
-    NewWaypointSheet(viewModel: LibraryViewModel(), preselectedListID: nil)
 }

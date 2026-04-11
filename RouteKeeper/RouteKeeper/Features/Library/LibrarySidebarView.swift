@@ -103,6 +103,11 @@ private struct RouteIdentity: Identifiable {
     let name: String
 }
 
+private struct WaypointIdentity: Identifiable {
+    let id: Int64
+    let name: String
+}
+
 /// Carries the state needed to open a new-item creation sheet.
 ///
 /// Using this as the `.sheet(item:)` identity guarantees the preselected list ID
@@ -140,6 +145,7 @@ struct LibrarySidebarView: View {
 
     @State private var routePropertiesTarget: RouteIdentity? = nil
     @State private var routeWaypointTarget:   RouteIdentity? = nil
+    @State private var waypointEditTarget:    WaypointIdentity? = nil
 
     // Export state
     @State private var showingExportSheet       = false
@@ -430,6 +436,23 @@ struct LibrarySidebarView: View {
                 }
             }
         }
+        .sheet(item: $waypointEditTarget) { identity in
+            EditWaypointSheet(
+                viewModel: viewModel,
+                waypointItemId: identity.id
+            ) {
+                Task { await viewModel.reload() }
+                // Cycle selectedItem so ContentView re-fires its .task(id:)
+                // and refreshes the map marker with the updated coordinates.
+                guard let current = selectedItem, current.id == identity.id else { return }
+                let snapshot = current
+                selectedItem = nil
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    selectedItem = snapshot
+                }
+            }
+        }
         .sheet(isPresented: $showingExportSheet) {
             ExportFormatSheet(defaultFilename: exportFilename) { format in
                 Task { @MainActor in
@@ -692,9 +715,17 @@ struct LibrarySidebarView: View {
                         }
                         .overlay(
                             DoubleClickHandler {
-                                guard item.type == .route, let itemId = item.id else { return }
+                                guard let itemId = item.id else { return }
                                 selectedItem = item
-                                routePropertiesTarget = RouteIdentity(id: itemId, name: item.name)
+                                if item.type == .route {
+                                    routePropertiesTarget = RouteIdentity(
+                                        id: itemId, name: item.name
+                                    )
+                                } else if item.type == .waypoint {
+                                    waypointEditTarget = WaypointIdentity(
+                                        id: itemId, name: item.name
+                                    )
+                                }
                             }
                         )
                     }
@@ -741,6 +772,11 @@ struct LibrarySidebarView: View {
             }
             Button("Edit Route Waypoints…") {
                 routeWaypointTarget = RouteIdentity(id: itemId, name: item.name)
+            }
+            Divider()
+        } else if item.type == .waypoint {
+            Button("Edit Waypoint…") {
+                waypointEditTarget = WaypointIdentity(id: itemId, name: item.name)
             }
             Divider()
         }

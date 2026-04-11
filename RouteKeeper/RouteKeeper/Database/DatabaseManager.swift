@@ -81,6 +81,11 @@ actor DatabaseManager {
             try Self.seedCategories(db)
         }
 
+        // v2 — adds elevation column to waypoints.
+        migrator.registerMigration("v2") { db in
+            try db.execute(sql: "ALTER TABLE waypoints ADD COLUMN elevation REAL")
+        }
+
         try await migrator.migrate(dbQueue)
         _dbQueue = dbQueue
     }
@@ -201,6 +206,7 @@ actor DatabaseManager {
         name: String,
         latitude: Double,
         longitude: Double,
+        elevation: Double?,
         categoryId: Int64?,
         colorHex: String,
         notes: String?,
@@ -219,12 +225,12 @@ actor DatabaseManager {
 
             // 2. Insert waypoint-specific data, keyed on itemId.
             try db.execute(
-                sql: """
-                    INSERT INTO waypoints
-                        (item_id, name, latitude, longitude, category_id, color_hex, notes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                arguments: [itemId, name, latitude, longitude, categoryId, colorHex, notes]
+                sql: "INSERT INTO waypoints " +
+                     "(item_id, name, latitude, longitude, elevation, " +
+                     "category_id, color_hex, notes) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                arguments: [itemId, name, latitude, longitude, elevation,
+                            categoryId, colorHex, notes]
             )
 
             // 3. Associate with requested lists.
@@ -526,6 +532,59 @@ actor DatabaseManager {
                 sql: "SELECT * FROM waypoints WHERE item_id = ?",
                 arguments: [itemId]
             )
+        }
+    }
+
+    /// Updates an existing waypoint's name, location, and details, then reconciles
+    /// its list memberships — all inside a single write transaction.
+    ///
+    /// - Parameters:
+    ///   - addListIds: Membership rows to insert (newly checked lists).
+    ///   - removeListIds: Membership rows to delete (unchecked lists).
+    func updateWaypoint(
+        itemId: Int64,
+        name: String,
+        latitude: Double,
+        longitude: Double,
+        elevation: Double?,
+        categoryId: Int64?,
+        colorHex: String,
+        notes: String?,
+        addListIds: Set<Int64>,
+        removeListIds: Set<Int64>
+    ) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            // 1. Update the item name.
+            try db.execute(
+                sql: "UPDATE items SET name = ? WHERE id = ?",
+                arguments: [name, itemId]
+            )
+            // 2. Update the waypoint-specific row.
+            try db.execute(
+                sql: "UPDATE waypoints " +
+                     "SET name = ?, latitude = ?, longitude = ?, elevation = ?, " +
+                     "category_id = ?, color_hex = ?, notes = ? " +
+                     "WHERE item_id = ?",
+                arguments: [name, latitude, longitude, elevation,
+                            categoryId, colorHex, notes, itemId]
+            )
+            // 3. Remove memberships for lists the user unchecked.
+            for listId in removeListIds {
+                try db.execute(
+                    sql: "DELETE FROM item_list_membership " +
+                         "WHERE item_id = ? AND list_id = ?",
+                    arguments: [itemId, listId]
+                )
+            }
+            // 4. Add memberships for lists the user checked.
+            for listId in addListIds {
+                try db.execute(
+                    sql: "INSERT OR IGNORE INTO item_list_membership " +
+                         "(item_id, list_id) VALUES (?, ?)",
+                    arguments: [itemId, listId]
+                )
+            }
         }
     }
 

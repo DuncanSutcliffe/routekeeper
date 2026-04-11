@@ -128,7 +128,7 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–22 complete. Route sheet initialisation bug fixed. UI improvements: list auto-refresh after item creation, category icons in sidebar, folder context menu pre-selection, auto-populate route name. Route distance/duration display added. Native macOS Settings window added. Routing profiles and criteria-based routing implemented. Schema rebuilt as single migration. GPX export implemented.**
+**Increments 1–22 complete. Multiple UI fixes and polish: route sheet initialisation bug fixed, list auto-refresh, category icons, creation sheet pre-selection, auto-populate route name, Unclassified folder pinned and styled. Route distance/duration display added. Native macOS Settings window added. Routing profiles and criteria-based routing implemented. Schema rebuilt as single migration. GPX export implemented.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
@@ -867,45 +867,54 @@ RouteKeeper/
   .units == "imperial"`) and duration (`Xh Ym` or `Ym` when under an hour) separated by
   a `"•"` bullet character. **Must be added to the Xcode target manually.**
 
-### Bug fix — Route sheet initialisation on first presentation
-- **Root cause** — `LibrarySidebarView` used `.sheet(isPresented: $showingRoutePropertiesSheet)`
-  with separate `@State` variables `routeEditItemId: Int64 = 0` and `routeEditName: String = ""`.
-  On the first `false → true` transition, SwiftUI's sheet mechanism evaluates the content closure
-  with the default zero values before the state mutations take effect, producing an empty sheet.
-  Subsequent presentations work because `routeEditItemId` is already non-zero.
-- **Fix** — replaced the four `@State` variables with two `Identifiable` structs:
-  `routePropertiesTarget: RouteIdentity?` and `routeWaypointTarget: RouteIdentity?`, where
-  `private struct RouteIdentity: Identifiable { let id: Int64; let name: String }`. Switched
-  to `.sheet(item: $routePropertiesTarget) { identity in RoutePropertiesSheet(...) }` so
-  SwiftUI only creates the sheet content after the identity is fully set, and the sheet's
-  `onSave` callback closes over `identity.id` rather than a separate state variable.
-
-### Increment 22 — UI improvements
-- **Auto-refresh list panel after item creation** — `LibraryViewModel.createWaypoint` and
-  `createRoute` previously called `load()` (top panel only) after a successful save, so newly
-  created items did not appear in the bottom panel until the user reselected the list. Fixed
-  with a new private helper `refreshCurrentListIfNeeded(savedListIds:)` called after `load()`
-  in both methods. The Unclassified list (id == −1) is refreshed when `savedListIds` is empty;
-  a real list is refreshed when its id appears in `savedListIds`.
-- **Category icons in the list panel** — `Item` struct gains `var categoryIcon: String?` with
-  coding key `"category_icon"`, excluded from `encode(to:)` (read-only joined column).
+### Increment 22 — Multiple UI fixes and polish
+- **Route sheet initialisation bug fixed** — `LibrarySidebarView` was using `.sheet(isPresented:)`
+  with separate `@State` variables for the route ID and name, causing SwiftUI to evaluate the
+  sheet content closure with stale zero values on first presentation. Fixed by introducing
+  `private struct RouteIdentity: Identifiable { let id: Int64; let name: String }` and switching
+  both route sheets to `.sheet(item: $routePropertiesTarget)` / `.sheet(item: $routeWaypointTarget)`.
+  The same pattern was then applied to the new-waypoint and new-route creation sheets (see below).
+- **List content panel auto-refreshes after item creation** — `LibraryViewModel.createWaypoint`
+  and `createRoute` previously called `load()` (top panel only) after a successful save, so newly
+  created items did not appear in the bottom panel until the user reselected the list. Fixed with
+  a new private helper `refreshCurrentListIfNeeded(savedListIds:)` called after `load()` in both
+  methods. The Unclassified list (id == −1) is refreshed when `savedListIds` is empty; a real
+  list is refreshed when its id appears in `savedListIds`.
+- **Category icons in the list content panel** — `Item` struct gains `var categoryIcon: String?`
+  with coding key `"category_icon"`, excluded from `encode(to:)` (read-only joined column).
   `fetchItems(for:)` and `fetchUnclassifiedItems()` in `DatabaseManager` both updated to
   `LEFT JOIN categories c ON w.category_id = c.id` and select `c.icon_name AS category_icon`.
   Bottom panel icon in `LibrarySidebarView` updated: waypoints use `item.categoryIcon` when
   non-nil, falling back to `item.type.systemImage`; routes and tracks use `item.type.systemImage`.
-- **"New Waypoint" and "New Route" in folder context menus** — folder rows (non-Unclassified)
-  gain two additional context menu items inside the `if folder.id != -1` guard. Both use
-  `lists.first?.id` (from the `ForEach` closure that already has `lists` in scope) as the
-  pre-selected list ID, matching the pre-selection behaviour of the list-row context menus.
+  Icon colour for waypoints comes from the waypoint's `color_hex`.
+- **Creation sheet list pre-selection fixed** — the new-waypoint and new-route sheets were also
+  affected by the `.sheet(isPresented:)` stale-state bug, causing the right-clicked list not to
+  be pre-ticked on first presentation. Fixed by introducing `private struct NewItemPresentation:
+  Identifiable { let id = UUID(); let preselectedListID: Int64? }` and switching both sheets to
+  `.sheet(item: $newWaypointPresentation)` / `.sheet(item: $newRoutePresentation)`. All context
+  menu and folder row entry points set the presentation item atomically. FocusedValue bindings
+  (File menu commands) updated to use computed `Binding<Bool>` wrappers.
+- **Toolbar new-item buttons pre-select the current list** — the New Waypoint and New Route
+  toolbar buttons previously set preselectedListID to nil unconditionally. They now pass
+  `selectedList?.id`, so if a list is selected in the top panel it is pre-ticked in the creation
+  sheet. File menu commands follow the same behaviour.
 - **Auto-populate route name** — `NewRouteSheet` gains `@State private var nameWasManuallyEdited`
   and `@State private var lastAutoName`. When both start and end waypoints are selected and the
-  user hasn't typed a custom name, `tryAutoPopulateName()` fills the name field with
+  user has not typed a custom name, `tryAutoPopulateName()` fills the name field with
   "[Start] to [End]". The `onChange(of: routeName)` handler sets `nameWasManuallyEdited = true`
-  only when `newValue != lastAutoName`, preventing the auto-fill from triggering the flag.
-  Changing either waypoint re-runs auto-populate as long as the name field still matches
-  the last auto-generated value or is empty.
+  only when `newValue != lastAutoName`, so the auto-fill does not set the flag. Changing either
+  waypoint re-runs auto-populate as long as the name field still matches the last auto-generated
+  value or is empty.
+- **Unclassified folder pinned to the bottom** — `LibraryViewModel.load()` already appended
+  Unclassified last; a `Divider()` is now emitted immediately before the Unclassified
+  `DisclosureGroup` in the `ForEach` body to visually separate it from user folders at all times.
+- **Unclassified icons rendered in secondary colour** — the folder `Label` and the list `Label`
+  inside the Unclassified `DisclosureGroup` were converted from the string-shorthand form to the
+  closure form (`Label { Text(...) } icon: { Image(...) }`). When `folder.id == -1` or
+  `list.id == -1` the icon image receives `.foregroundStyle(.secondary)`; user-created folders
+  and lists keep the default accent colour.
 
-Next step: Increment 23 — TBD.
+Next step: Increment 23 — waypoint properties editing sheet.
 
 ## File Structure (Planned)
 ```

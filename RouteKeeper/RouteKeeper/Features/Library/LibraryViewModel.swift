@@ -213,6 +213,7 @@ final class LibraryViewModel {
         name: String,
         latitude: Double,
         longitude: Double,
+        elevation: Double?,
         categoryId: Int64?,
         colorHex: String,
         notes: String?,
@@ -223,6 +224,7 @@ final class LibraryViewModel {
                 name: name,
                 latitude: latitude,
                 longitude: longitude,
+                elevation: elevation,
                 categoryId: categoryId,
                 colorHex: colorHex,
                 notes: notes,
@@ -237,6 +239,50 @@ final class LibraryViewModel {
         }
         await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
         await refreshCurrentListIfNeeded(savedListIds: listIds)
+    }
+
+    /// Updates an existing waypoint's details and list memberships, then reloads the sidebar.
+    ///
+    /// Computes the membership diff by fetching the current list IDs before writing.
+    /// Sets `creationError` if the new name conflicts with another existing waypoint.
+    func updateWaypoint(
+        itemId: Int64,
+        name: String,
+        latitude: Double,
+        longitude: Double,
+        elevation: Double?,
+        categoryId: Int64?,
+        colorHex: String,
+        notes: String?,
+        selectedListIds: Set<Int64>
+    ) async {
+        do {
+            let existingListIds = try await DatabaseManager.shared.fetchListIds(for: itemId)
+            let addListIds    = selectedListIds.subtracting(existingListIds)
+            let removeListIds = existingListIds.subtracting(selectedListIds)
+            try await DatabaseManager.shared.updateWaypoint(
+                itemId: itemId,
+                name: name,
+                latitude: latitude,
+                longitude: longitude,
+                elevation: elevation,
+                categoryId: categoryId,
+                colorHex: colorHex,
+                notes: notes,
+                addListIds: addListIds,
+                removeListIds: removeListIds
+            )
+        } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
+            creationError = "A waypoint with that name already exists."
+            return
+        } catch {
+            print("Update waypoint failed: \(error)")
+            return
+        }
+        await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
+        if let list = currentList {
+            await loadItems(for: list)
+        }
     }
 
     // MARK: - Item loading

@@ -135,6 +135,12 @@ final class MapViewModel {
     func clearMultiDisplay() {
         multiDisplay = nil
     }
+
+    /// The active MapTiler style name — `"streets-v4"`, `"hybrid-v4"`, or `"topo-v4"`.
+    ///
+    /// Defaults to `"streets-v4"`. `ContentView.task` overwrites this with the
+    /// value loaded from `app_settings` before the map first appears.
+    var currentMapStyle: String = "streets-v4"
 }
 
 // MARK: - MapView
@@ -152,6 +158,11 @@ struct MapView: NSViewRepresentable {
     let routeDisplay: RouteDisplay?
     /// Non-nil when multiple items should be rendered simultaneously via showMultipleItems().
     let multiDisplay: String?
+    /// The active MapTiler style name — passed to `setMapStyle()` in JS when it changes.
+    let mapStyle: String
+    /// Scale control unit — `"metric"` or `"imperial"` — mirrors the units preference.
+    /// Passed to `setScaleUnits()` in JS when the preference changes.
+    let mapScaleUnit: String
     /// Called on the main thread when the user selects "New waypoint here" from the map
     /// context menu. Receives the WGS-84 latitude and longitude of the right-click point.
     let onAddWaypointAtCoordinate: ((Double, Double) -> Void)?
@@ -244,6 +255,33 @@ struct MapView: NSViewRepresentable {
             }
         }
 
+        // Apply a map style change if it has changed.
+        if mapStyle != coordinator.lastMapStyle {
+            let isFirstUpdate = coordinator.lastMapStyle == nil
+            coordinator.lastMapStyle = mapStyle
+            if coordinator.mapIsReady && !isFirstUpdate {
+                // prepareStyleSwitch() sets suppressRecentre = true in JS so that the
+                // layer-restore pass triggered by mapStyleLoaded does not reposition
+                // the viewport.  setMapStyle() kicks off the style reload immediately.
+                nsView.evaluateJavaScript(
+                    "prepareStyleSwitch(); setMapStyle(\"\(mapStyle)\");"
+                )
+            }
+            if !isFirstUpdate {
+                // Persist the user's choice asynchronously.
+                Task { try? await DatabaseManager.shared.saveMapStyle(mapStyle) }
+            }
+        }
+
+        // Apply a scale unit change if the units preference has changed.
+        if mapScaleUnit != coordinator.lastScaleUnit {
+            let isFirstUpdate = coordinator.lastScaleUnit == nil
+            coordinator.lastScaleUnit = mapScaleUnit
+            if coordinator.mapIsReady && !isFirstUpdate {
+                nsView.evaluateJavaScript("setScaleUnits(\"\(mapScaleUnit)\");")
+            }
+        }
+
         // Keep the callback current so the Coordinator always calls back into
         // the latest ContentView closure, even after SwiftUI re-renders.
         coordinator.onAddWaypointAtCoordinate = onAddWaypointAtCoordinate
@@ -256,12 +294,14 @@ struct MapView: NSViewRepresentable {
         let contentController = WKUserContentController()
         contentController.add(coordinator, name: "routekeeper")
 
-        // Inject the MapTiler style URL before the page's own scripts run so
-        // that the map initialisation in MapLibreMap.html can read mapStyleURL.
+        // Inject the initial style name and API key before the page's own scripts
+        // run so MapLibreMap.html's getInitialStyleUrl() can build the full URL.
+        // mapStyle is read from app_settings before the map first appears, so this
+        // always reflects the user's saved choice on first render.
         let apiKey = ConfigService.mapTilerAPIKey
-        let styleURL = "https://api.maptiler.com/maps/streets-v2/style.json?key=\(apiKey)"
         let script = WKUserScript(
-            source: "var mapStyleURL = \"\(styleURL)\";",
+            source: "var mapStyleName = \"\(mapStyle)\"; var mapApiKey = \"\(apiKey)\";" +
+                    " var mapScaleUnit = \"\(mapScaleUnit)\";",
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         )
@@ -315,6 +355,15 @@ struct MapView: NSViewRepresentable {
         /// Callback set by `MapView.updateNSView` each render pass.
         /// Called when the JS context menu fires an `addWaypointAtCoordinate` message.
         var onAddWaypointAtCoordinate: ((Double, Double) -> Void)? = nil
+
+        /// Last style name applied to the map; `nil` on first render (before any
+        /// `updateNSView` pass). Used to detect user-initiated style changes and
+        /// skip the redundant initial write.
+        var lastMapStyle: String? = nil
+
+        /// Last scale unit applied; `nil` on first render. Used to detect
+        /// preference changes and call `setScaleUnits()` in JS.
+        var lastScaleUnit: String? = nil
 
         // MARK: JS calls
 
@@ -417,6 +466,19 @@ struct MapView: NSViewRepresentable {
                 return
             }
 
+            // Fires after every setMapStyle() call once the new style is fully
+            // applied.  Re-dispatch the current display state because map.setStyle()
+            // wipes all custom sources and layers.  suppressRecentre was set to true
+            // by the prepareStyleSwitch() call that preceded setMapStyle(), so the
+            // JS-side flag ensures the viewport does not move during the restore.
+            if type == "mapStyleLoaded" {
+                guard let wv = webView else { return }
+                applyWaypointDisplay(lastWaypointDisplay, in: wv)
+                applyRouteDisplay(lastRouteDisplay, in: wv)
+                applyMultiDisplay(lastMultiDisplay, in: wv)
+                return
+            }
+
             if type == "mapReady" {
                 mapIsReady = true
                 guard let wv = webView else { return }
@@ -459,6 +521,7 @@ struct MapView: NSViewRepresentable {
     MapView(
         routeGeoJSON: nil, centerLon: -2.0, centerLat: 54.0, zoom: 5,
         waypointDisplay: nil, routeDisplay: nil, multiDisplay: nil,
+        mapStyle: "streets-v4", mapScaleUnit: "metric",
         onAddWaypointAtCoordinate: nil
     )
     .frame(width: 800, height: 600)

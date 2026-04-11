@@ -72,10 +72,21 @@
         // ---------------------------------------------------------------------------
         // Map initialisation
         // ---------------------------------------------------------------------------
-        // mapStyleURL is injected by Swift via WKUserScript before this page loads.
-        // If the injection failed, fall back to an empty string so the failure
-        // is visible in the console rather than silently using a stale URL.
-        const styleURL = (typeof mapStyleURL !== "undefined" && mapStyleURL) ? mapStyleURL : "";
+        // mapStyleName and mapApiKey are injected by Swift via WKUserScript before
+        // this page loads.  getInitialStyleUrl() builds the full MapTiler URL from
+        // those two values.  If the injection failed the style string falls back to
+        // an empty string so the failure is visible in the console.
+
+        function getInitialStyleUrl(styleName, apiKey) {
+            return "https://api.maptiler.com/maps/" + styleName +
+                   "/style.json?key=" + apiKey;
+        }
+
+        const styleURL =
+            (typeof mapStyleName !== "undefined" && mapStyleName &&
+             typeof mapApiKey    !== "undefined" && mapApiKey)
+            ? getInitialStyleUrl(mapStyleName, mapApiKey)
+            : "";
 
         const map = new maplibregl.Map({
             container: "map",
@@ -86,9 +97,66 @@
 
         map.addControl(new maplibregl.NavigationControl(), "top-right");
 
+        // mapFirstLoadComplete guards the style.load handler below so that the
+        // initial style load does not fire mapStyleLoaded (mapReady covers that).
+        var mapFirstLoadComplete = false;
+
+        // Holds the active ScaleControl instance so setScaleUnits() can remove it.
+        var scaleControl = null;
+
         map.on("load", function () {
+            mapFirstLoadComplete = true;
+            var initialUnit = (typeof mapScaleUnit !== "undefined" && mapScaleUnit)
+                ? mapScaleUnit : 'metric';
+            scaleControl = new maplibregl.ScaleControl({ unit: initialUnit });
+            map.addControl(scaleControl, 'bottom-left');
             postToSwift({ type: "mapReady" });
         });
+
+        // Fires after every setStyle() call once the new style is fully applied.
+        // Swift uses this to re-add any custom layers that the style change wiped.
+        map.on("style.load", function () {
+            if (mapFirstLoadComplete) {
+                postToSwift({ type: "mapStyleLoaded" });
+            }
+        });
+
+        // ---------------------------------------------------------------------------
+        // Map style switching
+        // ---------------------------------------------------------------------------
+
+        // When true, the next repositioning call inside showWaypoint or showRoute
+        // is skipped and this flag is immediately reset to false.  Set by
+        // prepareStyleSwitch() just before setMapStyle() so that the layer-restore
+        // pass triggered by mapStyleLoaded does not move the viewport.
+        var suppressRecentre = false;
+
+        /// Signals that the next showWaypoint / showRoute call is a style-switch
+        /// restore and should not reposition the map.
+        function prepareStyleSwitch() {
+            suppressRecentre = true;
+        }
+
+        /// Switches the map to a different MapTiler style by name.
+        ///
+        /// styleName — one of "streets-v4", "hybrid-v4", "topo-v4"
+        ///
+        /// After the new style finishes loading, MapLibre fires "style.load" which
+        /// Swift handles by re-adding any custom layers that were wiped.
+        function setMapStyle(styleName) {
+            map.setStyle(getInitialStyleUrl(styleName, mapApiKey));
+        }
+
+        /// Replaces the scale control with one using the given unit system.
+        ///
+        /// unit — "metric" (kilometres) or "imperial" (miles)
+        function setScaleUnits(unit) {
+            if (scaleControl) {
+                map.removeControl(scaleControl);
+            }
+            scaleControl = new maplibregl.ScaleControl({ unit: unit });
+            map.addControl(scaleControl, 'bottom-left');
+        }
 
         // ---------------------------------------------------------------------------
         // Route drawing
@@ -166,6 +234,7 @@
         ///
         /// Image loading is Promise-based because HTMLImageElement src loading
         /// is async — MapLibre silently ignores addImage calls on unloaded images.
+        /// fitBounds is suppressed when suppressRecentre is true (set by prepareStyleSwitch).
         async function showRoute(geojsonString, startBase64, endBase64, viaWaypointsJSON) {
             clearRoute();
             const geojson = JSON.parse(geojsonString);
@@ -253,12 +322,16 @@
                 });
             }
 
-            const bounds = geojson.features[0].bbox ||
-                coords.reduce((b, c) => [
-                    Math.min(b[0], c[0]), Math.min(b[1], c[1]),
-                    Math.max(b[2], c[0]), Math.max(b[3], c[1])
-                ], [Infinity, Infinity, -Infinity, -Infinity]);
-            map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 60 });
+            if (suppressRecentre) {
+                suppressRecentre = false;
+            } else {
+                const bounds = geojson.features[0].bbox ||
+                    coords.reduce((b, c) => [
+                        Math.min(b[0], c[0]), Math.min(b[1], c[1]),
+                        Math.max(b[2], c[0]), Math.max(b[3], c[1])
+                    ], [Infinity, Infinity, -Infinity, -Infinity]);
+                map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 60 });
+            }
         }
 
         /// Removes the route line, marker symbols, via circles, registered images,
@@ -291,6 +364,7 @@
         ///
         /// Any existing waypoint marker is removed first. If the style is not yet
         /// loaded the call is deferred until the map is idle.
+        /// flyTo is suppressed when suppressRecentre is true (set by prepareStyleSwitch).
         function showWaypoint(lat, lng, colour) {
             if (!map.isStyleLoaded()) {
                 map.once("idle", function () { showWaypoint(lat, lng, colour); });
@@ -322,7 +396,11 @@
                 }
             });
 
-            map.flyTo({ center: [lng, lat], zoom: 13 });
+            if (suppressRecentre) {
+                suppressRecentre = false;
+            } else {
+                map.flyTo({ center: [lng, lat], zoom: 13 });
+            }
         }
 
         /// Removes the waypoint marker layer and source from the map.

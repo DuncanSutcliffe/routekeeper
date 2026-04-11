@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–24 complete.**
+**Increments 1–26 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -242,8 +242,27 @@ waypoints, GPX export (Standard GPX 1.1 and Garmin GPX 1.1), drag and
 drop and context menu move/copy between lists, full delete functionality,
 SF Symbol start/end markers on routes, numbered intermediate waypoint
 markers, a native Settings window, routing profiles and criteria-based
-routing, a floating route stats overlay, and multi-select in the sidebar
-with simultaneous map display of all selected items and auto-fit bounds.
+routing, a floating route stats overlay, multi-select in the sidebar
+with simultaneous map display of all selected items and auto-fit bounds,
+right-click on the map to add a waypoint directly at the clicked
+coordinate, and a floating map style switcher (Streets / Satellite /
+Topo) that persists the selection across launches via app_settings.
+
+Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
+listener on the MapLibre map object suppresses the default browser menu
+and renders a small styled HTML overlay at the click position with a
+"New waypoint here" option. The overlay dismisses on selection, on
+clicking elsewhere on the map, or on Escape. On selection, the bridge
+sends an `addWaypointAtCoordinate` message with lat and lng values to
+Swift. The WKWebView message handler extracts the coordinates and
+invokes a callback that sets a `MapTapPresentation` state value in
+ContentView, which triggers NewWaypointSheet to open. NewWaypointSheet
+accepts an optional `prefilledCoordinate: MapCoordinate?` parameter —
+when non-nil, the location chip appears pre-confirmed at the clicked
+coordinates and a Nominatim reverse geocode request fires immediately
+to pre-populate the name field. Silent elevation capture and all other
+sheet behaviour is unchanged. Existing sheet entry points (toolbar,
+context menu, keyboard shortcut) pass `prefilledCoordinate: nil`.
 
 **Known issues / deferred:**
 - A timing bug exists where opening the route editor as the very first
@@ -251,4 +270,19 @@ with simultaneous map display of all selected items and auto-fit bounds.
 - Valhalla uses the public OSM community instance — rate-limited.
   To be replaced before release.
 
-**Next step: Increment 25 — right-click on map to add waypoint.**
+Increment 26 detail: Three MapTiler styles available: streets-v4,
+hybrid-v4, topo-v4. The style name is persisted to/from app_settings
+via DatabaseManager.loadMapStyle() / saveMapStyle(). MapLibreMap.html
+receives mapStyleName and mapApiKey via WKUserScript injection (replacing
+the old single mapStyleURL injection); getInitialStyleUrl() builds the
+full URL at map initialisation time, and setMapStyle(styleName) handles
+subsequent switches via map.setStyle(). A style.load event listener
+(guarded by a mapFirstLoadComplete flag to suppress the initial load)
+sends mapStyleLoaded to Swift, which re-dispatches the current waypoint/
+route/multi-item display state to restore custom layers. MapViewModel
+gains currentMapStyle: String; MapView gains mapStyle: String and tracks
+changes in updateNSView. The floating MapStylePicker overlay sits at the
+top-right of the map (below MapLibre's navigation controls) and binds
+directly to currentMapStyle.
+
+**Next step: Increment 27 — TBD.**

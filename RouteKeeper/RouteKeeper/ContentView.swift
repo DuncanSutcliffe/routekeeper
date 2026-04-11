@@ -107,12 +107,22 @@ struct ContentView: View {
                         waypointDisplay: mapViewModel.waypointDisplay,
                         routeDisplay:    mapViewModel.routeDisplay,
                         multiDisplay:    mapViewModel.multiDisplay,
+                        mapStyle:        mapViewModel.currentMapStyle,
+                        mapScaleUnit:    PreferencesManager.shared.units == "imperial"
+                                             ? "imperial" : "metric",
                         onAddWaypointAtCoordinate: { lat, lng in
                             mapTapPresentation = MapTapPresentation(
                                 coordinate: MapCoordinate(latitude: lat, longitude: lng)
                             )
                         }
                     )
+                    MapStylePicker(currentStyle: Binding(
+                        get: { mapViewModel.currentMapStyle },
+                        set: { mapViewModel.currentMapStyle = $0 }
+                    ))
+                    .padding(.top, 12)
+                    .padding(.leading, 10)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     if let distKm = routeDistanceKm, let durSecs = routeDurationSeconds {
                         RouteStatsOverlay(distanceKm: distKm, durationSeconds: durSecs)
                             .padding(.bottom, 16)
@@ -130,6 +140,7 @@ struct ContentView: View {
                 print("Database setup failed: \(error)")
             }
             await PreferencesManager.shared.load()
+            mapViewModel.currentMapStyle = await DatabaseManager.shared.loadMapStyle()
             await libraryViewModel.load()
         }
         // Re-fires whenever selectedItems or selectedList changes. Handles all

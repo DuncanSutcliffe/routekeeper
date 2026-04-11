@@ -842,6 +842,16 @@ actor DatabaseManager {
         }
     }
 
+    /// Returns the stored map style name from `app_settings`, defaulting to `"streets-v4"`.
+    func loadMapStyle() async -> String {
+        return (try? await fetchSetting(key: "map_style")) ?? "streets-v4"
+    }
+
+    /// Persists the map style name to `app_settings`.
+    func saveMapStyle(_ style: String) async throws {
+        try await saveSetting(key: "map_style", value: style)
+    }
+
     /// Writes `value` for `key` into `app_settings`, inserting or replacing any existing row.
     func saveSetting(key: String, value: String) async throws {
         let q = try requireQueue()

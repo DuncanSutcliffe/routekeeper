@@ -203,6 +203,7 @@ final class LibraryViewModel {
             return
         }
         await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
+        await refreshCurrentListIfNeeded(savedListIds: listIds)
     }
 
     /// Creates a new waypoint and reloads the sidebar.
@@ -235,6 +236,7 @@ final class LibraryViewModel {
             return
         }
         await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
+        await refreshCurrentListIfNeeded(savedListIds: listIds)
     }
 
     // MARK: - Item loading
@@ -349,6 +351,27 @@ final class LibraryViewModel {
         }
         if let current = currentList {
             await loadItems(for: current)
+        }
+    }
+
+    // MARK: - Post-creation refresh
+
+    /// Reloads the bottom panel if the newly saved item belongs to the currently
+    /// displayed list, so newly created items appear immediately without the user
+    /// having to reselect the list.
+    ///
+    /// The Unclassified list (id == −1) is refreshed when `savedListIds` is empty,
+    /// because items created with no list assignments land there.
+    private func refreshCurrentListIfNeeded(savedListIds: [Int64]) async {
+        guard let list = currentList, let listId = list.id else { return }
+        let wasAddedHere: Bool
+        if listId == -1 {
+            wasAddedHere = savedListIds.isEmpty
+        } else {
+            wasAddedHere = savedListIds.contains(listId)
+        }
+        if wasAddedHere {
+            await loadItems(for: list)
         }
     }
 

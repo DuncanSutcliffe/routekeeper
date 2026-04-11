@@ -98,6 +98,23 @@ private struct ListDropDelegate: DropDelegate {
     }
 }
 
+private struct RouteIdentity: Identifiable {
+    let id: Int64
+    let name: String
+}
+
+/// Carries the state needed to open a new-item creation sheet.
+///
+/// Using this as the `.sheet(item:)` identity guarantees the preselected list ID
+/// is baked into the presentation object before SwiftUI evaluates the sheet content,
+/// avoiding the timing ambiguity of the `.sheet(isPresented:)` + separate-state-var pattern.
+private struct NewItemPresentation: Identifiable {
+    /// Unique per-presentation so re-opening the sheet always creates a fresh view.
+    let id = UUID()
+    /// The list to pre-tick in the sheet's list-assignment section, or `nil` for none.
+    let preselectedListID: Int64?
+}
+
 struct LibrarySidebarView: View {
     let viewModel: LibraryViewModel
     @Binding var selectedList: RouteList?
@@ -118,16 +135,11 @@ struct LibrarySidebarView: View {
     @State private var showingNewListSheet     = false
     @State private var newListPreselectedFolderID: Int64?
 
-    @State private var showingNewWaypointSheet = false
-    @State private var newWaypointPreselectedListID: Int64?
+    @State private var newWaypointPresentation: NewItemPresentation? = nil
+    @State private var newRoutePresentation:    NewItemPresentation? = nil
 
-    @State private var showingNewRouteSheet    = false
-    @State private var newRoutePreselectedListID: Int64?
-
-    @State private var showingRoutePropertiesSheet = false
-    @State private var showingRouteWaypointSheet   = false  // opened directly from context menu
-    @State private var routeEditItemId: Int64      = 0
-    @State private var routeEditName: String       = ""
+    @State private var routePropertiesTarget: RouteIdentity? = nil
+    @State private var routeWaypointTarget:   RouteIdentity? = nil
 
     // Export state
     @State private var showingExportSheet       = false
@@ -166,20 +178,35 @@ struct LibrarySidebarView: View {
 
             // ── Folder / list hierarchy ────────────────────────────────
             ForEach(viewModel.folderContents, id: \.folder.id) { folder, lists in
+                // Visually separate the Unclassified system folder from user content.
+                if folder.id == -1 {
+                    Divider()
+                }
                 DisclosureGroup(isExpanded: expansionBinding(for: folder)) {
                     ForEach(lists) { list in
-                        Label(list.name, systemImage: "map")
+                        Label {
+                            Text(list.name)
+                        } icon: {
+                            if list.id == -1 {
+                                Image(systemName: "map")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Image(systemName: "map")
+                            }
+                        }
                             .tag(list)
                             .contextMenu {
                                 Button {
-                                    newRoutePreselectedListID = list.id
-                                    showingNewRouteSheet = true
+                                    newRoutePresentation = NewItemPresentation(
+                                        preselectedListID: list.id
+                                    )
                                 } label: {
                                     Label("New Route", systemImage: "road.lanes")
                                 }
                                 Button {
-                                    newWaypointPreselectedListID = list.id
-                                    showingNewWaypointSheet = true
+                                    newWaypointPresentation = NewItemPresentation(
+                                        preselectedListID: list.id
+                                    )
                                 } label: {
                                     Label("New Waypoint", systemImage: "mappin.and.ellipse")
                                 }
@@ -233,10 +260,16 @@ struct LibrarySidebarView: View {
                             )
                     }
                 } label: {
-                    Label(
-                        folder.name,
-                        systemImage: folder.id == -1 ? "tray.fill" : "folder.fill"
-                    )
+                    Label {
+                        Text(folder.name)
+                    } icon: {
+                        if folder.id == -1 {
+                            Image(systemName: "tray.fill")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Image(systemName: "folder.fill")
+                        }
+                    }
                     .fontWeight(.bold)
                     .contextMenu {
                         if folder.id != -1 {
@@ -245,6 +278,20 @@ struct LibrarySidebarView: View {
                                 showingNewListSheet = true
                             } label: {
                                 Label("New List", systemImage: "list.bullet.rectangle.portrait")
+                            }
+                            Button {
+                                newWaypointPresentation = NewItemPresentation(
+                                    preselectedListID: lists.first?.id
+                                )
+                            } label: {
+                                Label("New Waypoint", systemImage: "mappin.and.ellipse")
+                            }
+                            Button {
+                                newRoutePresentation = NewItemPresentation(
+                                    preselectedListID: lists.first?.id
+                                )
+                            } label: {
+                                Label("New Route", systemImage: "road.lanes")
                             }
                             Divider()
                             Button("Export GPX…") {
@@ -335,22 +382,28 @@ struct LibrarySidebarView: View {
         .sheet(isPresented: $showingNewListSheet) {
             NewListSheet(viewModel: viewModel, preselectedFolderID: newListPreselectedFolderID)
         }
-        .sheet(isPresented: $showingNewWaypointSheet) {
-            NewWaypointSheet(viewModel: viewModel, preselectedListID: newWaypointPreselectedListID)
+        .sheet(item: $newWaypointPresentation) { presentation in
+            NewWaypointSheet(
+                viewModel: viewModel,
+                preselectedListID: presentation.preselectedListID
+            )
         }
-        .sheet(isPresented: $showingNewRouteSheet) {
-            NewRouteSheet(viewModel: viewModel, preselectedListID: newRoutePreselectedListID)
+        .sheet(item: $newRoutePresentation) { presentation in
+            NewRouteSheet(
+                viewModel: viewModel,
+                preselectedListID: presentation.preselectedListID
+            )
         }
-        .sheet(isPresented: $showingRoutePropertiesSheet) {
+        .sheet(item: $routePropertiesTarget) { identity in
             RoutePropertiesSheet(
-                routeItemId: routeEditItemId,
-                initialName: routeEditName,
+                routeItemId: identity.id,
+                initialName: identity.name,
                 onSave: {
                     Task { await viewModel.reload() }
                     // Cycle selectedItem so ContentView's .task(id:) re-fires and
                     // redraws the updated geometry if this route is currently shown.
                     guard let current = selectedItem,
-                          current.id == routeEditItemId else { return }
+                          current.id == identity.id else { return }
                     let snapshot = current
                     selectedItem = nil
                     Task { @MainActor in
@@ -360,15 +413,15 @@ struct LibrarySidebarView: View {
                 }
             )
         }
-        .sheet(isPresented: $showingRouteWaypointSheet) {
+        .sheet(item: $routeWaypointTarget) { identity in
             RouteWaypointSheet(
-                routeItemId: routeEditItemId,
-                routeName: routeEditName
+                routeItemId: identity.id,
+                routeName: identity.name
             ) {
                 // If the edited route is the currently selected item, cycle
                 // selectedItem through nil so ContentView's .task(id:) re-fires
                 // and redraws the updated geometry on the map.
-                guard let current = selectedItem, current.id == routeEditItemId else { return }
+                guard let current = selectedItem, current.id == identity.id else { return }
                 let snapshot = current
                 selectedItem = nil
                 Task { @MainActor in
@@ -390,8 +443,30 @@ struct LibrarySidebarView: View {
         }
         .focusedValue(\.showNewFolderSheet,   $showingNewFolderSheet)
         .focusedValue(\.showNewListSheet,     $showingNewListSheet)
-        .focusedValue(\.showNewWaypointSheet, $showingNewWaypointSheet)
-        .focusedValue(\.showNewRouteSheet,    $showingNewRouteSheet)
+        .focusedValue(\.showNewWaypointSheet, Binding(
+            get: { newWaypointPresentation != nil },
+            set: { show in
+                if show {
+                    newWaypointPresentation = NewItemPresentation(
+                        preselectedListID: selectedList?.id
+                    )
+                } else {
+                    newWaypointPresentation = nil
+                }
+            }
+        ))
+        .focusedValue(\.showNewRouteSheet, Binding(
+            get: { newRoutePresentation != nil },
+            set: { show in
+                if show {
+                    newRoutePresentation = NewItemPresentation(
+                        preselectedListID: selectedList?.id
+                    )
+                } else {
+                    newRoutePresentation = nil
+                }
+            }
+        ))
         .overlay {
             if viewModel.isLoading {
                 ProgressView()
@@ -568,8 +643,9 @@ struct LibrarySidebarView: View {
 
             // New Waypoint
             Button {
-                newWaypointPreselectedListID = nil
-                showingNewWaypointSheet = true
+                newWaypointPresentation = NewItemPresentation(
+                    preselectedListID: selectedList?.id
+                )
             } label: {
                 Image(systemName: "mappin.and.ellipse")
             }
@@ -579,8 +655,9 @@ struct LibrarySidebarView: View {
 
             // New Route (leaf item — rightmost)
             Button {
-                newRoutePreselectedListID = nil
-                showingNewRouteSheet = true
+                newRoutePresentation = NewItemPresentation(
+                    preselectedListID: selectedList?.id
+                )
             } label: {
                 Image(systemName: "road.lanes")
             }
@@ -600,7 +677,9 @@ struct LibrarySidebarView: View {
                         Label {
                             Text(item.name)
                         } icon: {
-                            Image(systemName: item.type.systemImage)
+                            Image(systemName: item.type == .waypoint
+                                ? (item.categoryIcon ?? item.type.systemImage)
+                                : item.type.systemImage)
                                 .foregroundStyle(iconColor(for: item))
                         }
                         .tag(item)
@@ -615,9 +694,7 @@ struct LibrarySidebarView: View {
                             DoubleClickHandler {
                                 guard item.type == .route, let itemId = item.id else { return }
                                 selectedItem = item
-                                routeEditItemId = itemId
-                                routeEditName = item.name
-                                showingRoutePropertiesSheet = true
+                                routePropertiesTarget = RouteIdentity(id: itemId, name: item.name)
                             }
                         )
                     }
@@ -660,14 +737,10 @@ struct LibrarySidebarView: View {
         // "Edit Route" actions — routes only.
         if item.type == .route {
             Button("Edit Route…") {
-                routeEditItemId = itemId
-                routeEditName = item.name
-                showingRoutePropertiesSheet = true
+                routePropertiesTarget = RouteIdentity(id: itemId, name: item.name)
             }
             Button("Edit Route Waypoints…") {
-                routeEditItemId = itemId
-                routeEditName = item.name
-                showingRouteWaypointSheet = true
+                routeWaypointTarget = RouteIdentity(id: itemId, name: item.name)
             }
             Divider()
         }

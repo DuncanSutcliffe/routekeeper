@@ -48,6 +48,9 @@ struct Item: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord
     var name: String
     var description: String?
     var colour: String?
+    /// SF Symbol name for the waypoint's category, joined from `categories.icon_name`
+    /// via `waypoints.category_id`. Nil for routes, tracks, and uncategorised waypoints.
+    var categoryIcon: String?
     /// Populated by the database on insert; read back when fetched.
     var createdAt: String = ""
     /// Populated by the database on insert; updated on modification.
@@ -62,6 +65,7 @@ struct Item: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord
 
     enum CodingKeys: String, CodingKey {
         case id, type, name, description, colour
+        case categoryIcon = "category_icon"
         case createdAt = "created_at"
         case modifiedAt = "modified_at"
     }
@@ -72,7 +76,7 @@ struct Item: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord
         container["name"] = name
         container["description"] = description
         container["colour"] = colour
-        // created_at and modified_at omitted — database provides defaults.
+        // categoryIcon, created_at, and modified_at omitted — read-only or DB-provided.
     }
 
     // Hashable — identity based on id only, matching the RouteList pattern.

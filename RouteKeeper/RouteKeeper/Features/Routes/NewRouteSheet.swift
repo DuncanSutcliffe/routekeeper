@@ -22,6 +22,8 @@ struct NewRouteSheet: View {
     // MARK: - Form state
 
     @State private var routeName = ""
+    @State private var nameWasManuallyEdited = false
+    @State private var lastAutoName = ""
     @State private var startWaypoint: Waypoint? = nil
     @State private var endWaypoint: Waypoint? = nil
 
@@ -181,11 +183,15 @@ struct NewRouteSheet: View {
             Text("Route calculation failed. Please check your internet connection and try again.")
         }
         // If the selected start and end become the same after a waypoint list refresh,
-        // clear the end selection.
+        // clear the end selection; then attempt auto-name with the new pairing.
         .onChange(of: startWaypoint) { _, newStart in
             if let start = newStart, start.itemId == endWaypoint?.itemId {
                 endWaypoint = nil
             }
+            tryAutoPopulateName()
+        }
+        .onChange(of: endWaypoint) { _, _ in
+            tryAutoPopulateName()
         }
     }
 
@@ -199,7 +205,14 @@ struct NewRouteSheet: View {
 
             TextField("Route name", text: $routeName)
                 .textFieldStyle(.roundedBorder)
-                .onChange(of: routeName) { viewModel.creationError = nil }
+                .onChange(of: routeName) { _, newValue in
+                    viewModel.creationError = nil
+                    // Mark as manually edited only if this change didn't come from
+                    // the auto-populate logic (auto-populate keeps lastAutoName in sync).
+                    if newValue != lastAutoName {
+                        nameWasManuallyEdited = true
+                    }
+                }
         }
     }
 
@@ -353,6 +366,23 @@ struct NewRouteSheet: View {
     }
 
     // MARK: - Actions
+
+    /// Auto-populates the route name with "[Start] to [End]" when both waypoints
+    /// are selected and the user hasn't manually typed anything.
+    ///
+    /// Clears the manual-edit flag so subsequent waypoint changes can continue
+    /// to update the name automatically, as long as the name still matches the
+    /// last auto-generated value or is empty.
+    private func tryAutoPopulateName() {
+        guard let start = startWaypoint, let end = endWaypoint else { return }
+        guard !nameWasManuallyEdited || routeName.isEmpty || routeName == lastAutoName
+        else { return }
+        let candidate = "\(start.name) to \(end.name)"
+        lastAutoName = candidate
+        routeName = candidate
+        // The onChange(of: routeName) will see newValue == lastAutoName and will
+        // NOT set nameWasManuallyEdited, so auto-populate remains active.
+    }
 
     private func submit() {
         let trimmedName = routeName.trimmingCharacters(in: .whitespaces)

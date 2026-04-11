@@ -531,9 +531,9 @@ actor DatabaseManager {
 
     /// Fetches all items that have no row in `item_list_membership`, ordered by name.
     ///
-    /// A LEFT JOIN with `waypoints` promotes `waypoints.color_hex` into the
-    /// `colour` column so that `Item.colour` is populated for waypoint rows.
-    /// Routes and tracks have no waypoints row, so their `colour` remains NULL.
+    /// LEFT JOINs with `waypoints` and `categories` promote `waypoints.color_hex`
+    /// into `colour` and `categories.icon_name` into `category_icon` for waypoint rows.
+    /// Routes and tracks have no waypoints row, so both joined columns remain NULL.
     func fetchUnclassifiedItems() async throws -> [Item] {
         let q = try requireQueue()
         return try await q.read { db in
@@ -543,10 +543,12 @@ actor DatabaseManager {
                        items.name,
                        items.description,
                        COALESCE(w.color_hex, items.colour) AS colour,
+                       c.icon_name AS category_icon,
                        items.created_at,
                        items.modified_at
                 FROM items
-                LEFT JOIN waypoints w ON items.id = w.item_id
+                LEFT JOIN waypoints  w ON items.id = w.item_id
+                LEFT JOIN categories c ON w.category_id = c.id
                 WHERE items.id NOT IN (SELECT item_id FROM item_list_membership)
                 ORDER BY items.name
                 """)
@@ -591,8 +593,8 @@ actor DatabaseManager {
 
     /// Fetches all items belonging to the given list, ordered by name.
     ///
-    /// A LEFT JOIN with `waypoints` promotes `waypoints.color_hex` into the
-    /// `colour` column so that `Item.colour` is populated for waypoint rows.
+    /// LEFT JOINs with `waypoints` and `categories` promote `waypoints.color_hex`
+    /// into `colour` and `categories.icon_name` into `category_icon` for waypoint rows.
     func fetchItems(for listId: Int64) async throws -> [Item] {
         let q = try requireQueue()
         return try await q.read { db in
@@ -602,12 +604,14 @@ actor DatabaseManager {
                        items.name,
                        items.description,
                        COALESCE(w.color_hex, items.colour) AS colour,
+                       c.icon_name AS category_icon,
                        items.created_at,
                        items.modified_at
                 FROM items
                 JOIN item_list_membership
                   ON items.id = item_list_membership.item_id
-                LEFT JOIN waypoints w ON items.id = w.item_id
+                LEFT JOIN waypoints  w ON items.id = w.item_id
+                LEFT JOIN categories c ON w.category_id = c.id
                 WHERE item_list_membership.list_id = ?
                 ORDER BY items.name
                 """, arguments: [listId])

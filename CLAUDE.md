@@ -128,7 +128,7 @@ follow the exact planned route rather than recalculating.
 
 ## Current Status
 
-**Increments 1–20 complete. Native macOS Settings window added. Routing profiles and criteria-based routing implemented. Schema rebuilt as single migration. GPX export implemented.**
+**Increments 1–22 complete. Route sheet initialisation bug fixed. UI improvements: list auto-refresh after item creation, category icons in sidebar, folder context menu pre-selection, auto-populate route name. Route distance/duration display added. Native macOS Settings window added. Routing profiles and criteria-based routing implemented. Schema rebuilt as single migration. GPX export implemented.**
 The application has a working shell, database layer, live map (MapTiler tiles),
 motorcycle routing, a reworked library sidebar, folder creation, list creation,
 the waypoints schema, a tested geocoding service, a full waypoint creation flow
@@ -142,9 +142,11 @@ delete functionality on item, list, and folder rows with appropriate
 confirmation dialogues and explanatory alerts, start/end flag markers on
 displayed routes rendered from SF Symbols on the Swift side, GPX export
 accessible from context menus on item rows, list rows, and folder rows with a
-format selector sheet (Standard GPX 1.1 or Garmin GPX 1.1), and a native
+format selector sheet (Standard GPX 1.1 or Garmin GPX 1.1), a native
 Settings window (⌘,) with General and Export preference panes backed by
-the app_settings table.
+the app_settings table, and a floating route stats overlay at the bottom of
+the map showing distance and duration whenever a route with persisted stats
+is selected.
 
 ### Increment 1 — Application shell
 - Two-column `NavigationSplitView` with library sidebar and detail area
@@ -829,7 +831,81 @@ RouteKeeper/
   `PreferencesManager.shared.defaultExportFormat` instead of always defaulting to
   `.standard`. One-off per-export overrides still work normally.
 
-Next step: Increment 21 — route distance and duration display on the map, using the units preference.
+### Increment 21 — Route distance and duration capture and display
+- **`RoutingService.swift`** — `RouteResult` struct added (top-level, outside the actor):
+  `geometry: String`, `distanceKm: Double`, `durationSeconds: Int`. `ValhallaResponse.Trip`
+  gains a `summary: Summary` field; `Summary` decodes `length: Double` (km) and
+  `time: Double` (seconds) from the Valhalla trip-level summary. `calculateRoute(through:)`
+  return type changed from `String` to `RouteResult`; all three call sites updated.
+- **Schema** — `routes` table columns renamed from `distance_metres`/`estimated_duration_secs`
+  to `distance_km REAL` / `duration_seconds INTEGER` (both nullable). Database file must
+  be deleted before first launch on this version.
+- **`Models/ItemRecords.swift`** — `Route` struct properties renamed to match:
+  `distanceKm: Double?` (key `distance_km`) and `durationSeconds: Int?` (key `duration_seconds`).
+- **`Database/DatabaseManager.swift`** changes:
+  - `createRoute` gains `distanceKm: Double?` and `durationSeconds: Int?` parameters;
+    both persisted in the INSERT.
+  - `updateRoutePoints` parameter names updated (`distanceKm`, `durationSeconds`); SQL
+    updated to write the new column names.
+  - `updateRouteGeometry` renamed to `updateRouteGeometryAndStats(itemId:geometry:
+    distanceKm:durationSeconds:)`; updates all three columns in one write.
+- **`Features/Library/LibraryViewModel.swift`** — `createRoute` gains matching
+  `distanceKm`/`durationSeconds` parameters and threads them through to `DatabaseManager`.
+- **`Features/Routes/NewRouteSheet.swift`** — unpacks `RouteResult`; passes
+  `result.distanceKm` and `result.durationSeconds` to `createRoute`.
+- **`Features/Routes/RouteWaypointSheet.swift`** — unpacks `RouteResult`; passes stats
+  to `updateRoutePoints`.
+- **`Features/Routes/RoutePropertiesSheet.swift`** — unpacks `RouteResult`; calls
+  `updateRouteGeometryAndStats`.
+- **`ContentView.swift`** — adds `routeDistanceKm: Double?` and `routeDurationSeconds: Int?`
+  state. `handleItemSelection` populates both from `fetchRouteRecord` on route selection
+  and clears them for waypoints, tracks, and nil. Detail area is now a `ZStack(alignment:
+  .bottom)` that shows `RouteStatsOverlay` when both values are non-nil.
+- **`Features/Map/RouteStatsOverlay.swift`** (new file) — floating panel with
+  `.regularMaterial` background, `cornerRadius(8)`, and a subtle drop shadow. Displays
+  distance (km to 1 d.p., or miles using factor 0.621371 when `PreferencesManager.shared
+  .units == "imperial"`) and duration (`Xh Ym` or `Ym` when under an hour) separated by
+  a `"•"` bullet character. **Must be added to the Xcode target manually.**
+
+### Bug fix — Route sheet initialisation on first presentation
+- **Root cause** — `LibrarySidebarView` used `.sheet(isPresented: $showingRoutePropertiesSheet)`
+  with separate `@State` variables `routeEditItemId: Int64 = 0` and `routeEditName: String = ""`.
+  On the first `false → true` transition, SwiftUI's sheet mechanism evaluates the content closure
+  with the default zero values before the state mutations take effect, producing an empty sheet.
+  Subsequent presentations work because `routeEditItemId` is already non-zero.
+- **Fix** — replaced the four `@State` variables with two `Identifiable` structs:
+  `routePropertiesTarget: RouteIdentity?` and `routeWaypointTarget: RouteIdentity?`, where
+  `private struct RouteIdentity: Identifiable { let id: Int64; let name: String }`. Switched
+  to `.sheet(item: $routePropertiesTarget) { identity in RoutePropertiesSheet(...) }` so
+  SwiftUI only creates the sheet content after the identity is fully set, and the sheet's
+  `onSave` callback closes over `identity.id` rather than a separate state variable.
+
+### Increment 22 — UI improvements
+- **Auto-refresh list panel after item creation** — `LibraryViewModel.createWaypoint` and
+  `createRoute` previously called `load()` (top panel only) after a successful save, so newly
+  created items did not appear in the bottom panel until the user reselected the list. Fixed
+  with a new private helper `refreshCurrentListIfNeeded(savedListIds:)` called after `load()`
+  in both methods. The Unclassified list (id == −1) is refreshed when `savedListIds` is empty;
+  a real list is refreshed when its id appears in `savedListIds`.
+- **Category icons in the list panel** — `Item` struct gains `var categoryIcon: String?` with
+  coding key `"category_icon"`, excluded from `encode(to:)` (read-only joined column).
+  `fetchItems(for:)` and `fetchUnclassifiedItems()` in `DatabaseManager` both updated to
+  `LEFT JOIN categories c ON w.category_id = c.id` and select `c.icon_name AS category_icon`.
+  Bottom panel icon in `LibrarySidebarView` updated: waypoints use `item.categoryIcon` when
+  non-nil, falling back to `item.type.systemImage`; routes and tracks use `item.type.systemImage`.
+- **"New Waypoint" and "New Route" in folder context menus** — folder rows (non-Unclassified)
+  gain two additional context menu items inside the `if folder.id != -1` guard. Both use
+  `lists.first?.id` (from the `ForEach` closure that already has `lists` in scope) as the
+  pre-selected list ID, matching the pre-selection behaviour of the list-row context menus.
+- **Auto-populate route name** — `NewRouteSheet` gains `@State private var nameWasManuallyEdited`
+  and `@State private var lastAutoName`. When both start and end waypoints are selected and the
+  user hasn't typed a custom name, `tryAutoPopulateName()` fills the name field with
+  "[Start] to [End]". The `onChange(of: routeName)` handler sets `nameWasManuallyEdited = true`
+  only when `newValue != lastAutoName`, preventing the auto-fill from triggering the flag.
+  Changing either waypoint re-runs auto-populate as long as the name field still matches
+  the last auto-generated value or is empty.
+
+Next step: Increment 23 — TBD.
 
 ## File Structure (Planned)
 ```

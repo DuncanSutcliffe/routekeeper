@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–26 complete.**
+**Increments 1–27 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -246,8 +246,10 @@ routing, a floating route stats overlay, multi-select in the sidebar
 with simultaneous map display of all selected items and auto-fit bounds,
 right-click on the map to add a waypoint directly at the clicked
 coordinate, a floating map style switcher (Streets / Satellite / Topo)
-that persists the selection across launches via app_settings, and a
-native MapLibre scale bar whose units track the existing units preference.
+that persists the selection across launches via app_settings, a native
+MapLibre scale bar whose units track the existing units preference, and
+per-route colour selection with eight preset swatches stored as
+color_hex in the routes table and applied to all display paths.
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -270,6 +272,10 @@ context menu, keyboard shortcut) pass `prefilledCoordinate: nil`.
   action after app launch returns empty route points. Deferred.
 - Valhalla uses the public OSM community instance — rate-limited.
   To be replaced before release.
+- Route direction arrows (Increment 28) were attempted using a
+  canvas-drawn custom image registered via map.addImage. The approach
+  proved unreliable and was fully reverted. To be revisited using an
+  SDF image approach.
 
 Increment 26 detail: A floating SwiftUI overlay (MapStylePicker) in the
 top-left corner of the map provides three style buttons (Streets,
@@ -290,4 +296,25 @@ bottom-left corner; its unit ("imperial" / "metric") is driven by the
 units preference in app_settings and updated live via setScaleUnits()
 whenever the user changes their units preference in Settings.
 
-**Next step: Increment 27 — TBD.**
+Increment 27 detail: A color_hex column (TEXT, not null, default
+'#1A73E8') was added to the routes table via schema migration v3. The
+default mid-blue (#1A73E8) is pre-selected in NewRouteSheet and used as
+a fallback wherever color_hex is absent. Both NewRouteSheet and
+RoutePropertiesSheet include a colour picker section using the same eight
+preset swatches and layout as the waypoint sheets, with no "none" option.
+The private ColourSwatch component and Color(hex:) extension were
+extracted from the waypoint sheets into a shared Shared/ColourSwatch.swift
+file (to be added to the Xcode target), with waypointPresetColours and
+routePresetColours constants defined there. showRoute in MapLibreMap.html
+accepts lineColour as a fifth parameter (defaulting to '#1A73E8'),
+replacing the previously hardcoded value; the via-waypoint stroke colour
+is also driven by this parameter. RouteDisplay gained a colorHex field
+which is passed through applyRouteDisplay into the JS call. The
+mapStyleLoaded re-dispatch path passes colour correctly via the stored
+RouteDisplay struct. A bug was also fixed where routes in list-selection
+and multi-select display always rendered in the default blue: the
+multi-display code path now passes each route's color_hex individually
+via a feature property, and showMultipleItems uses a data-driven
+["get", "color"] expression instead of the previously hardcoded value.
+
+**Next step: Increment 29 — TBD.**

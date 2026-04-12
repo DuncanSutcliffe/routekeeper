@@ -251,8 +251,17 @@ struct ContentView: View {
                 let intermediates = allPoints.count > 2
                     ? Array(allPoints.dropFirst().dropLast())
                     : []
-                let viaWaypoints = intermediates.enumerated().map { i, pt in
-                    ViaWaypoint(latitude: pt.latitude, longitude: pt.longitude, index: i + 1)
+                // Announcing intermediates are numbered 1, 2, 3…; shaping points
+                // carry index 0 (unused) so their rendering path shows a dot instead.
+                var announcingCount = 0
+                let viaWaypoints = intermediates.map { pt in
+                    if pt.announcesArrival { announcingCount += 1 }
+                    return ViaWaypoint(
+                        latitude: pt.latitude,
+                        longitude: pt.longitude,
+                        index: announcingCount,
+                        announcesArrival: pt.announcesArrival
+                    )
                 }
                 mapViewModel.showRoute(RouteDisplay(
                     geojson: geometry,

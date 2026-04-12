@@ -104,7 +104,13 @@ struct RouteWaypointSheet: View {
         isSaving = true
         Task {
             do {
-                let coords = points.map {
+                // Start and End always announce arrival regardless of what was toggled.
+                var pointsToSave = points
+                if !pointsToSave.isEmpty {
+                    pointsToSave[0].announcesArrival = true
+                    pointsToSave[pointsToSave.count - 1].announcesArrival = true
+                }
+                let coords = pointsToSave.map {
                     CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
                 }
                 // Fetch the stored routing criteria so the recalculation honours them.
@@ -118,7 +124,7 @@ struct RouteWaypointSheet: View {
                     shortestRoute:  route?.shortestRoute  ?? false
                 )
                 try await DatabaseManager.shared.updateRoutePoints(
-                    points,
+                    pointsToSave,
                     routeItemId:     routeItemId,
                     geometry:        result.geometry,
                     distanceKm:      result.distanceKm,
@@ -138,14 +144,17 @@ struct RouteWaypointSheet: View {
     @ViewBuilder
     private func pointRow(for point: RoutePoint, at index: Int) -> some View {
         HStack(spacing: 10) {
-            // Leading badge: Start / Via N / End
+            // Leading badge: Start / Via N / Shaping / End
             if index == 0 {
                 badge("Start", color: .green)
             } else if index == points.count - 1 {
                 badge("End", color: .red)
+            } else if point.announcesArrival {
+                // Count only announcing intermediates up to and including this index.
+                let viaNumber = points[1...index].filter { $0.announcesArrival }.count
+                badge("Via \(viaNumber)", color: .gray)
             } else {
-                // index is 1-based among intermediates because index 0 is Start.
-                badge("Via \(index)", color: .gray)
+                badge("Shaping", color: .gray)
             }
 
             // Name or coordinate fallback
@@ -157,6 +166,19 @@ struct RouteWaypointSheet: View {
             }
 
             Spacer()
+
+            // Announce toggle — intermediates only (not Start or End).
+            if index > 0 && index < points.count - 1 {
+                Button {
+                    points[index].announcesArrival.toggle()
+                } label: {
+                    Image(systemName: point.announcesArrival ? "bell" : "bell.slash")
+                        .foregroundStyle(point.announcesArrival ? .primary : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(point.announcesArrival ? "Click to make shaping point" :
+                      "Click to make announcing point")
+            }
 
             // Drag handle
             Image(systemName: "line.3.horizontal")

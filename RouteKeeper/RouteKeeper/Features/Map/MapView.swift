@@ -46,12 +46,20 @@ struct MapCoordinate: Equatable {
 
 // MARK: - ViaWaypoint
 
-/// A single intermediate waypoint passed to the map for display as a numbered circle.
+/// A single intermediate waypoint passed to the map for display.
+///
+/// Announcing waypoints (`announcesArrival == true`) render as numbered white circles
+/// with a coloured stroke. Shaping waypoints (`announcesArrival == false`) render as
+/// small filled circles in the route colour with no number.
 struct ViaWaypoint: Equatable {
     let latitude: Double
     let longitude: Double
     /// 1-based display index shown inside the circle marker.
+    /// Only meaningful when `announcesArrival` is `true`.
     let index: Int
+    /// `true` = via point rendered as a numbered circle.
+    /// `false` = shaping point rendered as a small filled dot.
+    let announcesArrival: Bool
 }
 
 // MARK: - RouteDisplay
@@ -419,8 +427,10 @@ struct MapView: NSViewRepresentable {
         /// whether `display` is non-nil.
         ///
         /// When showing a route, start and end marker icons are generated from
-        /// SF Symbols and passed as base64-encoded PNG strings. Intermediate via
-        /// waypoints are serialised as a JSON array and passed as a fourth argument.
+        /// SF Symbols and passed as base64-encoded PNG strings. Intermediate
+        /// waypoints are split into two JSON arrays: announcing via points (numbered
+        /// circles) and shaping points (small filled dots), passed as the fourth and
+        /// sixth arguments respectively.
         func applyRouteDisplay(_ display: RouteDisplay?, in webView: WKWebView) {
             if let display {
                 let startIcon = sfSymbolBase64(
@@ -432,17 +442,27 @@ struct MapView: NSViewRepresentable {
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
                     .replacingOccurrences(of: "\n", with: "")
-                // Build a compact JSON array of via waypoints and escape it for
-                // embedding inside a JS string literal.
-                let viaItems = display.viaWaypoints.map { wp in
+
+                // Announcing via points — numbered circles.
+                let announcing = display.viaWaypoints.filter { $0.announcesArrival }
+                let viaItems = announcing.map { wp in
                     "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude),\"index\":\(wp.index)}"
                 }.joined(separator: ",")
-                let viaRaw = "[\(viaItems)]"
-                let viaEscaped = viaRaw
+                let viaEscaped = "[\(viaItems)]"
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
+
+                // Shaping points — small filled dots, no label.
+                let shaping = display.viaWaypoints.filter { !$0.announcesArrival }
+                let shapingItems = shaping.map { wp in
+                    "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude)}"
+                }.joined(separator: ",")
+                let shapingEscaped = "[\(shapingItems)]"
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+
                 let js = "showRoute(\"\(escaped)\", \"\(startIcon)\", \"\(endIcon)\"," +
-                         " \"\(viaEscaped)\", \"\(display.colorHex)\")"
+                         " \"\(viaEscaped)\", \"\(display.colorHex)\", \"\(shapingEscaped)\")"
                 webView.evaluateJavaScript(js)
             } else {
                 webView.evaluateJavaScript("clearRoute();")

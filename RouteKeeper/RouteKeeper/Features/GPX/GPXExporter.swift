@@ -159,6 +159,11 @@ enum GPXExporter {
         format: GPXFormat
     ) -> String {
         let latlon = coordAttr(lat: pt.latitude, lon: pt.longitude)
+        // Garmin shaping points (announcesArrival == false) require a
+        // gpxx:RoutePointExtension block so the device treats them as silent
+        // shaping points rather than announced via points.
+        // Announcing points (announcesArrival == true) emit no extension block
+        // and are treated as standard announced via points by the device.
         let needsExtensions = format == .garmin && !pt.announcesArrival
         let hasChildren = pt.name != nil || pt.elevation != nil || needsExtensions
 

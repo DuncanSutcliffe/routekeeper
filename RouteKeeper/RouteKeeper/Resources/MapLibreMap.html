@@ -224,19 +224,21 @@
             });
         }
 
-        /// Shows a stored route on the map, with start and end marker icons and
-        /// numbered circles for any intermediate via waypoints.
+        /// Shows a stored route on the map, with start and end marker icons,
+        /// numbered circles for announcing via waypoints, and small filled dots
+        /// for shaping (non-announcing) waypoints.
         ///
-        /// geojsonString    — JSON string of the Valhalla GeoJSON FeatureCollection
-        /// startBase64      — base64-encoded PNG for the start marker
-        /// endBase64        — base64-encoded PNG for the end marker
-        /// viaWaypointsJSON — JSON string: array of {lat, lng, index} objects
-        /// lineColour       — CSS hex colour for the route line (default '#1A73E8')
+        /// geojsonString       — JSON string of the Valhalla GeoJSON FeatureCollection
+        /// startBase64         — base64-encoded PNG for the start marker
+        /// endBase64           — base64-encoded PNG for the end marker
+        /// viaWaypointsJSON    — JSON string: array of {lat, lng, index} for announcing points
+        /// lineColour          — CSS hex colour for the route line (default '#1A73E8')
+        /// shapingWaypointsJSON — JSON string: array of {lat, lng} for shaping points
         ///
         /// Image loading is Promise-based because HTMLImageElement src loading
         /// is async — MapLibre silently ignores addImage calls on unloaded images.
         /// fitBounds is suppressed when suppressRecentre is true (set by prepareStyleSwitch).
-        async function showRoute(geojsonString, startBase64, endBase64, viaWaypointsJSON, lineColour) {
+        async function showRoute(geojsonString, startBase64, endBase64, viaWaypointsJSON, lineColour, shapingWaypointsJSON) {
             lineColour = lineColour || '#1A73E8';
             clearRoute();
             const geojson = JSON.parse(geojsonString);
@@ -284,7 +286,7 @@
                 }
             });
 
-            // Via waypoint circles — white fill, blue stroke, numbered label.
+            // Announcing via waypoint circles — white fill, route-coloured stroke, numbered.
             const viaWaypoints = (viaWaypointsJSON && viaWaypointsJSON.length > 2)
                 ? JSON.parse(viaWaypointsJSON) : [];
             if (viaWaypoints.length > 0) {
@@ -324,6 +326,33 @@
                 });
             }
 
+            // Shaping waypoint dots — small filled circle in the route colour, no label.
+            const shapingWaypoints = (shapingWaypointsJSON && shapingWaypointsJSON.length > 2)
+                ? JSON.parse(shapingWaypointsJSON) : [];
+            if (shapingWaypoints.length > 0) {
+                const shapingFeatures = shapingWaypoints.map(function(w) {
+                    return {
+                        type: 'Feature',
+                        geometry: { type: 'Point', coordinates: [w.lng, w.lat] },
+                        properties: {}
+                    };
+                });
+                map.addSource('route-shaping-source', {
+                    type: 'geojson',
+                    data: { type: 'FeatureCollection', features: shapingFeatures }
+                });
+                map.addLayer({
+                    id: 'route-shaping-circles',
+                    type: 'circle',
+                    source: 'route-shaping-source',
+                    paint: {
+                        'circle-radius': 7.5,
+                        'circle-color': lineColour,
+                        'circle-stroke-width': 0
+                    }
+                });
+            }
+
             if (suppressRecentre) {
                 suppressRecentre = false;
             } else {
@@ -336,12 +365,14 @@
             }
         }
 
-        /// Removes the route line, marker symbols, via circles, registered images,
-        /// and all associated sources from the map.
+        /// Removes the route line, marker symbols, via circles, shaping dots,
+        /// registered images, and all associated sources from the map.
         ///
         /// Also clears the legacy "active-route" id used by drawRoute() so that
         /// switching between the two mechanisms never leaves orphaned layers.
         function clearRoute() {
+            if (map.getLayer('route-shaping-circles')) map.removeLayer('route-shaping-circles');
+            if (map.getSource('route-shaping-source')) map.removeSource('route-shaping-source');
             if (map.getLayer('route-via-labels'))   map.removeLayer('route-via-labels');
             if (map.getLayer('route-via-circles'))  map.removeLayer('route-via-circles');
             if (map.getSource('route-via-source'))  map.removeSource('route-via-source');

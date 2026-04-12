@@ -30,10 +30,14 @@ import Observation
 
 /// The data needed to render a single waypoint pin on the map.
 struct WaypointDisplay: Equatable {
+    /// The item's database identifier, used to key the name label popup.
+    let itemId: Int64
     let latitude: Double
     let longitude: Double
     /// CSS hex colour string, e.g. `"#E8453C"`.
     let colorHex: String
+    /// Display name shown as a compact label adjacent to the marker.
+    let name: String
 }
 
 // MARK: - MapCoordinate
@@ -67,10 +71,14 @@ struct ViaWaypoint: Equatable {
 /// Everything the map needs to render a stored route: the GeoJSON line,
 /// any intermediate via-waypoint circles, and the route's colour.
 struct RouteDisplay: Equatable {
+    /// The item's database identifier, used to key the name label popup.
+    let itemId: Int64
     let geojson: String
     let viaWaypoints: [ViaWaypoint]
     /// CSS hex colour string for the route line, e.g. `"#1A73E8"`.
     let colorHex: String
+    /// Display name shown as a compact label at the route start point.
+    let name: String
 }
 
 // MARK: - MapViewModel
@@ -78,7 +86,7 @@ struct RouteDisplay: Equatable {
 /// Drives the map's displayed state.
 ///
 /// ContentView calls ``drawRoute(geojson:)``, ``flyTo(longitude:latitude:zoom:)``,
-/// ``showWaypoint(latitude:longitude:colorHex:)``, and ``clearWaypoint()``
+/// ``showWaypoint(latitude:longitude:colorHex:itemId:name:)``, and ``clearWaypoint()``
 /// to update the map. Because this class is ``@Observable``, any SwiftUI view that
 /// reads its properties in `body` will automatically re-render when they change.
 @Observable
@@ -114,9 +122,15 @@ final class MapViewModel {
         self.zoom = zoom
     }
 
-    /// Shows a waypoint marker on the map at the given coordinates.
-    func showWaypoint(latitude: Double, longitude: Double, colorHex: String) {
-        waypointDisplay = WaypointDisplay(latitude: latitude, longitude: longitude, colorHex: colorHex)
+    /// Shows a waypoint marker on the map at the given coordinates with a name label.
+    func showWaypoint(latitude: Double, longitude: Double, colorHex: String, itemId: Int64, name: String) {
+        waypointDisplay = WaypointDisplay(
+            itemId: itemId,
+            latitude: latitude,
+            longitude: longitude,
+            colorHex: colorHex,
+            name: name
+        )
     }
 
     /// Removes the waypoint marker from the map.
@@ -396,10 +410,17 @@ struct MapView: NSViewRepresentable {
 
         /// Calls either `showWaypoint()` or `clearWaypoint()` in JS depending on
         /// whether `display` is non-nil.
+        ///
+        /// When showing, the item's `itemId` and `name` are passed as the fourth and
+        /// fifth arguments so the JS function can attach a compact name label popup.
         func applyWaypointDisplay(_ display: WaypointDisplay?, in webView: WKWebView) {
             if let wp = display {
+                let escapedName = wp.name
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
                 webView.evaluateJavaScript(
-                    "showWaypoint(\(wp.latitude), \(wp.longitude), \"\(wp.colorHex)\");"
+                    "showWaypoint(\(wp.latitude), \(wp.longitude), \"\(wp.colorHex)\"," +
+                    " \(wp.itemId), \"\(escapedName)\");"
                 )
             } else {
                 webView.evaluateJavaScript("clearWaypoint();")
@@ -461,8 +482,12 @@ struct MapView: NSViewRepresentable {
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
 
+                let escapedName = display.name
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
                 let js = "showRoute(\"\(escaped)\", \"\(startIcon)\", \"\(endIcon)\"," +
-                         " \"\(viaEscaped)\", \"\(display.colorHex)\", \"\(shapingEscaped)\")"
+                         " \"\(viaEscaped)\", \"\(display.colorHex)\", \"\(shapingEscaped)\"," +
+                         " \(display.itemId), \"\(escapedName)\")"
                 webView.evaluateJavaScript(js)
             } else {
                 webView.evaluateJavaScript("clearRoute();")

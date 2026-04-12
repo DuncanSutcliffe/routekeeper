@@ -9,6 +9,22 @@
 import AppKit
 import SwiftUI
 
+// MARK: - MultiItemEntry helpers
+
+/// A single announcing via waypoint encoded into the multi-item JSON payload.
+private struct MultiViaWaypoint: Encodable {
+    let lat: Double
+    let lng: Double
+    /// 1-based display index shown inside the circle marker.
+    let index: Int
+}
+
+/// A single shaping waypoint encoded into the multi-item JSON payload.
+private struct MultiShapingWaypoint: Encodable {
+    let lat: Double
+    let lng: Double
+}
+
 // MARK: - MultiItemEntry
 
 /// Data transfer object for serialising a single library item to the
@@ -26,21 +42,36 @@ private struct MultiItemEntry: Encodable {
     var geojson: String?
     var startIcon: String?
     var endIcon: String?
+    /// Database identifier passed to `showLabel()` in JS as the popup dictionary key.
+    var itemId: Int64?
+    /// Display name shown as a compact label adjacent to the item on the map.
+    var name: String?
+    /// Announcing intermediate waypoints — rendered as numbered white circles.
+    /// `nil` when the route has no via points or the item is not a route.
+    var viaWaypoints: [MultiViaWaypoint]?
+    /// Shaping (non-announcing) waypoints — rendered as small filled dots.
+    /// `nil` when the route has no shaping points or the item is not a route.
+    var shapingWaypoints: [MultiShapingWaypoint]?
 
     // Custom encoding so nil fields are omitted, keeping the JSON compact.
     enum CodingKeys: String, CodingKey {
-        case type, lat, lng, color, geojson, startIcon, endIcon
+        case type, lat, lng, color, geojson, startIcon, endIcon, itemId, name
+        case viaWaypoints, shapingWaypoints
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(type, forKey: .type)
-        try c.encodeIfPresent(lat,       forKey: .lat)
-        try c.encodeIfPresent(lng,       forKey: .lng)
-        try c.encodeIfPresent(color,     forKey: .color)
-        try c.encodeIfPresent(geojson,   forKey: .geojson)
-        try c.encodeIfPresent(startIcon, forKey: .startIcon)
-        try c.encodeIfPresent(endIcon,   forKey: .endIcon)
+        try c.encodeIfPresent(lat,             forKey: .lat)
+        try c.encodeIfPresent(lng,             forKey: .lng)
+        try c.encodeIfPresent(color,           forKey: .color)
+        try c.encodeIfPresent(geojson,         forKey: .geojson)
+        try c.encodeIfPresent(startIcon,       forKey: .startIcon)
+        try c.encodeIfPresent(endIcon,         forKey: .endIcon)
+        try c.encodeIfPresent(itemId,          forKey: .itemId)
+        try c.encodeIfPresent(name,            forKey: .name)
+        try c.encodeIfPresent(viaWaypoints,     forKey: .viaWaypoints)
+        try c.encodeIfPresent(shapingWaypoints, forKey: .shapingWaypoints)
     }
 }
 
@@ -242,7 +273,9 @@ struct ContentView: View {
                     mapViewModel.showWaypoint(
                         latitude:  wp.latitude,
                         longitude: wp.longitude,
-                        colorHex:  wp.colorHex
+                        colorHex:  wp.colorHex,
+                        itemId:    itemId,
+                        name:      item.name
                     )
                 } else {
                     mapViewModel.clearWaypoint()
@@ -278,9 +311,11 @@ struct ContentView: View {
                     )
                 }
                 mapViewModel.showRoute(RouteDisplay(
+                    itemId: itemId,
                     geojson: geometry,
                     viaWaypoints: viaWaypoints,
-                    colorHex: routeRecord?.colorHex ?? "#1A73E8"
+                    colorHex: routeRecord?.colorHex ?? "#1A73E8",
+                    name: item.name
                 ))
             } else {
                 mapViewModel.clearRoute()
@@ -339,17 +374,44 @@ struct ContentView: View {
                 if let wp = try? await DatabaseManager.shared.fetchWaypointDetails(itemId: itemId) {
                     entries.append(MultiItemEntry(
                         type: .waypoint,
-                        lat: wp.latitude, lng: wp.longitude, color: wp.colorHex
+                        lat: wp.latitude, lng: wp.longitude, color: wp.colorHex,
+                        itemId: itemId, name: item.name
                     ))
                 }
             case .route:
                 if let routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(
                     itemId: itemId
                 ), let geometry = routeRecord.geometry {
+                    // Fetch route points to build via and shaping waypoint arrays,
+                    // matching the logic used in the single-route display path.
+                    let allPoints = (try? await DatabaseManager.shared.fetchRoutePoints(
+                        routeItemId: itemId
+                    )) ?? []
+                    let intermediates = allPoints.count > 2
+                        ? Array(allPoints.dropFirst().dropLast())
+                        : []
+                    var announcingCount = 0
+                    var viaWps: [MultiViaWaypoint] = []
+                    var shapingWps: [MultiShapingWaypoint] = []
+                    for pt in intermediates {
+                        if pt.announcesArrival {
+                            announcingCount += 1
+                            viaWps.append(MultiViaWaypoint(
+                                lat: pt.latitude, lng: pt.longitude, index: announcingCount
+                            ))
+                        } else {
+                            shapingWps.append(MultiShapingWaypoint(
+                                lat: pt.latitude, lng: pt.longitude
+                            ))
+                        }
+                    }
                     entries.append(MultiItemEntry(
                         type: .route,
                         color: routeRecord.colorHex,
-                        geojson: geometry, startIcon: startIcon, endIcon: endIcon
+                        geojson: geometry, startIcon: startIcon, endIcon: endIcon,
+                        itemId: itemId, name: item.name,
+                        viaWaypoints:     viaWps.isEmpty     ? nil : viaWps,
+                        shapingWaypoints: shapingWps.isEmpty ? nil : shapingWps
                     ))
                 }
             case .track:

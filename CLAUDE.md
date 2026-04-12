@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–29 complete.**
+**Increments 1–30 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -249,9 +249,11 @@ coordinate, a floating map style switcher (Streets / Satellite / Topo)
 that persists the selection across launches via app_settings, a native
 MapLibre scale bar whose units track the existing units preference,
 per-route colour selection with eight preset swatches stored as
-color_hex in the routes table and applied to all display paths, and
+color_hex in the routes table and applied to all display paths,
 non-announcing (shaping) route point support with bell/bell.slash toggle
-in the route editor and distinct solid-dot map rendering.
+in the route editor and distinct solid-dot map rendering, and route
+elevation profiles with ascent/descent totals and a filled area chart
+in the floating stats overlay.
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -270,8 +272,6 @@ sheet behaviour is unchanged. Existing sheet entry points (toolbar,
 context menu, keyboard shortcut) pass `prefilledCoordinate: nil`.
 
 **Known issues / deferred:**
-- A timing bug exists where opening the route editor as the very first
-  action after app launch returns empty route points. Deferred.
 - Valhalla uses the public OSM community instance — rate-limited.
   To be replaced before release.
 - Route direction arrows (Increment 28) were attempted using a
@@ -342,4 +342,28 @@ standard Garmin Subclass hex string for shaping points; announcing via
 points have no extensions block. A confirming comment was added to
 GPXExporter.swift.
 
-**Next step: Increment 30 — TBD.**
+Increment 30 detail: Two new nullable columns were added to the routes
+table directly in createCompleteSchema (drop/recreate expected, no
+migration): elevation_profile (TEXT) stores a JSON array of elevation
+values in metres, and notes (TEXT) is free-form text with no UI yet.
+The Valhalla route request now includes elevation_interval: 30, causing
+it to return elevation samples every 30 metres along the route. On a
+successful route calculation, the elevation arrays from all legs are
+concatenated into a single flat array, serialised as a JSON string, and
+stored in elevation_profile alongside the existing geometry and stats.
+If Valhalla returns no elevation data, NULL is stored. The floating stats
+overlay (RouteStatsOverlay) conditionally shows additional content when
+elevation_profile is non-null: total ascent (↑ Xm) and total descent
+(↓ Xm) figures appear in the stats row alongside distance and duration,
+and a 60pt filled area chart rendered using SwiftUI's Charts framework
+with AreaMark appears below. The chart x-axis represents distance in
+kilometres distributed evenly across the sample count; the y-axis
+represents elevation in metres scaled to the data's actual min/max with
+±20m padding. The fill uses the route's color_hex at 0.3 opacity; the
+stroke is solid at full opacity. Three y-axis labels (maximum, midpoint,
+minimum, each rounded to the nearest 10m) are overlaid on the left edge
+of the chart in 9pt secondary colour. The overlay is fixed at 320pt
+maximum width, centred at the bottom of the map. Routes with a null
+elevation_profile show only the original distance and duration figures.
+
+**Next step: Increment 31 — TBD.**

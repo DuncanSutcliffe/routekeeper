@@ -94,8 +94,9 @@
         // Dictionary of active Popup instances keyed by String(itemId).
         var labelPopups = {};
 
-        // Tracks per-route via/shaping layer and source IDs added by showMultipleItems so
-        // clearMultipleItems can remove them without needing to know how many routes there are.
+        // Tracks all dynamic layer and source IDs added by showMultipleItems so
+        // clearMultipleItems can remove them without needing to know how many items
+        // there are or what types they are.
         var multiViaLayerIds = [];
         var multiViaSources  = [];
 
@@ -277,18 +278,49 @@
         // Stored route display (sidebar selection)
         // ---------------------------------------------------------------------------
 
-        /// Returns a Promise that resolves to an HTMLImageElement once the
-        /// given base64-encoded PNG has fully loaded.
+
+        /// Decodes a base64-encoded PNG into an ImageData object by drawing it
+        /// onto an offscreen canvas and reading back the pixel data.
         ///
-        /// MapLibre's addImage() requires a fully loaded image; calling it with
-        /// an unloaded HTMLImageElement silently produces a blank icon.
-        function loadImage(base64) {
-            return new Promise((resolve, reject) => {
-                const img = new Image();
-                img.onload = () => resolve(img);
+        /// Returns a Promise that resolves to an ImageData instance, which
+        /// map.addImage() accepts directly.
+        function base64PngToImageData(base64) {
+            return new Promise(function(resolve, reject) {
+                var img = new Image();
+                img.onload = function() {
+                    var canvas = document.createElement('canvas');
+                    canvas.width  = img.width;
+                    canvas.height = img.height;
+                    var ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    resolve(ctx.getImageData(0, 0, img.width, img.height));
+                };
                 img.onerror = reject;
                 img.src = 'data:image/png;base64,' + base64;
             });
+        }
+
+        /// Registers a batch of category icon images with the MapLibre style.
+        ///
+        /// iconsJson — JSON string: array of { name, base64Png } objects.
+        ///             name should be a stable identifier such as "icon-cafe".
+        ///
+        /// Each PNG is decoded via base64PngToImageData() and registered with
+        /// map.addImage().  A per-image try/catch ensures one bad entry does not
+        /// abort the rest.  Already-registered names are removed first so this
+        /// function is safe to call again after a map.setStyle() wipe.
+        async function registerCategoryIcons(iconsJson) {
+            var icons = JSON.parse(iconsJson);
+            for (var i = 0; i < icons.length; i++) {
+                var entry = icons[i];
+                try {
+                    var imageData = await base64PngToImageData(entry.base64Png);
+                    if (map.hasImage(entry.name)) map.removeImage(entry.name);
+                    map.addImage(entry.name, imageData, { pixelRatio: 2 });
+                } catch (e) {
+                    console.warn('registerCategoryIcons: failed to register', entry.name, e);
+                }
+            }
         }
 
         /// Shows a stored route on the map, with start and end marker icons,
@@ -307,23 +339,13 @@
         /// Image loading is Promise-based because HTMLImageElement src loading
         /// is async — MapLibre silently ignores addImage calls on unloaded images.
         /// fitBounds is suppressed when suppressRecentre is true (set by prepareStyleSwitch).
-        async function showRoute(geojsonString, startBase64, endBase64, viaWaypointsJSON, lineColour, shapingWaypointsJSON, itemId, name) {
+        function showRoute(geojsonString, viaWaypointsJSON, lineColour, shapingWaypointsJSON, itemId, name) {
             lineColour = lineColour || '#1A73E8';
             clearRoute();
             const geojson = JSON.parse(geojsonString);
             const coords = geojson.features[0].geometry.coordinates;
             const startCoord = coords[0];
             const endCoord = coords[coords.length - 1];
-
-            const [startImg, endImg] = await Promise.all([
-                loadImage(startBase64),
-                loadImage(endBase64)
-            ]);
-
-            if (map.hasImage('route-start')) map.removeImage('route-start');
-            if (map.hasImage('route-end'))   map.removeImage('route-end');
-            map.addImage('route-start', startImg);
-            map.addImage('route-end',   endImg);
 
             map.addSource('route-source', { type: 'geojson', data: geojson });
             map.addLayer({
@@ -334,25 +356,46 @@
                 paint: { 'line-color': lineColour, 'line-width': 4 }
             });
 
-            map.addSource('route-markers-source', {
+            // Start flag — white circle with route-coloured stroke and pre-registered icon.
+            map.addSource('route-start-source', {
                 type: 'geojson',
-                data: {
-                    type: 'FeatureCollection',
-                    features: [
-                        { type: 'Feature', geometry: { type: 'Point', coordinates: startCoord }, properties: { icon: 'route-start' } },
-                        { type: 'Feature', geometry: { type: 'Point', coordinates: endCoord },   properties: { icon: 'route-end' } }
-                    ]
-                }
+                data: { type: 'Feature', geometry: { type: 'Point', coordinates: startCoord }, properties: {} }
             });
             map.addLayer({
-                id: 'route-markers-layer',
+                id: 'route-start-circle-layer',
+                type: 'circle',
+                source: 'route-start-source',
+                paint: { 'circle-radius': 14, 'circle-color': '#FFFFFF',
+                         'circle-stroke-width': 2.5, 'circle-stroke-color': lineColour }
+            });
+            map.addLayer({
+                id: 'route-start-symbol-layer',
                 type: 'symbol',
-                source: 'route-markers-source',
-                layout: {
-                    'icon-image': ['get', 'icon'],
-                    'icon-anchor': 'bottom-left',
-                    'icon-allow-overlap': true
-                }
+                source: 'route-start-source',
+                layout: { 'icon-image': 'icon-route-start', 'icon-anchor': 'center',
+                          'icon-size': 1.0, 'icon-allow-overlap': true,
+                          'icon-ignore-placement': true }
+            });
+
+            // End flag — same treatment using the checkered flag icon.
+            map.addSource('route-end-source', {
+                type: 'geojson',
+                data: { type: 'Feature', geometry: { type: 'Point', coordinates: endCoord }, properties: {} }
+            });
+            map.addLayer({
+                id: 'route-end-circle-layer',
+                type: 'circle',
+                source: 'route-end-source',
+                paint: { 'circle-radius': 14, 'circle-color': '#FFFFFF',
+                         'circle-stroke-width': 2.5, 'circle-stroke-color': lineColour }
+            });
+            map.addLayer({
+                id: 'route-end-symbol-layer',
+                type: 'symbol',
+                source: 'route-end-source',
+                layout: { 'icon-image': 'icon-route-end', 'icon-anchor': 'center',
+                          'icon-size': 1.0, 'icon-allow-overlap': true,
+                          'icon-ignore-placement': true }
             });
 
             // Announcing via waypoint circles — white fill, route-coloured stroke, numbered.
@@ -444,19 +487,21 @@
         /// Also clears the legacy "active-route" id used by drawRoute() so that
         /// switching between the two mechanisms never leaves orphaned layers.
         function clearRoute() {
-            if (map.getLayer('route-shaping-circles')) map.removeLayer('route-shaping-circles');
-            if (map.getSource('route-shaping-source')) map.removeSource('route-shaping-source');
-            if (map.getLayer('route-via-labels'))   map.removeLayer('route-via-labels');
-            if (map.getLayer('route-via-circles'))  map.removeLayer('route-via-circles');
-            if (map.getSource('route-via-source'))  map.removeSource('route-via-source');
-            if (map.getLayer('route-markers-layer')) map.removeLayer('route-markers-layer');
-            if (map.getSource('route-markers-source')) map.removeSource('route-markers-source');
-            if (map.getLayer('route-layer'))   map.removeLayer('route-layer');
-            if (map.getSource('route-source')) map.removeSource('route-source');
-            if (map.hasImage('route-start'))   map.removeImage('route-start');
-            if (map.hasImage('route-end'))     map.removeImage('route-end');
-            if (map.getLayer('active-route'))  map.removeLayer('active-route');
-            if (map.getSource('active-route')) map.removeSource('active-route');
+            if (map.getLayer('route-shaping-circles'))    map.removeLayer('route-shaping-circles');
+            if (map.getSource('route-shaping-source'))    map.removeSource('route-shaping-source');
+            if (map.getLayer('route-via-labels'))         map.removeLayer('route-via-labels');
+            if (map.getLayer('route-via-circles'))        map.removeLayer('route-via-circles');
+            if (map.getSource('route-via-source'))        map.removeSource('route-via-source');
+            if (map.getLayer('route-end-symbol-layer'))   map.removeLayer('route-end-symbol-layer');
+            if (map.getLayer('route-end-circle-layer'))   map.removeLayer('route-end-circle-layer');
+            if (map.getSource('route-end-source'))        map.removeSource('route-end-source');
+            if (map.getLayer('route-start-symbol-layer')) map.removeLayer('route-start-symbol-layer');
+            if (map.getLayer('route-start-circle-layer')) map.removeLayer('route-start-circle-layer');
+            if (map.getSource('route-start-source'))      map.removeSource('route-start-source');
+            if (map.getLayer('route-layer'))              map.removeLayer('route-layer');
+            if (map.getSource('route-source'))            map.removeSource('route-source');
+            if (map.getLayer('active-route'))             map.removeLayer('active-route');
+            if (map.getSource('active-route'))            map.removeSource('active-route');
             hideAllLabels();
         }
 
@@ -466,17 +511,25 @@
 
         /// Shows a single waypoint marker on the map.
         ///
-        /// lat, lng — WGS-84 coordinates
-        /// colour   — CSS colour string, e.g. "#E8453C"
-        /// itemId   — (optional) item identifier; when supplied a name label is shown
-        /// name     — (optional) plain-text label displayed adjacent to the marker
+        /// lat, lng       — WGS-84 coordinates
+        /// colour         — CSS colour string used for the circle stroke, e.g. "#E8453C"
+        /// itemId         — (optional) item identifier; when supplied a name label is shown
+        /// name           — (optional) plain-text label displayed adjacent to the marker
+        /// iconImageName  — (optional) registered MapLibre image name, e.g. "icon-cafe";
+        ///                  pass null or omit to render the circle only
+        ///
+        /// Renders a white-filled circle with a coloured stroke (waypoint-circle layer)
+        /// and, when iconImageName is provided, a centred SF Symbol icon on top
+        /// (waypoint-icon layer).
         ///
         /// Any existing waypoint marker is removed first. If the style is not yet
         /// loaded the call is deferred until the map is idle.
         /// flyTo is suppressed when suppressRecentre is true (set by prepareStyleSwitch).
-        function showWaypoint(lat, lng, colour, itemId, name) {
+        function showWaypoint(lat, lng, colour, itemId, name, iconImageName) {
             if (!map.isStyleLoaded()) {
-                map.once("idle", function () { showWaypoint(lat, lng, colour, itemId, name); });
+                map.once("idle", function () {
+                    showWaypoint(lat, lng, colour, itemId, name, iconImageName);
+                });
                 return;
             }
 
@@ -486,24 +539,38 @@
                 type: "geojson",
                 data: {
                     type: "Feature",
-                    geometry: {
-                        type: "Point",
-                        coordinates: [lng, lat]
-                    }
+                    geometry: { type: "Point", coordinates: [lng, lat] }
                 }
             });
 
+            // White-filled circle with a coloured stroke.
             map.addLayer({
-                id: "waypoint-layer",
+                id: "waypoint-circle",
                 type: "circle",
                 source: "waypoint-source",
                 paint: {
-                    "circle-radius": 10,
-                    "circle-color": colour,
-                    "circle-stroke-width": 2,
-                    "circle-stroke-color": "#FFFFFF"
+                    "circle-radius": 14,
+                    "circle-color": "#FFFFFF",
+                    "circle-stroke-width": 2.5,
+                    "circle-stroke-color": colour
                 }
             });
+
+            // Category icon centred on the circle (only when a name is provided).
+            if (iconImageName) {
+                map.addLayer({
+                    id: "waypoint-icon",
+                    type: "symbol",
+                    source: "waypoint-source",
+                    layout: {
+                        "icon-image": iconImageName,
+                        "icon-anchor": "center",
+                        "icon-size": 1.0,
+                        "icon-allow-overlap": true,
+                        "icon-ignore-placement": true
+                    }
+                });
+            }
 
             if (suppressRecentre) {
                 suppressRecentre = false;
@@ -516,14 +583,11 @@
             }
         }
 
-        /// Removes the waypoint marker layer and source from the map, and clears all labels.
+        /// Removes the waypoint circle layer, optional icon layer, source, and all labels.
         function clearWaypoint() {
-            if (map.getLayer("waypoint-layer")) {
-                map.removeLayer("waypoint-layer");
-            }
-            if (map.getSource("waypoint-source")) {
-                map.removeSource("waypoint-source");
-            }
+            if (map.getLayer("waypoint-icon"))   map.removeLayer("waypoint-icon");
+            if (map.getLayer("waypoint-circle")) map.removeLayer("waypoint-circle");
+            if (map.getSource("waypoint-source")) map.removeSource("waypoint-source");
             hideAllLabels();
         }
 
@@ -534,13 +598,17 @@
         /// Renders multiple waypoints and routes simultaneously, then fits the
         /// viewport to contain all of them.
         ///
-        /// itemsJson — a JSON string containing an array of item objects, each with:
-        ///   { type: "waypoint", lat, lng, color }
-        ///   { type: "route", geojson, startIcon, endIcon }
+        /// itemsJson — JSON string of item objects:
+        ///   { type: "waypoint", lat, lng, color, itemId, name, iconImageName }
+        ///   { type: "route", geojson, color, itemId, name, viaWaypoints, shapingWaypoints }
         ///
-        /// Clears any previously displayed single-item content and multi-item
-        /// content before rendering. Always calls fitBounds regardless of the
-        /// current viewport position.
+        /// Every source and layer uses a per-item dynamic ID tracked in multiViaLayerIds /
+        /// multiViaSources so clearMultipleItems can remove them without fixed-name lookups.
+        /// Route lines are the only exception — they are batched into multi-routes-source /
+        /// multi-routes-layer for efficient data-driven colour rendering.
+        ///
+        /// Rendering order (bottom → top):
+        ///   route lines → route start/end circles+icons → via/shaping → waypoint circles+icons
         async function showMultipleItems(itemsJson) {
             if (!map.isStyleLoaded()) {
                 map.once("idle", function () { showMultipleItems(itemsJson); });
@@ -551,39 +619,30 @@
             clearRoute();
             clearWaypoint();
 
-            const items = JSON.parse(itemsJson);
-            const waypointFeatures = [];
-            const routeLineFeatures = [];
-            const routeMarkerFeatures = [];
+            var items = JSON.parse(itemsJson);
+            var routeLineFeatures = [];
+            var boundsCoords      = [];
 
-            // Load route start/end icons once — all routes share the same icons.
-            const firstRoute = items.find(function(i) { return i.type === "route"; });
-            if (firstRoute) {
-                const startImg = await loadImage(firstRoute.startIcon);
-                const endImg   = await loadImage(firstRoute.endIcon);
-                if (!map.hasImage("multi-route-start")) map.addImage("multi-route-start", startImg);
-                if (!map.hasImage("multi-route-end"))   map.addImage("multi-route-end",   endImg);
-            }
-
-            // Per-route via and shaping groups; rendered after route lines so circles
-            // appear on top. Each entry records unique IDs (keyed by itemId), features,
-            // and the route colour needed for stroke/fill.
-            var viaGroups     = []; // { sourceId, circleId, labelId, features, colour }
-            var shapingGroups = []; // { sourceId, layerId, features, colour }
+            // Collected during the item loop; rendered after route lines for correct z-order.
+            var routeMarkerGroups = []; // { startCoord, endCoord, routeColour, rId }
+            var viaGroups         = []; // { sourceId, circleId, labelId, features, colour }
+            var shapingGroups     = []; // { sourceId, layerId, features, colour }
+            var waypointGroups    = []; // { wpId, lng, lat, colour, iconImageName, name }
 
             for (var i = 0; i < items.length; i++) {
                 var item = items[i];
                 if (item.type === "waypoint") {
-                    waypointFeatures.push({
-                        type: "Feature",
-                        geometry: { type: "Point", coordinates: [item.lng, item.lat] },
-                        properties: { color: item.color }
+                    waypointGroups.push({
+                        wpId:          item.itemId,
+                        lng:           item.lng,
+                        lat:           item.lat,
+                        colour:        item.color || '#E8453C',
+                        iconImageName: item.iconImageName || '',
+                        name:          item.name || ''
                     });
-                    if (item.itemId !== undefined && item.itemId !== null) {
-                        showLabel(item.itemId, item.lng, item.lat, item.name || '');
-                    }
+                    boundsCoords.push([item.lng, item.lat]);
                 } else if (item.type === "route") {
-                    var geojson = JSON.parse(item.geojson);
+                    var geojson     = JSON.parse(item.geojson);
                     var routeColour = item.color || '#1A73E8';
                     var allLineCoords = [];
                     for (var j = 0; j < geojson.features.length; j++) {
@@ -597,25 +656,19 @@
                             allLineCoords = allLineCoords.concat(f.geometry.coordinates);
                         }
                     }
-                    if (allLineCoords.length > 0) {
-                        routeMarkerFeatures.push(
-                            {
-                                type: "Feature",
-                                geometry: { type: "Point", coordinates: allLineCoords[0] },
-                                properties: { icon: "multi-route-start" }
-                            },
-                            {
-                                type: "Feature",
-                                geometry: { type: "Point", coordinates: allLineCoords[allLineCoords.length - 1] },
-                                properties: { icon: "multi-route-end" }
-                            }
-                        );
-                        if (item.itemId !== undefined && item.itemId !== null) {
-                            showLabel(item.itemId, allLineCoords[0][0], allLineCoords[0][1], item.name || '');
-                        }
+                    boundsCoords = boundsCoords.concat(allLineCoords);
+
+                    if (allLineCoords.length > 0 && item.itemId !== undefined && item.itemId !== null) {
+                        routeMarkerGroups.push({
+                            startCoord:  allLineCoords[0],
+                            endCoord:    allLineCoords[allLineCoords.length - 1],
+                            routeColour: routeColour,
+                            rId:         item.itemId,
+                            name:        item.name || ''
+                        });
                     }
 
-                    // Collect announcing via waypoints (numbered circles).
+                    // Announcing via waypoints (numbered circles).
                     var viaWaypointsArr = item.viaWaypoints || [];
                     if (viaWaypointsArr.length > 0 && item.itemId !== undefined) {
                         var viaFeatures = [];
@@ -628,15 +681,15 @@
                             });
                         }
                         viaGroups.push({
-                            sourceId:  'multi-via-source-'  + item.itemId,
-                            circleId:  'multi-via-circles-' + item.itemId,
-                            labelId:   'multi-via-labels-'  + item.itemId,
-                            features:  viaFeatures,
-                            colour:    routeColour
+                            sourceId: 'multi-via-source-'  + item.itemId,
+                            circleId: 'multi-via-circles-' + item.itemId,
+                            labelId:  'multi-via-labels-'  + item.itemId,
+                            features: viaFeatures,
+                            colour:   routeColour
                         });
                     }
 
-                    // Collect shaping waypoints (small filled dots, no label).
+                    // Shaping waypoints (small filled dots, no label).
                     var shapingWaypointsArr = item.shapingWaypoints || [];
                     if (shapingWaypointsArr.length > 0 && item.itemId !== undefined) {
                         var shapingFeatures = [];
@@ -658,6 +711,7 @@
                 }
             }
 
+            // ── Route lines (batched, data-driven colour) ────────────────────────────
             if (routeLineFeatures.length > 0) {
                 map.addSource("multi-routes-source", {
                     type: "geojson",
@@ -672,25 +726,54 @@
                 });
             }
 
-            if (routeMarkerFeatures.length > 0) {
-                map.addSource("multi-markers-source", {
-                    type: "geojson",
-                    data: { type: "FeatureCollection", features: routeMarkerFeatures }
+            // ── Per-route start/end markers (circle + symbol, keyed by itemId) ──────
+            for (var ri = 0; ri < routeMarkerGroups.length; ri++) {
+                var rm = routeMarkerGroups[ri];
+
+                var startSrcId    = 'route-start-source-' + rm.rId;
+                var startCircleId = 'route-start-circle-' + rm.rId;
+                var startSymbolId = 'route-start-symbol-' + rm.rId;
+                map.addSource(startSrcId, {
+                    type: 'geojson',
+                    data: { type: 'Feature', geometry: { type: 'Point', coordinates: rm.startCoord }, properties: {} }
                 });
                 map.addLayer({
-                    id: "multi-markers-layer",
-                    type: "symbol",
-                    source: "multi-markers-source",
-                    layout: {
-                        "icon-image": ["get", "icon"],
-                        "icon-anchor": "bottom-left",
-                        "icon-allow-overlap": true
-                    }
+                    id: startCircleId, type: 'circle', source: startSrcId,
+                    paint: { 'circle-radius': 14, 'circle-color': '#FFFFFF',
+                             'circle-stroke-width': 2.5, 'circle-stroke-color': rm.routeColour }
                 });
+                map.addLayer({
+                    id: startSymbolId, type: 'symbol', source: startSrcId,
+                    layout: { 'icon-image': 'icon-route-start', 'icon-anchor': 'center',
+                              'icon-size': 1.0, 'icon-allow-overlap': true, 'icon-ignore-placement': true }
+                });
+                multiViaLayerIds.push(startCircleId, startSymbolId);
+                multiViaSources.push(startSrcId);
+
+                var endSrcId    = 'route-end-source-' + rm.rId;
+                var endCircleId = 'route-end-circle-' + rm.rId;
+                var endSymbolId = 'route-end-symbol-' + rm.rId;
+                map.addSource(endSrcId, {
+                    type: 'geojson',
+                    data: { type: 'Feature', geometry: { type: 'Point', coordinates: rm.endCoord }, properties: {} }
+                });
+                map.addLayer({
+                    id: endCircleId, type: 'circle', source: endSrcId,
+                    paint: { 'circle-radius': 14, 'circle-color': '#FFFFFF',
+                             'circle-stroke-width': 2.5, 'circle-stroke-color': rm.routeColour }
+                });
+                map.addLayer({
+                    id: endSymbolId, type: 'symbol', source: endSrcId,
+                    layout: { 'icon-image': 'icon-route-end', 'icon-anchor': 'center',
+                              'icon-size': 1.0, 'icon-allow-overlap': true, 'icon-ignore-placement': true }
+                });
+                multiViaLayerIds.push(endCircleId, endSymbolId);
+                multiViaSources.push(endSrcId);
+
+                showLabel(rm.rId, rm.startCoord[0], rm.startCoord[1], rm.name);
             }
 
-            // Per-route announcing via circles — white fill, route-coloured stroke, numbered.
-            // Added after route lines so they render on top.
+            // ── Per-route via circles (white fill, route-coloured stroke, numbered) ─
             for (var vi = 0; vi < viaGroups.length; vi++) {
                 var vg = viaGroups[vi];
                 map.addSource(vg.sourceId, {
@@ -698,33 +781,21 @@
                     data: { type: 'FeatureCollection', features: vg.features }
                 });
                 map.addLayer({
-                    id: vg.circleId,
-                    type: 'circle',
-                    source: vg.sourceId,
-                    paint: {
-                        'circle-radius': 10,
-                        'circle-color': '#FFFFFF',
-                        'circle-stroke-color': vg.colour,
-                        'circle-stroke-width': 2
-                    }
+                    id: vg.circleId, type: 'circle', source: vg.sourceId,
+                    paint: { 'circle-radius': 10, 'circle-color': '#FFFFFF',
+                             'circle-stroke-color': vg.colour, 'circle-stroke-width': 2 }
                 });
                 map.addLayer({
-                    id: vg.labelId,
-                    type: 'symbol',
-                    source: vg.sourceId,
-                    layout: {
-                        'text-field': ['to-string', ['get', 'index']],
-                        'text-size': 11,
-                        'text-allow-overlap': true,
-                        'text-ignore-placement': true
-                    },
+                    id: vg.labelId, type: 'symbol', source: vg.sourceId,
+                    layout: { 'text-field': ['to-string', ['get', 'index']], 'text-size': 11,
+                              'text-allow-overlap': true, 'text-ignore-placement': true },
                     paint: { 'text-color': '#1a1a1a' }
                 });
                 multiViaLayerIds.push(vg.circleId, vg.labelId);
                 multiViaSources.push(vg.sourceId);
             }
 
-            // Per-route shaping dots — small filled circle in the route colour.
+            // ── Per-route shaping dots (small filled circle in route colour) ─────────
             for (var si = 0; si < shapingGroups.length; si++) {
                 var sg = shapingGroups[si];
                 map.addSource(sg.sourceId, {
@@ -732,53 +803,48 @@
                     data: { type: 'FeatureCollection', features: sg.features }
                 });
                 map.addLayer({
-                    id: sg.layerId,
-                    type: 'circle',
-                    source: sg.sourceId,
-                    paint: {
-                        'circle-radius': 7.5,
-                        'circle-color': sg.colour,
-                        'circle-stroke-width': 0
-                    }
+                    id: sg.layerId, type: 'circle', source: sg.sourceId,
+                    paint: { 'circle-radius': 7.5, 'circle-color': sg.colour, 'circle-stroke-width': 0 }
                 });
                 multiViaLayerIds.push(sg.layerId);
                 multiViaSources.push(sg.sourceId);
             }
 
-            if (waypointFeatures.length > 0) {
-                map.addSource("multi-waypoints-source", {
-                    type: "geojson",
-                    data: { type: "FeatureCollection", features: waypointFeatures }
+            // ── Per-waypoint markers (circle + optional symbol, keyed by itemId) ────
+            for (var wi = 0; wi < waypointGroups.length; wi++) {
+                var wg = waypointGroups[wi];
+                if (wg.wpId === undefined || wg.wpId === null) continue;
+                var wpSrcId    = 'multi-waypoint-source-' + wg.wpId;
+                var wpCircleId = 'multi-waypoint-circle-' + wg.wpId;
+                var wpSymbolId = 'multi-waypoint-symbol-' + wg.wpId;
+                map.addSource(wpSrcId, {
+                    type: 'geojson',
+                    data: { type: 'Feature', geometry: { type: 'Point', coordinates: [wg.lng, wg.lat] }, properties: {} }
                 });
                 map.addLayer({
-                    id: "multi-waypoints-layer",
-                    type: "circle",
-                    source: "multi-waypoints-source",
-                    paint: {
-                        "circle-radius": 10,
-                        "circle-color": ["get", "color"],
-                        "circle-stroke-width": 2,
-                        "circle-stroke-color": "#FFFFFF"
-                    }
+                    id: wpCircleId, type: 'circle', source: wpSrcId,
+                    paint: { 'circle-radius': 14, 'circle-color': '#FFFFFF',
+                             'circle-stroke-width': 2.5, 'circle-stroke-color': wg.colour }
                 });
+                if (wg.iconImageName) {
+                    map.addLayer({
+                        id: wpSymbolId, type: 'symbol', source: wpSrcId,
+                        layout: { 'icon-image': wg.iconImageName, 'icon-anchor': 'center',
+                                  'icon-size': 1.0, 'icon-allow-overlap': true, 'icon-ignore-placement': true }
+                    });
+                    multiViaLayerIds.push(wpCircleId, wpSymbolId);
+                } else {
+                    multiViaLayerIds.push(wpCircleId);
+                }
+                multiViaSources.push(wpSrcId);
+                showLabel(wg.wpId, wg.lng, wg.lat, wg.name);
             }
 
-            // Fit viewport to the combined extent of all rendered content.
-            var allCoords = [];
-            for (var k = 0; k < waypointFeatures.length; k++) {
-                allCoords.push(waypointFeatures[k].geometry.coordinates);
-            }
-            for (var l = 0; l < routeLineFeatures.length; l++) {
-                allCoords = allCoords.concat(routeLineFeatures[l].geometry.coordinates);
-            }
-            if (allCoords.length > 0) {
-                var bounds = allCoords.reduce(function(b, c) {
-                    return [
-                        Math.min(b[0], c[0]),
-                        Math.min(b[1], c[1]),
-                        Math.max(b[2], c[0]),
-                        Math.max(b[3], c[1])
-                    ];
+            // ── Fit viewport ─────────────────────────────────────────────────────────
+            if (boundsCoords.length > 0) {
+                var bounds = boundsCoords.reduce(function(b, c) {
+                    return [Math.min(b[0], c[0]), Math.min(b[1], c[1]),
+                            Math.max(b[2], c[0]), Math.max(b[3], c[1])];
                 }, [Infinity, Infinity, -Infinity, -Infinity]);
                 map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 60 });
             }
@@ -816,12 +882,14 @@
             if (e.key === 'Escape') { dismissContextMenu(); }
         });
 
-        /// Removes all layers, sources, images, and label popups added by showMultipleItems().
+        /// Removes all layers and sources added by showMultipleItems(), then clears labels.
         ///
-        /// Per-route via and shaping layers are tracked in multiViaLayerIds / multiViaSources
-        /// because their IDs are dynamic (keyed by itemId).
+        /// All per-item layers/sources (waypoint markers, route start/end markers, via circles,
+        /// shaping dots) are tracked in multiViaLayerIds / multiViaSources and removed here.
+        /// Route lines use fixed IDs (multi-routes-source / multi-routes-layer) and are
+        /// removed separately since they are not tracked in the per-item arrays.
         function clearMultipleItems() {
-            // Remove per-route via and shaping layers (dynamic IDs, tracked in module arrays).
+            // Remove all per-item dynamic layers and sources.
             for (var i = 0; i < multiViaLayerIds.length; i++) {
                 if (map.getLayer(multiViaLayerIds[i])) map.removeLayer(multiViaLayerIds[i]);
             }
@@ -830,15 +898,9 @@
             }
             multiViaLayerIds = [];
             multiViaSources  = [];
-            // Remove fixed-name multi-item layers.
-            if (map.getLayer("multi-waypoints-layer"))  map.removeLayer("multi-waypoints-layer");
-            if (map.getSource("multi-waypoints-source")) map.removeSource("multi-waypoints-source");
-            if (map.getLayer("multi-routes-layer"))     map.removeLayer("multi-routes-layer");
-            if (map.getSource("multi-routes-source"))   map.removeSource("multi-routes-source");
-            if (map.getLayer("multi-markers-layer"))    map.removeLayer("multi-markers-layer");
-            if (map.getSource("multi-markers-source"))  map.removeSource("multi-markers-source");
-            if (map.hasImage("multi-route-start"))      map.removeImage("multi-route-start");
-            if (map.hasImage("multi-route-end"))        map.removeImage("multi-route-end");
+            // Remove fixed-name route line batch.
+            if (map.getLayer("multi-routes-layer"))   map.removeLayer("multi-routes-layer");
+            if (map.getSource("multi-routes-source")) map.removeSource("multi-routes-source");
             hideAllLabels();
         }
 </script>

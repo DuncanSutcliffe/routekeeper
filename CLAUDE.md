@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–30 complete.**
+**Increments 1–31 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -251,9 +251,10 @@ MapLibre scale bar whose units track the existing units preference,
 per-route colour selection with eight preset swatches stored as
 color_hex in the routes table and applied to all display paths,
 non-announcing (shaping) route point support with bell/bell.slash toggle
-in the route editor and distinct solid-dot map rendering, and route
+in the route editor and distinct solid-dot map rendering, route
 elevation profiles with ascent/descent totals and a filled area chart
-in the floating stats overlay.
+in the floating stats overlay, and compact name label popups for all
+selected map items.
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -366,4 +367,33 @@ of the chart in 9pt secondary colour. The overlay is fixed at 320pt
 maximum width, centred at the bottom of the map. Routes with a null
 elevation_profile show only the original distance and duration figures.
 
-**Next step: Increment 31 — TBD.**
+Increment 31 detail: MapLibreMap.html has three new functions:
+showLabel(itemId, lng, lat, name) creates a compact dark tooltip-style
+maplibregl.Popup (no close button, no close-on-click) anchored at the
+given coordinates and stored in a module-level dictionary keyed by
+String(itemId); hideLabel(itemId) removes a single label; hideAllLabels()
+clears all labels. Labels are shown for every selected item — waypoints at
+their own coordinates, routes anchored at their first route point — and
+are styled to be unobtrusive: small white text on a dark semi-transparent
+background, rounded corners, no pointer arrow, 15px upward offset from
+the anchor. Labels persist through pan and zoom and are dismissed only
+when the item is deselected. clearRoute and clearWaypoint both call
+hideAllLabels(); clearMultipleItems does the same. The mapStyleLoaded
+re-dispatch path re-creates labels automatically because it calls
+applyWaypointDisplay, applyRouteDisplay, and applyMultiDisplay, each of
+which drives showLabel internally. WaypointDisplay and RouteDisplay gained
+itemId (Int64) and name (String) fields; MapViewModel.showWaypoint was
+updated to match. MultiItemEntry gained itemId and name fields encoded
+into the JSON payload. Bug fix: showMultipleItems previously only rendered
+route lines and start/end flag markers, silently omitting via and shaping
+point markers. showMultipleItems now renders per-route via circles and
+shaping dots using dynamic source/layer IDs keyed by itemId (e.g.
+multi-via-source-42) tracked in module-level multiViaLayerIds and
+multiViaSources arrays; clearMultipleItems clears these arrays alongside
+the fixed-name layers. On the Swift side, buildMultiItemsJson now fetches
+route points for each route entry and populates viaWaypoints and
+shapingWaypoints fields on MultiItemEntry (using the same announcing/
+shaping split as the single-item display path), backed by two new private
+Encodable structs MultiViaWaypoint and MultiShapingWaypoint.
+
+**Next step: Increment 32 — TBD.**

@@ -6,7 +6,6 @@
 //  and a main content area.
 //
 
-import AppKit
 import SwiftUI
 
 // MARK: - MultiItemEntry helpers
@@ -40,8 +39,6 @@ private struct MultiItemEntry: Encodable {
     var lng: Double?
     var color: String?
     var geojson: String?
-    var startIcon: String?
-    var endIcon: String?
     /// Database identifier passed to `showLabel()` in JS as the popup dictionary key.
     var itemId: Int64?
     /// Display name shown as a compact label adjacent to the item on the map.
@@ -52,26 +49,28 @@ private struct MultiItemEntry: Encodable {
     /// Shaping (non-announcing) waypoints — rendered as small filled dots.
     /// `nil` when the route has no shaping points or the item is not a route.
     var shapingWaypoints: [MultiShapingWaypoint]?
+    /// MapLibre image name for the category icon, e.g. `"icon-cafe"`.
+    /// `nil` when the waypoint has no category or the item is not a waypoint.
+    var iconImageName: String?
 
     // Custom encoding so nil fields are omitted, keeping the JSON compact.
     enum CodingKeys: String, CodingKey {
-        case type, lat, lng, color, geojson, startIcon, endIcon, itemId, name
-        case viaWaypoints, shapingWaypoints
+        case type, lat, lng, color, geojson, itemId, name
+        case viaWaypoints, shapingWaypoints, iconImageName
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(type, forKey: .type)
-        try c.encodeIfPresent(lat,             forKey: .lat)
-        try c.encodeIfPresent(lng,             forKey: .lng)
-        try c.encodeIfPresent(color,           forKey: .color)
-        try c.encodeIfPresent(geojson,         forKey: .geojson)
-        try c.encodeIfPresent(startIcon,       forKey: .startIcon)
-        try c.encodeIfPresent(endIcon,         forKey: .endIcon)
-        try c.encodeIfPresent(itemId,          forKey: .itemId)
-        try c.encodeIfPresent(name,            forKey: .name)
+        try c.encodeIfPresent(lat,              forKey: .lat)
+        try c.encodeIfPresent(lng,              forKey: .lng)
+        try c.encodeIfPresent(color,            forKey: .color)
+        try c.encodeIfPresent(geojson,          forKey: .geojson)
+        try c.encodeIfPresent(itemId,           forKey: .itemId)
+        try c.encodeIfPresent(name,             forKey: .name)
         try c.encodeIfPresent(viaWaypoints,     forKey: .viaWaypoints)
         try c.encodeIfPresent(shapingWaypoints, forKey: .shapingWaypoints)
+        try c.encodeIfPresent(iconImageName,    forKey: .iconImageName)
     }
 }
 
@@ -270,12 +269,21 @@ struct ContentView: View {
             routeElevationProfile = nil
             do {
                 if let wp = try await DatabaseManager.shared.fetchWaypointDetails(itemId: itemId) {
+                    // Derive the category icon image name if a category is assigned.
+                    var iconImageName: String? = nil
+                    if let categoryId = wp.categoryId {
+                        let categories = (try? await DatabaseManager.shared.fetchCategories()) ?? []
+                        if let cat = categories.first(where: { $0.id == categoryId }) {
+                            iconImageName = "icon-\(cat.name.lowercased())"
+                        }
+                    }
                     mapViewModel.showWaypoint(
-                        latitude:  wp.latitude,
-                        longitude: wp.longitude,
-                        colorHex:  wp.colorHex,
-                        itemId:    itemId,
-                        name:      item.name
+                        latitude:      wp.latitude,
+                        longitude:     wp.longitude,
+                        colorHex:      wp.colorHex,
+                        itemId:        itemId,
+                        name:          item.name,
+                        iconImageName: iconImageName
                     )
                 } else {
                     mapViewModel.clearWaypoint()
@@ -359,11 +367,8 @@ struct ContentView: View {
     /// Generates start/end flag icons once and embeds them in every route entry.
     /// Items whose geometry is missing (NULL in the DB) are silently skipped.
     private func buildMultiItemsJson(_ items: [Item]) async -> String {
-        let startIcon = sfSymbolBase64(
-            "flag.fill",
-            color: NSColor(red: 0.0, green: 0.5, blue: 0.15, alpha: 1.0)
-        ) ?? ""
-        let endIcon = sfSymbolBase64("flag.checkered", color: .black) ?? ""
+        // Fetch categories once so the per-waypoint icon name lookup is O(1).
+        let allCategories = (try? await DatabaseManager.shared.fetchCategories()) ?? []
 
         var entries: [MultiItemEntry] = []
 
@@ -372,10 +377,16 @@ struct ContentView: View {
             switch item.type {
             case .waypoint:
                 if let wp = try? await DatabaseManager.shared.fetchWaypointDetails(itemId: itemId) {
+                    var iconImageName: String? = nil
+                    if let categoryId = wp.categoryId,
+                       let cat = allCategories.first(where: { $0.id == categoryId }) {
+                        iconImageName = "icon-\(cat.name.lowercased())"
+                    }
                     entries.append(MultiItemEntry(
                         type: .waypoint,
                         lat: wp.latitude, lng: wp.longitude, color: wp.colorHex,
-                        itemId: itemId, name: item.name
+                        itemId: itemId, name: item.name,
+                        iconImageName: iconImageName
                     ))
                 }
             case .route:
@@ -408,7 +419,7 @@ struct ContentView: View {
                     entries.append(MultiItemEntry(
                         type: .route,
                         color: routeRecord.colorHex,
-                        geojson: geometry, startIcon: startIcon, endIcon: endIcon,
+                        geojson: geometry,
                         itemId: itemId, name: item.name,
                         viaWaypoints:     viaWps.isEmpty     ? nil : viaWps,
                         shapingWaypoints: shapingWps.isEmpty ? nil : shapingWps

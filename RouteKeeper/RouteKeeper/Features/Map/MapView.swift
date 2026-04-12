@@ -38,6 +38,9 @@ struct WaypointDisplay: Equatable {
     let colorHex: String
     /// Display name shown as a compact label adjacent to the marker.
     let name: String
+    /// MapLibre image name for the category icon, e.g. `"icon-cafe"`.
+    /// `nil` when the waypoint has no category assigned.
+    let iconImageName: String?
 }
 
 // MARK: - MapCoordinate
@@ -123,13 +126,21 @@ final class MapViewModel {
     }
 
     /// Shows a waypoint marker on the map at the given coordinates with a name label.
-    func showWaypoint(latitude: Double, longitude: Double, colorHex: String, itemId: Int64, name: String) {
+    func showWaypoint(
+        latitude: Double,
+        longitude: Double,
+        colorHex: String,
+        itemId: Int64,
+        name: String,
+        iconImageName: String?
+    ) {
         waypointDisplay = WaypointDisplay(
             itemId: itemId,
             latitude: latitude,
             longitude: longitude,
             colorHex: colorHex,
-            name: name
+            name: name,
+            iconImageName: iconImageName
         )
     }
 
@@ -418,9 +429,16 @@ struct MapView: NSViewRepresentable {
                 let escapedName = wp.name
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
+                // Pass iconImageName as a JS string, or null when absent.
+                let iconArg: String
+                if let icon = wp.iconImageName, !icon.isEmpty {
+                    iconArg = "\"\(icon)\""
+                } else {
+                    iconArg = "null"
+                }
                 webView.evaluateJavaScript(
                     "showWaypoint(\(wp.latitude), \(wp.longitude), \"\(wp.colorHex)\"," +
-                    " \(wp.itemId), \"\(escapedName)\");"
+                    " \(wp.itemId), \"\(escapedName)\", \(iconArg));"
                 )
             } else {
                 webView.evaluateJavaScript("clearWaypoint();")
@@ -444,21 +462,38 @@ struct MapView: NSViewRepresentable {
             }
         }
 
+        /// Fetches every category, renders its SF Symbol as a 40×40 px PNG, and
+        /// calls `registerCategoryIcons()` in JavaScript to pre-register them with
+        /// the MapLibre style.
+        ///
+        /// Must be called on `mapReady` and again on every `mapStyleLoaded` because
+        /// `map.setStyle()` wipes all registered images.
+        func applyRegisteredCategoryIcons(in webView: WKWebView) {
+            Task { @MainActor in
+                let json = await renderCategoryIcons()
+                guard json != "[]" else { return }
+                let escaped = json
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                do {
+                    try await webView.evaluateJavaScript("registerCategoryIcons(\"\(escaped)\");")
+                } catch {
+                    print("registerCategoryIcons error: \(error)")
+                }
+            }
+        }
+
         /// Calls either `showRoute()` or `clearRoute()` in JS depending on
         /// whether `display` is non-nil.
         ///
-        /// When showing a route, start and end marker icons are generated from
-        /// SF Symbols and passed as base64-encoded PNG strings. Intermediate
-        /// waypoints are split into two JSON arrays: announcing via points (numbered
-        /// circles) and shaping points (small filled dots), passed as the fourth and
-        /// sixth arguments respectively.
+        /// Start and end flag icons are pre-registered as `"icon-route-start"` and
+        /// `"icon-route-end"` via `registerCategoryIcons()` at map startup and after
+        /// every style change, so they no longer need to be passed as base64 here.
+        /// Intermediate waypoints are split into two JSON arrays: announcing via
+        /// points (numbered circles) and shaping points (small filled dots), passed
+        /// as the second and fourth arguments respectively.
         func applyRouteDisplay(_ display: RouteDisplay?, in webView: WKWebView) {
             if let display {
-                let startIcon = sfSymbolBase64(
-                    "flag.fill",
-                    color: NSColor(red: 0.0, green: 0.5, blue: 0.15, alpha: 1.0)
-                ) ?? ""
-                let endIcon = sfSymbolBase64("flag.checkered", color: .black) ?? ""
                 let escaped = display.geojson
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
@@ -485,8 +520,8 @@ struct MapView: NSViewRepresentable {
                 let escapedName = display.name
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
-                let js = "showRoute(\"\(escaped)\", \"\(startIcon)\", \"\(endIcon)\"," +
-                         " \"\(viaEscaped)\", \"\(display.colorHex)\", \"\(shapingEscaped)\"," +
+                let js = "showRoute(\"\(escaped)\", \"\(viaEscaped)\"," +
+                         " \"\(display.colorHex)\", \"\(shapingEscaped)\"," +
                          " \(display.itemId), \"\(escapedName)\")"
                 webView.evaluateJavaScript(js)
             } else {
@@ -521,6 +556,8 @@ struct MapView: NSViewRepresentable {
             // JS-side flag ensures the viewport does not move during the restore.
             if type == "mapStyleLoaded" {
                 guard let wv = webView else { return }
+                // Re-register category icons — map.setStyle() wipes all images.
+                applyRegisteredCategoryIcons(in: wv)
                 applyWaypointDisplay(lastWaypointDisplay, in: wv)
                 applyRouteDisplay(lastRouteDisplay, in: wv)
                 applyMultiDisplay(lastMultiDisplay, in: wv)
@@ -530,6 +567,10 @@ struct MapView: NSViewRepresentable {
             if type == "mapReady" {
                 mapIsReady = true
                 guard let wv = webView else { return }
+
+                // Pre-register category icons so they are available when the
+                // first waypoint is selected.
+                applyRegisteredCategoryIcons(in: wv)
 
                 // Flush any route that arrived before the map was ready.
                 if let pending = pendingRouteGeoJSON {
@@ -592,4 +633,88 @@ func sfSymbolBase64(_ name: String, color: NSColor, size: CGFloat = 24) -> Strin
     guard let tiff = image.tiffRepresentation,
           let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
     return bitmap.representation(using: .png, properties: [:])?.base64EncodedString()
+}
+
+// MARK: - Category icon rendering
+
+/// Renders a single SF Symbol at 14 pt into a transparent 40 × 40 px (20 pt @2×)
+/// PNG and returns it as a base64-encoded string, or `nil` on failure.
+///
+/// The icon is centred in the square canvas so it sits cleanly over the white
+/// circle rendered by `showWaypoint` / `showMultipleItems`.
+private func categoryIconBase64(_ symbolName: String) -> String? {
+    let ptSize:   CGFloat = 22
+    let canvasPx: Int     = 84  // 28 pt × 3×
+
+    let config = NSImage.SymbolConfiguration(pointSize: ptSize, weight: .medium)
+        .applying(NSImage.SymbolConfiguration(paletteColors: [NSColor.black]))
+    guard let symbol = NSImage(systemSymbolName: symbolName,
+                               accessibilityDescription: nil)?
+        .withSymbolConfiguration(config) else { return nil }
+
+    guard let rep = NSBitmapImageRep(
+        bitmapDataPlanes:  nil,
+        pixelsWide:        canvasPx,
+        pixelsHigh:        canvasPx,
+        bitsPerSample:     8,
+        samplesPerPixel:   4,
+        hasAlpha:          true,
+        isPlanar:          false,
+        colorSpaceName:    .deviceRGB,
+        bytesPerRow:       0,
+        bitsPerPixel:      0
+    ) else { return nil }
+
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    guard let ctx = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+    NSGraphicsContext.current = ctx
+
+    // Clear to fully transparent.
+    NSColor.clear.setFill()
+    NSRect(x: 0, y: 0, width: canvasPx, height: canvasPx).fill()
+
+    // Draw the symbol centred in the canvas.
+    let sw = symbol.size.width
+    let sh = symbol.size.height
+    let ox = (CGFloat(canvasPx) - sw) / 2
+    let oy = (CGFloat(canvasPx) - sh) / 2
+    symbol.draw(in: NSRect(x: ox, y: oy, width: sw, height: sh))
+
+    return rep.representation(using: .png, properties: [:])?.base64EncodedString()
+}
+
+/// Fetches every category from the database, renders its SF Symbol icon as a
+/// transparent PNG, and returns a JSON array of
+/// `{ "name": "icon-<category>", "base64Png": "..." }` objects.
+///
+/// Also includes the two fixed route flag icons:
+///   - `"icon-route-start"` from `flag.fill`
+///   - `"icon-route-end"` from `flag.checkered`
+///
+/// The result is passed directly to `registerCategoryIcons()` in JavaScript.
+/// Returns `"[]"` if no categories exist and no flag icons can be rendered.
+func renderCategoryIcons() async -> String {
+    let categories = (try? await DatabaseManager.shared.fetchCategories()) ?? []
+    var entries: [[String: String]] = []
+
+    // Fixed route flag icons — always included.
+    if let b64 = categoryIconBase64("flag.fill") {
+        entries.append(["name": "icon-route-start", "base64Png": b64])
+    }
+    if let b64 = categoryIconBase64("flag.checkered") {
+        entries.append(["name": "icon-route-end", "base64Png": b64])
+    }
+
+    for cat in categories {
+        guard let b64 = categoryIconBase64(cat.iconName) else { continue }
+        entries.append([
+            "name":      "icon-\(cat.name.lowercased())",
+            "base64Png": b64
+        ])
+    }
+    guard !entries.isEmpty,
+          let data = try? JSONSerialization.data(withJSONObject: entries),
+          let json = String(data: data, encoding: .utf8) else { return "[]" }
+    return json
 }

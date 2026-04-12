@@ -166,6 +166,10 @@ struct NewRouteSheet: View {
             }
             Task {
                 await viewModel.loadAvailableWaypoints()
+                // TODO: [REFACTOR] Views should not call DatabaseManager directly.
+                // Routing profile loading belongs in LibraryViewModel (or a dedicated
+                // RouteViewModel). Move fetchRoutingProfiles() and fetchDefaultRoutingProfile()
+                // calls into the view model layer.
                 do {
                     profiles = try await DatabaseManager.shared.fetchRoutingProfiles()
                     if let defaultProfile = try await DatabaseManager.shared.fetchDefaultRoutingProfile() {
@@ -268,6 +272,10 @@ struct NewRouteSheet: View {
         }
     }
 
+    // TODO: [REFACTOR] The routing criteria UI (profileSection, criteriaToggle,
+    // routeOptimisationRow, pickerBinding, criteriaModified) is duplicated almost
+    // identically in RoutePropertiesSheet. Extract to a shared `RoutingCriteriaView`
+    // component that accepts bindings for all five criteria flags plus profiles.
     private var profileSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Routing Profile", systemImage: "slider.horizontal.3")
@@ -340,6 +348,9 @@ struct NewRouteSheet: View {
         }
     }
 
+    // TODO: [REFACTOR] The list-assignment UI (listsSection below) is duplicated identically
+    // in NewWaypointSheet and EditWaypointSheet. Extract to a shared `ListAssignmentView`
+    // component in Shared/ that accepts the allLists array and a Binding<Set<Int64>>.
     private var listsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Add to Lists", systemImage: "list.bullet")

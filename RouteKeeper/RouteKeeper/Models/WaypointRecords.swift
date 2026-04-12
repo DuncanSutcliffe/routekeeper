@@ -84,6 +84,9 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     /// Populated by the database on insert; read back when fetched.
     var createdAt: String = ""
 
+    // TODO: [REFACTOR] "#E8453C" (waypoint default red) is hardcoded here and in the
+    // database schema DEFAULT, and mirrored in the UI sheets. Extract to a named constant
+    // (e.g. `WaypointDefaultColorHex`) alongside the route colour constant.
     init(
         itemId: Int64,
         name: String,

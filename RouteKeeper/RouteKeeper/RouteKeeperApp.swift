@@ -112,6 +112,7 @@ struct RouteKeeperApp: App {
         WindowGroup {
             ContentView()
         }
+        // TODO: [REFACTOR] Hardcoded window size — extract to a named constant or configuration
         .defaultSize(width: 1200, height: 750)
         .commands {
             RouteKeeperCommands()

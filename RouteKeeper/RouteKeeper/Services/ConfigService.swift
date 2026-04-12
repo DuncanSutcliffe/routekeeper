@@ -18,6 +18,11 @@ enum ConfigService {
     ///
     /// Returns an empty string and logs a warning if Config.plist is missing
     /// or does not contain the expected key.
+    // TODO: [REFACTOR] mapTilerAPIKey is a computed property that performs file I/O on
+    // every access (Bundle lookup + plist parse). It should be a `static let` (lazily
+    // cached once) to avoid redundant disk reads.
+    // TODO: [REFACTOR] NSDictionary(contentsOf:) is a legacy Objective-C API. Use
+    // PropertyListDecoder or PropertyListSerialization for idiomatic Swift plist reading.
     static var mapTilerAPIKey: String {
         guard let url = Bundle.main.url(forResource: "Config", withExtension: "plist"),
               let dict = NSDictionary(contentsOf: url),

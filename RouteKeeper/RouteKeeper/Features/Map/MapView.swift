@@ -67,6 +67,10 @@ struct RouteDisplay: Equatable {
 
 // MARK: - MapViewModel
 
+// TODO: [REFACTOR] MapViewModel is defined in MapView.swift alongside the NSViewRepresentable.
+// It should live in its own file (Features/Map/MapViewModel.swift) so the view and
+// view-model are easy to locate and reason about independently.
+
 /// Drives the map's displayed state.
 ///
 /// ContentView calls ``drawRoute(geojson:)``, ``flyTo(longitude:latitude:zoom:)``,
@@ -77,6 +81,13 @@ struct RouteDisplay: Equatable {
 @MainActor
 final class MapViewModel {
 
+    // TODO: [REFACTOR] routeGeoJSON and drawRoute() appear to be legacy dead code from the
+    // original route-drawing mechanism, superseded by routeDisplay / showRoute(). Verify
+    // ContentView never calls mapViewModel.drawRoute(), then remove routeGeoJSON, drawRoute(),
+    // and the corresponding updateNSView branch that checks coordinator.lastRouteGeoJSON.
+    //
+    // TODO: [REFACTOR] The initial map center [-2.0, 54.0] and zoom 5.0 are hardcoded here
+    // and duplicated verbatim in MapLibreMap.html. Extract to a named constant.
     // Accessed by MapView in updateNSView via the properties passed from ContentView.
     var routeGeoJSON: String? = nil
     var centerLon: Double = -2.0
@@ -179,6 +190,9 @@ struct MapView: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: makeConfiguration(coordinator: context.coordinator))
 
         // Suppress the white background flash before the map tiles load.
+        // TODO: [REFACTOR] KVC access via setValue(_:forKey:) is fragile — the key name
+        // could change across WebKit versions without a compile-time error. Check for a
+        // public WKWebView API or cast to WKWebView subclass property if one becomes available.
         webView.setValue(false, forKey: "drawsBackground")
 
         guard let htmlURL = Bundle.main.url(forResource: "MapLibreMap", withExtension: "html") else {
@@ -301,6 +315,9 @@ struct MapView: NSViewRepresentable {
         // mapStyle is read from app_settings before the map first appears, so this
         // always reflects the user's saved choice on first render.
         let apiKey = ConfigService.mapTilerAPIKey
+        // TODO: [REFACTOR] String interpolation into JavaScript source is unsafe if
+        // mapStyle or apiKey contain quotes or special characters. Encode values as
+        // JSON strings (e.g. via JSONEncoder) before embedding them in the script source.
         let script = WKUserScript(
             source: "var mapStyleName = \"\(mapStyle)\"; var mapApiKey = \"\(apiKey)\";" +
                     " var mapScaleUnit = \"\(mapScaleUnit)\";",
@@ -379,6 +396,9 @@ struct MapView: NSViewRepresentable {
             executeDrawRoute(geojson: geojson, in: webView)
         }
 
+        // TODO: [REFACTOR] Manual string escaping via replacingOccurrences is fragile.
+        // Use JSONSerialization to produce a properly escaped JS string literal instead,
+        // or pass data via WKScriptMessage rather than string injection.
         private func executeDrawRoute(geojson: String, in webView: WKWebView) {
             let escaped = geojson
                 .replacingOccurrences(of: "\\", with: "\\\\")
@@ -451,6 +471,12 @@ struct MapView: NSViewRepresentable {
 
         // MARK: WKScriptMessageHandler
 
+        // TODO: [REFACTOR] JS message types are compared as raw strings. Replace with an
+        // enum (e.g. MapBridgeMessage) so new message types get compile-time coverage and
+        // typos are caught at the call site rather than silently no-oping at runtime.
+        //
+        // TODO: [REFACTOR] print("JS → Swift: \(body)") should be removed or replaced with
+        // os.log at a debug level before shipping; console output is not suitable for production.
         func userContentController(
             _ userContentController: WKUserContentController,
             didReceive message: WKScriptMessage

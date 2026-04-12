@@ -7,6 +7,9 @@
 //  inside the actor.
 //
 
+// TODO: [REFACTOR] RoutingService.swift is in Features/Routing/ but all other services live
+// in Services/ (GeocodingService, ConfigService). Move to Services/ for consistency.
+
 import Foundation
 import CoreLocation
 
@@ -47,6 +50,11 @@ actor RoutingService {
 
     static let shared = RoutingService()
 
+    // TODO: [REFACTOR] Force-unwrap URL literal. Use a `let url: URL = ...` with a compile-time
+    // string literal or move to ConfigService so it can be overridden for testing.
+    // TODO: [REFACTOR] The Valhalla endpoint URL is hardcoded here. Per CLAUDE.md this is a
+    // public OSM instance that will be replaced before release — move it to ConfigService or
+    // a constants file so a single change updates all references.
     private let endpoint = URL(string: "https://valhalla1.openstreetmap.de/route")!
     private let session = URLSession.shared
 
@@ -57,6 +65,10 @@ actor RoutingService {
 
     // MARK: - Public API
 
+    // TODO: [REFACTOR] calculateRoute(from:to:) (2-argument version) appears to be dead code.
+    // All current callers use calculateRoute(through:avoidMotorways:...) instead.
+    // Remove this method along with its supporting helpers: cacheKey(from:to:),
+    // buildRequest(from:to:), and the `cache` dictionary (which also has no eviction strategy).
     /// Requests a motorcycle route from `origin` to `destination`.
     ///
     /// - Returns: A compact GeoJSON FeatureCollection string containing a

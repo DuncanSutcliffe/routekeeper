@@ -283,6 +283,8 @@ struct NewWaypointSheet: View {
 
     // MARK: - List assignment section
 
+    // TODO: [REFACTOR] listsSection UI is duplicated in EditWaypointSheet and NewRouteSheet.
+    // Extract to a shared ListAssignmentView in Shared/.
     private var listsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Add to Lists", systemImage: "list.bullet")
@@ -342,6 +344,10 @@ struct NewWaypointSheet: View {
         fetchElevation(latitude: result.latitude, longitude: result.longitude)
     }
 
+    // TODO: [REFACTOR] fetchElevation() is duplicated verbatim in EditWaypointSheet.
+    // Extract to a shared ElevationService (in Services/) with a single async method
+    // fetchElevation(latitude:longitude:) -> Double? so both sheets call the service.
+    // The hardcoded MapTiler URL should also be centralised there.
     /// Fetches the elevation for the given coordinate from the MapTiler Elevation API.
     ///
     /// Updates `confirmedElevation` on success. Fails silently on any error

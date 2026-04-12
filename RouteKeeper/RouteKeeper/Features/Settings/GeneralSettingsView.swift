@@ -8,6 +8,10 @@
 import SwiftUI
 
 struct GeneralSettingsView: View {
+    // TODO: [REFACTOR] PreferencesManager.shared is accessed via a manually constructed
+    // Binding. With @Observable, use @Bindable var prefs = PreferencesManager.shared
+    // and bind directly: $prefs.units. The manual get/set Binding is boilerplate that
+    // @Bindable eliminates.
     var body: some View {
         Form {
             Picker("Units", selection: Binding(

@@ -16,6 +16,10 @@ struct ExportFormatSheet: View {
     /// Called with the chosen format after the sheet is dismissed.
     let onExport: (GPXFormat) -> Void
 
+    // TODO: [REFACTOR] Accessing PreferencesManager.shared in a @State property initializer
+    // runs at struct-creation time, before the view appears. This is technically fine for
+    // a singleton read, but the intent is clearer with .onAppear { selectedFormat = ... }
+    // or by passing the initial value as a parameter.
     @State private var selectedFormat: GPXFormat = PreferencesManager.shared.defaultExportFormat == "garmin"
         ? .garmin : .standard
 

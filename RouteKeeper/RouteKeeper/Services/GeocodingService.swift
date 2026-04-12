@@ -51,6 +51,9 @@ final class GeocodingService {
     /// Nominatim reverse geocoding. Returns `nil` if the request fails or
     /// produces no parseable result.
     func reverseGeocode(latitude: Double, longitude: Double) async -> GeocodingResult? {
+        // TODO: [REFACTOR] Force-unwrap on URLComponents(string:) — this will crash at
+        // runtime if the constant URL string is ever malformed. Use a guard or make the
+        // URL a module-level constant validated at compile time.
         var components = URLComponents(string: "https://nominatim.openstreetmap.org/reverse")!
         components.queryItems = [
             URLQueryItem(name: "lat",            value: String(latitude)),
@@ -86,6 +89,10 @@ final class GeocodingService {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return [] }
 
+        // TODO: [REFACTOR] Nominatim base URLs and the result limit "8" are hardcoded here
+        // and in reverseGeocode(). Extract to named constants or ConfigService so they can
+        // be changed in one place.
+        // TODO: [REFACTOR] Force-unwrap on URLComponents(string:) — see comment in reverseGeocode().
         var components = URLComponents(string: "https://nominatim.openstreetmap.org/search")!
         components.queryItems = [
             URLQueryItem(name: "q",              value: trimmed),

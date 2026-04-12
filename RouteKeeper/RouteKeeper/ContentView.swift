@@ -9,6 +9,11 @@
 import AppKit
 import SwiftUI
 
+// TODO: [REFACTOR] ContentView lacks a documentation comment explaining its role in the architecture
+
+// TODO: [REFACTOR] MultiItemEntry is a map-layer DTO that belongs in Features/Map/ or Models/,
+// not embedded inside ContentView
+
 // MARK: - MultiItemEntry
 
 /// Data transfer object for serialising a single library item to the
@@ -80,6 +85,8 @@ struct ContentView: View {
 
     private var mapSelectionKey: MapSelectionKey {
         MapSelectionKey(
+            // TODO: [REFACTOR] `selectedList?.id ?? nil` is redundant — `?.` already
+            // returns Optional, the `?? nil` coalesce has no effect. Simplify to `selectedList?.id`
             selectedListId: selectedList?.id ?? nil,
             selectedItemIds: Set(selectedItems.compactMap(\.id))
         )
@@ -212,6 +219,8 @@ struct ContentView: View {
 
     /// Shows one waypoint marker, one route line (with stats and via circles), or
     /// clears the map for tracks and nil — identical to the pre-Increment-24 behaviour.
+    // TODO: [REFACTOR] handleSingleItemSelection() calls DatabaseManager directly from a View.
+    // This data fetching and map-state coordination belongs in a ViewModel, not ContentView.
     private func handleSingleItemSelection(_ item: Item) async {
         guard let itemId = item.id else {
             mapViewModel.clearWaypoint()
@@ -282,6 +291,8 @@ struct ContentView: View {
 
     /// Returns the items belonging to `list`, using `fetchUnclassifiedItems()`
     /// for the sentinel (id == −1) and the normal fetch otherwise.
+    // TODO: [REFACTOR] fetchItemsForList() calls DatabaseManager directly from a View.
+    // Data fetching belongs in LibraryViewModel — ContentView should delegate to it.
     private func fetchItemsForList(_ list: RouteList) async -> [Item] {
         do {
             if list.id == -1 {
@@ -299,6 +310,8 @@ struct ContentView: View {
     ///
     /// Generates start/end flag icons once and embeds them in every route entry.
     /// Items whose geometry is missing (NULL in the DB) are silently skipped.
+    // TODO: [REFACTOR] buildMultiItemsJson() is map-presentation logic that belongs in
+    // MapViewModel, not in ContentView. Move it there alongside handleMultiItemDisplay().
     private func buildMultiItemsJson(_ items: [Item]) async -> String {
         let startIcon = sfSymbolBase64(
             "flag.fill",

@@ -86,6 +86,9 @@ struct RouteWaypointSheet: View {
             Text("Route calculation failed. Please check your internet " +
                  "connection and try again.")
         }
+        // TODO: [REFACTOR] Task.yield() before a database fetch is a workaround for a
+        // known timing bug (opening the route editor as the very first action after launch
+        // returns empty points). Deferred per CLAUDE.md — revisit when addressing that bug.
         .task {
             do {
                 await Task.yield()
@@ -100,6 +103,9 @@ struct RouteWaypointSheet: View {
 
     // MARK: - Save
 
+    // TODO: [REFACTOR] save() calls DatabaseManager and RoutingService directly from a View.
+    // This logic — fetch criteria, recalculate route, persist result — belongs in a
+    // ViewModel or service layer, not in a sheet view.
     private func save() {
         isSaving = true
         Task {

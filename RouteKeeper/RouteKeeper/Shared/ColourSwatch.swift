@@ -8,6 +8,11 @@
 
 import SwiftUI
 
+// TODO: [REFACTOR] The codebase mixes British ("colour", "ColourSwatch", "waypointPresetColours")
+// and American ("colorHex", "selectedColorHex") spellings throughout. Pick one convention
+// and apply it consistently. The database columns use "color_hex" (American), so American
+// spelling is the more natural choice for the Swift layer too.
+
 // MARK: - Preset colour palettes
 
 /// Preset colours shown in waypoint creation and editing sheets.

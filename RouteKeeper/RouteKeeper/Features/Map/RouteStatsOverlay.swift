@@ -9,6 +9,10 @@
 
 import SwiftUI
 
+// TODO: [REFACTOR] RouteStatsOverlay reads PreferencesManager.shared.units directly,
+// creating an implicit singleton dependency inside a View. The formatted strings
+// depend on runtime state that changes rarely; passing `units: String` as a parameter
+// would make the dependency explicit and the view testable in isolation.
 struct RouteStatsOverlay: View {
     let distanceKm: Double
     let durationSeconds: Int

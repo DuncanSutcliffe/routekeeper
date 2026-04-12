@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct ExportSettingsView: View {
+    // TODO: [REFACTOR] Same manual Binding pattern as GeneralSettingsView — use @Bindable.
     var body: some View {
         Form {
             Picker("Default GPX Format", selection: Binding(

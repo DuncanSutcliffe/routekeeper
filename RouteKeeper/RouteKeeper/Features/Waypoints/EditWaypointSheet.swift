@@ -72,6 +72,9 @@ struct EditWaypointSheet: View {
             }
     }
 
+    // TODO: [REFACTOR] canSubmit requires at least one list to be selected (!selectedListIDs.isEmpty).
+    // NewWaypointSheet has no such requirement — a waypoint can be created with no list assignment.
+    // This inconsistency should be resolved: either enforce the rule in both sheets or neither.
     private var canSubmit: Bool {
         isLocationConfirmed &&
         !waypointName.trimmingCharacters(in: .whitespaces).isEmpty &&
@@ -386,6 +389,8 @@ struct EditWaypointSheet: View {
         }
     }
 
+    // TODO: [REFACTOR] fetchElevation() here is an exact duplicate of the same method in
+    // NewWaypointSheet. Extract to ElevationService in Services/ — see NewWaypointSheet note.
     /// Fetches the elevation for the given coordinate from the MapTiler Elevation API.
     ///
     /// Updates `confirmedElevation` on success. Fails silently — elevation is

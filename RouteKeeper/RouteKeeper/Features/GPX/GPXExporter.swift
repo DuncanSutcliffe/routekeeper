@@ -173,6 +173,9 @@ enum GPXExporter {
         if let ele = pt.elevation {
             el += "      <ele>\(String(format: "%.1f", ele))</ele>\n"
         }
+        // TODO: [REFACTOR] The Garmin shaping-point subclass byte string
+        // "000000000000FFFFFFFFFFFFFFFFFFFFFFFF" is a magic constant. Give it a
+        // named constant (e.g. garminShapingPointSubclass) so its purpose is clear.
         if needsExtensions {
             el += "      <extensions>\n"
             el += "        <gpxx:RoutePointExtension>\n"

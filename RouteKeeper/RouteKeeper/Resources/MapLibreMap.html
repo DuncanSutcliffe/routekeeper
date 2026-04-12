@@ -57,6 +57,8 @@
         // JavaScript → Swift messages are sent via:
         //   window.webkit.messageHandlers.routekeeper.postMessage({ ... })
         // ---------------------------------------------------------------------------
+        // TODO: [REFACTOR] handleSwiftMessage() is defined but never called from Swift or JS.
+        // It appears to be dead scaffolding from an earlier architecture. Remove it.
         function handleSwiftMessage(name, payload) {
             console.log("Swift message:", name, payload);
         }

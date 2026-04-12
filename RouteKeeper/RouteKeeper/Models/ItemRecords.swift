@@ -94,6 +94,9 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
 
     /// Foreign key to `items.id`; also the primary key of this table.
     var itemId: Int64
+    // TODO: [REFACTOR] `geojson` is a legacy field predating the `geometry` column (schema v5).
+    // Verify it is no longer written or read, then drop the column in a new migration and
+    // remove this property.
     /// Calculated GeoJSON LineString from the Valhalla response.
     var geojson: String?
     /// GeoJSON FeatureCollection string stored by the route-creation flow (schema v5).
@@ -111,6 +114,10 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
     /// CSS hex colour string used to draw this route on the map.
     var colorHex: String
 
+    // TODO: [REFACTOR] "#1A73E8" (route default blue) is hardcoded here and in
+    // DatabaseManager.createRoute(), LibraryViewModel.createRoute(), and
+    // ContentView.handleSingleItemSelection(). Extract to a named constant in ColourSwatch.swift
+    // or a dedicated Constants file (e.g. `RouteDefaultColorHex`).
     init(itemId: Int64, routingProfile: String = "motorcycle") {
         self.itemId = itemId
         self.routingProfile = routingProfile

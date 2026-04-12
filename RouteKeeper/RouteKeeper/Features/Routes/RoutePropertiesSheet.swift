@@ -288,6 +288,13 @@ struct RoutePropertiesSheet: View {
 
     // MARK: - Actions
 
+    // TODO: [REFACTOR] loadData() calls DatabaseManager directly from a View sheet.
+    // This belongs in a ViewModel (RouteViewModel or similar). The sheet should receive
+    // a ViewModel that owns the data-loading and save operations.
+    //
+    // TODO: [REFACTOR] The criteriaModified computed property, pickerBinding, criteriaToggle,
+    // and routeOptimisationRow here are near-identical copies of the same code in
+    // NewRouteSheet — consolidate into a shared RoutingCriteriaView component.
     private func loadData() async {
         do {
             // Load profiles and the route's stored criteria in parallel.

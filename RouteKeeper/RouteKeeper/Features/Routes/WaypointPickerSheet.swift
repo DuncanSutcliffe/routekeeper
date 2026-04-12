@@ -56,6 +56,10 @@ struct WaypointPickerSheet: View {
             }
         }
         .frame(minWidth: 360, minHeight: 300)
+        // TODO: [REFACTOR] WaypointPickerSheet calls DatabaseManager directly from a View.
+        // Waypoint fetching belongs in a ViewModel or in LibraryViewModel (which already
+        // has loadAvailableWaypoints()). Also uses Task.yield() as a timing workaround —
+        // see the known timing bug noted in RouteWaypointSheet.
         .task {
             do {
                 await Task.yield()

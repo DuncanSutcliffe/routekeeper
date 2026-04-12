@@ -8,6 +8,9 @@
 
 import SwiftUI
 
+// TODO: [REFACTOR] RoutingProfilesSheet has no ViewModel — all state management, data loading,
+// and database writes are handled directly in the View. Extract to a RoutingProfilesViewModel
+// (@Observable) to conform to the MVVM pattern used elsewhere.
 struct RoutingProfilesSheet: View {
 
     @State private var profiles: [RoutingProfile] = []
@@ -303,7 +306,9 @@ struct RoutingProfilesSheet: View {
                 if let inserted = profiles.first(where: { $0.name == name }) {
                     selectedProfileId = inserted.id
                     editingName       = inserted.name
-                    // Brief delay so the List row renders before focusing.
+                    // TODO: [REFACTOR] Task.sleep(nanoseconds: 50_000_000) is a timing
+                    // workaround to delay focus until the List row has rendered. Replace
+                    // with a proper @FocusState trigger driven by the selection change.
                     try? await Task.sleep(nanoseconds: 50_000_000)
                     nameFieldFocused  = true
                 }

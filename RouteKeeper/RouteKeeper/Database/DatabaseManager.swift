@@ -22,6 +22,11 @@ enum DatabaseManagerError: Error {
 
 // MARK: - WaypointSummary
 
+// TODO: [REFACTOR] WaypointSummary is a model/DTO type that does not belong inside
+// DatabaseManager.swift. Move it to Models/ (e.g. alongside WaypointRecords.swift).
+// Also consider whether WaypointSummary is truly necessary: Waypoint already has
+// the same fields; using it directly would eliminate a parallel type.
+
 /// Lightweight projection used by `WaypointPickerSheet` to list available
 /// waypoints without pulling full `Waypoint` records.
 struct WaypointSummary: Identifiable, Hashable {
@@ -263,6 +268,8 @@ actor DatabaseManager {
         }
     }
 
+    // TODO: [REFACTOR] fetchRouteGeometry() retrieves only `geometry`; verify it's still
+    // called. If all callers have switched to fetchRouteRecord(), this is dead code.
     /// Returns the stored GeoJSON geometry string for the given route item id,
     /// or `nil` if no row exists or the geometry column is NULL.
     func fetchRouteGeometry(itemId: Int64) async throws -> String? {
@@ -304,6 +311,9 @@ actor DatabaseManager {
         }
     }
 
+    // TODO: [REFACTOR] fetchAllWaypoints() returning [WaypointSummary] and
+    // fetchWaypointsWithCoordinates() returning [Waypoint] are near-duplicates.
+    // Consider consolidating on fetchWaypointsWithCoordinates() and removing WaypointSummary.
     /// Returns a lightweight summary of every waypoint that has coordinates,
     /// ordered by name.  Used by `WaypointPickerSheet` in the route-edit flow.
     func fetchAllWaypoints() async throws -> [WaypointSummary] {

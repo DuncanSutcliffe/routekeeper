@@ -72,6 +72,8 @@ final class LibraryViewModel {
         await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
     }
 
+    // TODO: [REFACTOR] load() is a public method but has no documentation comment.
+    // reload() (which calls it) has a doc comment but load() itself does not.
     func load(sortColumn: String = "sort_order", ascending: Bool = true) async {
         currentSortColumn = sortColumn
         currentSortAscending = ascending

@@ -24,6 +24,10 @@ private extension UTType {
     /// Uses `importedAs` rather than `exportedAs` so that no Info.plist
     /// declaration is required — this type is private to the app and is
     /// never exported to the system UTType registry.
+    // TODO: [REFACTOR] Comment says `importedAs` but the code uses `exportedAs`.
+    // exportedAs declares the type as belonging to this app and writes to the system
+    // UTType registry (requires Info.plist). importedAs treats it as an external type.
+    // Align the code and comment — use importedAs if truly private to the app.
     static let routeKeeperItem = UTType(exportedAs: "com.routekeeper.libraryitem")
 }
 
@@ -221,6 +225,10 @@ struct LibrarySidebarView: View {
                                 } label: {
                                     Label("New Waypoint", systemImage: "mappin.and.ellipse")
                                 }
+                                // TODO: [REFACTOR] Context menu blocks call DatabaseManager
+                                // directly from a View. These count/existence checks
+                                // (fetchListItemCount, folderHasItems, fetchItemIdsForList)
+                                // should be moved into LibraryViewModel methods.
                                 if list.id != -1 {
                                     Divider()
                                     Button("Export GPX…") {
@@ -406,6 +414,10 @@ struct LibrarySidebarView: View {
                 preselectedListID: presentation.preselectedListID
             )
         }
+        // TODO: [REFACTOR] The "selectedItems cycle" pattern — clear, sleep 50 ms, restore —
+        // is duplicated here for routePropertiesTarget, routeWaypointTarget, and
+        // waypointEditTarget. Extract to a helper method, and consider a cleaner mechanism
+        // that doesn't rely on a sleep (e.g. a dedicated refresh signal from the ViewModel).
         .sheet(item: $routePropertiesTarget) { identity in
             RoutePropertiesSheet(
                 routeItemId: identity.id,
@@ -966,6 +978,10 @@ struct LibrarySidebarView: View {
 
 // MARK: - Double-click handler
 
+// TODO: [REFACTOR] DoubleClickHandler is a reusable NSViewRepresentable that is not
+// specific to the library sidebar. Move it to Shared/ so it can be used elsewhere
+// without copying it. The cursor() view extension below is similarly reusable.
+
 /// An invisible `NSView` background that intercepts AppKit double-click events
 /// and fires a closure, leaving SwiftUI's own gesture recogniser stack (and
 /// therefore list-row selection) completely undisturbed.
@@ -997,6 +1013,10 @@ private struct DoubleClickHandler: NSViewRepresentable {
 
 // MARK: - Color from hex string
 
+// TODO: [REFACTOR] Color(itemHex:) here is a near-duplicate of Color(hex:) in ColourSwatch.swift.
+// The only differences are the argument label and the fallback colour (0x888888 vs 0xFF0000).
+// Consolidate into a single Color(hex:) extension in ColourSwatch.swift (or a new
+// Shared/Extensions.swift) with a consistent fallback, and remove this private copy.
 private extension Color {
     /// Initialises a `Color` from a CSS hex string such as `"#E8453C"`.
     init(itemHex hex: String) {

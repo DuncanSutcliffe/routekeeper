@@ -38,6 +38,9 @@ struct RouteResult {
     let distanceKm: Double
     /// Total route duration in seconds, from Valhalla's `summary.time`.
     let durationSeconds: Int
+    /// JSON-encoded array of elevation samples in metres, one every 30 m along
+    /// the route. `nil` when Valhalla returns no elevation data.
+    let elevationProfile: String?
 }
 
 // MARK: - RoutingService
@@ -143,7 +146,8 @@ actor RoutingService {
             locations: locations,
             costing: "motorcycle",
             directionsOptions: .init(units: "km"),
-            costingOptions: .init(motorcycle: motorcycleOptions)
+            costingOptions: .init(motorcycle: motorcycleOptions),
+            elevationInterval: 30
         )
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -170,10 +174,19 @@ actor RoutingService {
         guard !allCoords.isEmpty else {
             throw RoutingError.noLegsInResponse
         }
+        // Concatenate elevation samples from all legs; store nil if none returned.
+        let allElevations = vResponse.trip.legs.flatMap { $0.elevation ?? [] }
+        var elevationProfile: String? = nil
+        if !allElevations.isEmpty,
+           let jsonData = try? JSONSerialization.data(withJSONObject: allElevations),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            elevationProfile = jsonString
+        }
         return RouteResult(
-            geometry:        Self.toGeoJSON(allCoords),
-            distanceKm:      vResponse.trip.summary.length,
-            durationSeconds: Int(vResponse.trip.summary.time)
+            geometry:         Self.toGeoJSON(allCoords),
+            distanceKm:       vResponse.trip.summary.length,
+            durationSeconds:  Int(vResponse.trip.summary.time),
+            elevationProfile: elevationProfile
         )
     }
 
@@ -204,7 +217,8 @@ actor RoutingService {
             costingOptions: .init(motorcycle: .init(
                 useHighways: nil, useTolls: nil,
                 useTrails: nil, useFerry: nil, shortest: nil
-            ))
+            )),
+            elevationInterval: nil
         )
 
         var request = URLRequest(url: endpoint)
@@ -278,11 +292,14 @@ private struct ValhallaRequest: Encodable {
     let costing: String
     let directionsOptions: DirectionsOptions
     let costingOptions: CostingOptions
+    /// Ask Valhalla to return one elevation sample every N metres along the route.
+    let elevationInterval: Int?
 
     enum CodingKeys: String, CodingKey {
         case locations, costing
-        case directionsOptions = "directions_options"
-        case costingOptions    = "costing_options"
+        case directionsOptions  = "directions_options"
+        case costingOptions     = "costing_options"
+        case elevationInterval  = "elevation_interval"
     }
 
     struct Location: Encodable {
@@ -349,5 +366,8 @@ private struct ValhallaResponse: Decodable {
 
     struct Leg: Decodable {
         let shape: String
+        /// Elevation samples in metres, one per `elevation_interval` metres.
+        /// Present only when `elevation_interval` was set in the request.
+        let elevation: [Double]?
     }
 }

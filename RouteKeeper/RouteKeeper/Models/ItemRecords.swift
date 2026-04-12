@@ -110,6 +110,11 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
     var shortestRoute: Bool
     /// CSS hex colour string used to draw this route on the map.
     var colorHex: String
+    /// JSON-encoded array of elevation samples in metres, one every 30 m.
+    /// `nil` when no elevation data was returned by Valhalla.
+    var elevationProfile: String?
+    /// Free-form notes attached to this route.
+    var notes: String?
 
     init(itemId: Int64, routingProfile: String = "motorcycle") {
         self.itemId = itemId
@@ -136,6 +141,8 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
         case avoidFerries   = "avoid_ferries"
         case shortestRoute  = "shortest_route"
         case colorHex       = "color_hex"
+        case elevationProfile = "elevation_profile"
+        case notes
     }
 }
 

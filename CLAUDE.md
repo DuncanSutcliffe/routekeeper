@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–27 complete.**
+**Increments 1–29 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -247,9 +247,11 @@ with simultaneous map display of all selected items and auto-fit bounds,
 right-click on the map to add a waypoint directly at the clicked
 coordinate, a floating map style switcher (Streets / Satellite / Topo)
 that persists the selection across launches via app_settings, a native
-MapLibre scale bar whose units track the existing units preference, and
+MapLibre scale bar whose units track the existing units preference,
 per-route colour selection with eight preset swatches stored as
-color_hex in the routes table and applied to all display paths.
+color_hex in the routes table and applied to all display paths, and
+non-announcing (shaping) route point support with bell/bell.slash toggle
+in the route editor and distinct solid-dot map rendering.
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -317,4 +319,27 @@ multi-display code path now passes each route's color_hex individually
 via a feature property, and showMultipleItems uses a data-driven
 ["get", "color"] expression instead of the previously hardcoded value.
 
-**Next step: Increment 29 — TBD.**
+Increment 29 detail: The announces_arrival column in route_points
+(INTEGER NOT NULL DEFAULT 0) is now exposed in the UI. In RouteEditSheet,
+every intermediate point row has a bell / bell.slash toggle button; bell
+indicates an announcing via point, bell.slash indicates a shaping point.
+Start and End rows do not have this control. When a point is toggled to
+non-announcing, its row label changes from "Via N" to "Shaping". The
+Via N numbering sequence counts only announcing intermediate points, so
+shaping points don't affect the numbering of surrounding via points.
+announces_arrival is written to the database on Save alongside the
+existing route point persistence logic; Start and End are always written
+as announcing regardless of any toggle state. On the map, shaping points
+render as solid filled dots (radius 7.5) in the route's line colour via
+a new route-shaping-circles layer on route-shaping-source; these are
+visually distinct from the numbered white circles used for via points.
+ViaWaypoint gained an announcesArrival field; applyRouteDisplay splits
+the intermediate waypoints into announcing and shaping arrays and passes
+them as the fourth and sixth arguments to showRoute respectively.
+clearRoute removes both layers and sources. The Garmin GPX export path
+already correctly produced a gpxx:RoutePointExtension block with the
+standard Garmin Subclass hex string for shaping points; announcing via
+points have no extensions block. A confirming comment was added to
+GPXExporter.swift.
+
+**Next step: Increment 30 — TBD.**

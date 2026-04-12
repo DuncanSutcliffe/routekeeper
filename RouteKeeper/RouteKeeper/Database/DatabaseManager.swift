@@ -359,7 +359,8 @@ actor DatabaseManager {
         avoidUnpaved: Bool = false,
         avoidFerries: Bool = false,
         shortestRoute: Bool = false,
-        colorHex: String = "#1A73E8"
+        colorHex: String = "#1A73E8",
+        elevationProfile: String? = nil
     ) async throws -> Int64 {
         let q = try requireQueue()
         return try await q.write { db in
@@ -377,13 +378,14 @@ actor DatabaseManager {
                 sql: "INSERT INTO routes " +
                      "(item_id, routing_profile, geometry, distance_km, duration_seconds, " +
                      "applied_profile_name, avoid_motorways, avoid_tolls, " +
-                     "avoid_unpaved, avoid_ferries, shortest_route, color_hex) " +
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     "avoid_unpaved, avoid_ferries, shortest_route, color_hex, " +
+                     "elevation_profile) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 arguments: [itemId, "motorcycle", geometry, distanceKm, durationSeconds,
                             appliedProfileName,
                             avoidMotorways ? 1 : 0, avoidTolls ? 1 : 0,
                             avoidUnpaved ? 1 : 0, avoidFerries ? 1 : 0,
-                            shortestRoute ? 1 : 0, colorHex]
+                            shortestRoute ? 1 : 0, colorHex, elevationProfile]
             )
 
             // 3. Insert route_points for start (seq 1) and end (seq 2) if supplied.
@@ -433,7 +435,8 @@ actor DatabaseManager {
         routeItemId: Int64,
         geometry: String,
         distanceKm: Double?,
-        durationSeconds: Int?
+        durationSeconds: Int?,
+        elevationProfile: String? = nil
     ) async throws {
         let q = try requireQueue()
         try await q.write { db in
@@ -470,10 +473,12 @@ actor DatabaseManager {
                     UPDATE routes
                     SET geometry = ?,
                         distance_km = ?,
-                        duration_seconds = ?
+                        duration_seconds = ?,
+                        elevation_profile = ?
                     WHERE item_id = ?
                     """,
-                arguments: [geometry, distanceKm, durationSeconds, routeItemId]
+                arguments: [geometry, distanceKm, durationSeconds,
+                            elevationProfile, routeItemId]
             )
         }
     }
@@ -487,15 +492,18 @@ actor DatabaseManager {
         itemId: Int64,
         geometry: String,
         distanceKm: Double?,
-        durationSeconds: Int?
+        durationSeconds: Int?,
+        elevationProfile: String? = nil
     ) async throws {
         let q = try requireQueue()
         try await q.write { db in
             try db.execute(
                 sql: "UPDATE routes " +
-                     "SET geometry = ?, distance_km = ?, duration_seconds = ? " +
+                     "SET geometry = ?, distance_km = ?, duration_seconds = ?, " +
+                     "elevation_profile = ? " +
                      "WHERE item_id = ?",
-                arguments: [geometry, distanceKm, durationSeconds, itemId]
+                arguments: [geometry, distanceKm, durationSeconds,
+                            elevationProfile, itemId]
             )
         }
     }
@@ -1095,7 +1103,9 @@ actor DatabaseManager {
                 avoid_tolls          INTEGER NOT NULL DEFAULT 0,
                 avoid_unpaved        INTEGER NOT NULL DEFAULT 0,
                 avoid_ferries        INTEGER NOT NULL DEFAULT 0,
-                shortest_route       INTEGER NOT NULL DEFAULT 0
+                shortest_route       INTEGER NOT NULL DEFAULT 0,
+                elevation_profile    TEXT,
+                notes                TEXT
             );
 
             CREATE TABLE route_points (

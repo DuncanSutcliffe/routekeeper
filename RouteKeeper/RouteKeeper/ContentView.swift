@@ -66,6 +66,8 @@ struct ContentView: View {
     @State private var showingRoutingProfilesSheet = false
     @State private var routeDistanceKm: Double? = nil
     @State private var routeDurationSeconds: Int? = nil
+    @State private var routeElevationProfile: String? = nil
+    @State private var routeColorHex: String = "#1A73E8"
     /// Non-nil while the map-tap "New waypoint here" sheet is open.
     @State private var mapTapPresentation: MapTapPresentation? = nil
 
@@ -124,8 +126,13 @@ struct ContentView: View {
                     .padding(.leading, 10)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     if let distKm = routeDistanceKm, let durSecs = routeDurationSeconds {
-                        RouteStatsOverlay(distanceKm: distKm, durationSeconds: durSecs)
-                            .padding(.bottom, 16)
+                        RouteStatsOverlay(
+                            distanceKm:       distKm,
+                            durationSeconds:  durSecs,
+                            elevationProfile: routeElevationProfile,
+                            colorHex:         routeColorHex
+                        )
+                        .padding(.bottom, 16)
                     }
                 }
             } else {
@@ -176,8 +183,9 @@ struct ContentView: View {
 
         if !items.isEmpty {
             // Item selection takes priority — clear any multi-display first.
-            routeDistanceKm    = nil
+            routeDistanceKm      = nil
             routeDurationSeconds = nil
+            routeElevationProfile = nil
             mapViewModel.clearMultiDisplay()
 
             if items.count == 1, let item = items.first {
@@ -189,8 +197,9 @@ struct ContentView: View {
             }
         } else if let list {
             // List selected with no items — show all list items.
-            routeDistanceKm    = nil
-            routeDurationSeconds = nil
+            routeDistanceKm       = nil
+            routeDurationSeconds  = nil
+            routeElevationProfile = nil
             mapViewModel.clearWaypoint()
             mapViewModel.clearRoute()
             mapViewModel.clearMultiDisplay()
@@ -203,8 +212,9 @@ struct ContentView: View {
             mapViewModel.clearWaypoint()
             mapViewModel.clearRoute()
             mapViewModel.clearMultiDisplay()
-            routeDistanceKm    = nil
-            routeDurationSeconds = nil
+            routeDistanceKm       = nil
+            routeDurationSeconds  = nil
+            routeElevationProfile = nil
         }
     }
 
@@ -216,15 +226,17 @@ struct ContentView: View {
         guard let itemId = item.id else {
             mapViewModel.clearWaypoint()
             mapViewModel.clearRoute()
-            routeDistanceKm    = nil
-            routeDurationSeconds = nil
+            routeDistanceKm       = nil
+            routeDurationSeconds  = nil
+            routeElevationProfile = nil
             return
         }
         switch item.type {
         case .waypoint:
             mapViewModel.clearRoute()
-            routeDistanceKm    = nil
-            routeDurationSeconds = nil
+            routeDistanceKm       = nil
+            routeDurationSeconds  = nil
+            routeElevationProfile = nil
             do {
                 if let wp = try await DatabaseManager.shared.fetchWaypointDetails(itemId: itemId) {
                     mapViewModel.showWaypoint(
@@ -242,8 +254,10 @@ struct ContentView: View {
         case .route:
             mapViewModel.clearWaypoint()
             let routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(itemId: itemId)
-            routeDistanceKm      = routeRecord?.distanceKm
-            routeDurationSeconds = routeRecord?.durationSeconds
+            routeDistanceKm       = routeRecord?.distanceKm
+            routeDurationSeconds  = routeRecord?.durationSeconds
+            routeElevationProfile = routeRecord?.elevationProfile
+            routeColorHex         = routeRecord?.colorHex ?? "#1A73E8"
             if let geometry = routeRecord?.geometry {
                 let allPoints = (try? await DatabaseManager.shared.fetchRoutePoints(
                     routeItemId: itemId
@@ -274,8 +288,9 @@ struct ContentView: View {
         case .track:
             mapViewModel.clearWaypoint()
             mapViewModel.clearRoute()
-            routeDistanceKm    = nil
-            routeDurationSeconds = nil
+            routeDistanceKm       = nil
+            routeDurationSeconds  = nil
+            routeElevationProfile = nil
         }
     }
 

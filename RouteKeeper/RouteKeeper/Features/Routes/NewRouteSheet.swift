@@ -437,7 +437,8 @@ struct NewRouteSheet: View {
                     avoidUnpaved:       avoidUnpaved,
                     avoidFerries:       avoidFerries,
                     shortestRoute:      shortestRoute,
-                    colorHex:           selectedColorHex
+                    colorHex:           selectedColorHex,
+                    elevationProfile:   result.elevationProfile
                 )
                 if viewModel.creationError == nil {
                     dismiss()

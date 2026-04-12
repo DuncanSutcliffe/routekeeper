@@ -370,10 +370,11 @@ struct RoutePropertiesSheet: View {
                         shortestRoute:  shortestRoute
                     )
                     try await DatabaseManager.shared.updateRouteGeometryAndStats(
-                        itemId:          routeItemId,
-                        geometry:        result.geometry,
-                        distanceKm:      result.distanceKm,
-                        durationSeconds: result.durationSeconds
+                        itemId:           routeItemId,
+                        geometry:         result.geometry,
+                        distanceKm:       result.distanceKm,
+                        durationSeconds:  result.durationSeconds,
+                        elevationProfile: result.elevationProfile
                     )
                 } catch {
                     // Properties are already saved; only geometry update failed.

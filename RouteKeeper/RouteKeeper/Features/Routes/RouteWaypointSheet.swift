@@ -125,10 +125,11 @@ struct RouteWaypointSheet: View {
                 )
                 try await DatabaseManager.shared.updateRoutePoints(
                     pointsToSave,
-                    routeItemId:     routeItemId,
-                    geometry:        result.geometry,
-                    distanceKm:      result.distanceKm,
-                    durationSeconds: result.durationSeconds
+                    routeItemId:      routeItemId,
+                    geometry:         result.geometry,
+                    distanceKm:       result.distanceKm,
+                    durationSeconds:  result.durationSeconds,
+                    elevationProfile: result.elevationProfile
                 )
                 onSave()
                 dismiss()

@@ -231,11 +231,13 @@
         /// startBase64      — base64-encoded PNG for the start marker
         /// endBase64        — base64-encoded PNG for the end marker
         /// viaWaypointsJSON — JSON string: array of {lat, lng, index} objects
+        /// lineColour       — CSS hex colour for the route line (default '#1A73E8')
         ///
         /// Image loading is Promise-based because HTMLImageElement src loading
         /// is async — MapLibre silently ignores addImage calls on unloaded images.
         /// fitBounds is suppressed when suppressRecentre is true (set by prepareStyleSwitch).
-        async function showRoute(geojsonString, startBase64, endBase64, viaWaypointsJSON) {
+        async function showRoute(geojsonString, startBase64, endBase64, viaWaypointsJSON, lineColour) {
+            lineColour = lineColour || '#1A73E8';
             clearRoute();
             const geojson = JSON.parse(geojsonString);
             const coords = geojson.features[0].geometry.coordinates;
@@ -258,7 +260,7 @@
                 type: 'line',
                 source: 'route-source',
                 layout: { 'line-cap': 'round', 'line-join': 'round' },
-                paint: { 'line-color': '#2F7CF6', 'line-width': 4 }
+                paint: { 'line-color': lineColour, 'line-width': 4 }
             });
 
             map.addSource('route-markers-source', {
@@ -304,7 +306,7 @@
                     paint: {
                         'circle-radius': 10,
                         'circle-color': '#FFFFFF',
-                        'circle-stroke-color': '#2F7CF6',
+                        'circle-stroke-color': lineColour,
                         'circle-stroke-width': 2
                     }
                 });
@@ -461,11 +463,16 @@
                     });
                 } else if (item.type === "route") {
                     var geojson = JSON.parse(item.geojson);
+                    var routeColour = item.color || '#1A73E8';
                     var allLineCoords = [];
                     for (var j = 0; j < geojson.features.length; j++) {
                         var f = geojson.features[j];
                         if (f.geometry.type === "LineString") {
-                            routeLineFeatures.push(f);
+                            routeLineFeatures.push({
+                                type: "Feature",
+                                geometry: f.geometry,
+                                properties: { color: routeColour }
+                            });
                             allLineCoords = allLineCoords.concat(f.geometry.coordinates);
                         }
                     }
@@ -496,7 +503,7 @@
                     type: "line",
                     source: "multi-routes-source",
                     layout: { "line-cap": "round", "line-join": "round" },
-                    paint: { "line-color": "#2F7CF6", "line-width": 4 }
+                    paint: { "line-color": ["get", "color"], "line-width": 4 }
                 });
             }
 

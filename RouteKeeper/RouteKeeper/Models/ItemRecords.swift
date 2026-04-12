@@ -108,6 +108,8 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
     var avoidUnpaved: Bool
     var avoidFerries: Bool
     var shortestRoute: Bool
+    /// CSS hex colour string used to draw this route on the map.
+    var colorHex: String
 
     init(itemId: Int64, routingProfile: String = "motorcycle") {
         self.itemId = itemId
@@ -117,6 +119,7 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
         self.avoidUnpaved   = false
         self.avoidFerries   = false
         self.shortestRoute  = false
+        self.colorHex       = "#1A73E8"
     }
 
     enum CodingKeys: String, CodingKey {
@@ -132,6 +135,7 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
         case avoidUnpaved   = "avoid_unpaved"
         case avoidFerries   = "avoid_ferries"
         case shortestRoute  = "shortest_route"
+        case colorHex       = "color_hex"
     }
 }
 

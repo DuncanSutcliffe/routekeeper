@@ -245,8 +245,9 @@ markers, a native Settings window, routing profiles and criteria-based
 routing, a floating route stats overlay, multi-select in the sidebar
 with simultaneous map display of all selected items and auto-fit bounds,
 right-click on the map to add a waypoint directly at the clicked
-coordinate, and a floating map style switcher (Streets / Satellite /
-Topo) that persists the selection across launches via app_settings.
+coordinate, a floating map style switcher (Streets / Satellite / Topo)
+that persists the selection across launches via app_settings, and a
+native MapLibre scale bar whose units track the existing units preference.
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -270,19 +271,23 @@ context menu, keyboard shortcut) pass `prefilledCoordinate: nil`.
 - Valhalla uses the public OSM community instance — rate-limited.
   To be replaced before release.
 
-Increment 26 detail: Three MapTiler styles available: streets-v4,
-hybrid-v4, topo-v4. The style name is persisted to/from app_settings
-via DatabaseManager.loadMapStyle() / saveMapStyle(). MapLibreMap.html
-receives mapStyleName and mapApiKey via WKUserScript injection (replacing
-the old single mapStyleURL injection); getInitialStyleUrl() builds the
-full URL at map initialisation time, and setMapStyle(styleName) handles
-subsequent switches via map.setStyle(). A style.load event listener
-(guarded by a mapFirstLoadComplete flag to suppress the initial load)
-sends mapStyleLoaded to Swift, which re-dispatches the current waypoint/
-route/multi-item display state to restore custom layers. MapViewModel
-gains currentMapStyle: String; MapView gains mapStyle: String and tracks
-changes in updateNSView. The floating MapStylePicker overlay sits at the
-top-right of the map (below MapLibre's navigation controls) and binds
-directly to currentMapStyle.
+Increment 26 detail: A floating SwiftUI overlay (MapStylePicker) in the
+top-left corner of the map provides three style buttons (Streets,
+Satellite, Topo) backed by MapTiler's streets-v4, hybrid-v4, and topo-v4
+styles respectively. The active style is highlighted. Switching calls
+setMapStyle(styleName) in JavaScript via map.setStyle(). A style.load
+event listener (guarded by mapFirstLoadComplete) sends mapStyleLoaded to
+Swift, which re-dispatches the current display state to restore custom
+layers after the style wipe. Map repositioning on style switch is deferred
+(a suppressRecentre JS flag partially addresses it but the behaviour is
+not fully reliable — deferred alongside other zoom work). The selected
+style persists via a map_style key in app_settings (defaulting to
+streets-v4) loaded at launch via DatabaseManager.loadMapStyle() /
+saveMapStyle(). The style name, API key, and scale unit are all injected
+into the HTML at initialisation via a single WKUserScript so the correct
+values are available on first render. A MapLibre ScaleControl sits in the
+bottom-left corner; its unit ("imperial" / "metric") is driven by the
+units preference in app_settings and updated live via setScaleUnits()
+whenever the user changes their units preference in Settings.
 
 **Next step: Increment 27 — TBD.**

@@ -37,6 +37,10 @@ struct RoutePropertiesSheet: View {
     @State private var avoidFerries   = false
     @State private var shortestRoute  = false
 
+    // MARK: - Colour state
+
+    @State private var selectedColorHex = "#1A73E8"
+
     // MARK: - Original values (snapshot on appear for change detection)
 
     @State private var originalAvoidMotorways = false
@@ -131,6 +135,7 @@ struct RoutePropertiesSheet: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
                             nameSection
+                            colourSection
                             profileSection
                         }
                         .padding(20)
@@ -209,6 +214,22 @@ struct RoutePropertiesSheet: View {
         }
     }
 
+    private var colourSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Colour", systemImage: "paintpalette")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+
+            HStack(spacing: 8) {
+                ForEach(routePresetColours, id: \.self) { hex in
+                    ColourSwatch(hex: hex, isSelected: selectedColorHex == hex) {
+                        selectedColorHex = hex
+                    }
+                }
+            }
+        }
+    }
+
     private var profileSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Routing Profile", systemImage: "slider.horizontal.3")
@@ -278,12 +299,13 @@ struct RoutePropertiesSheet: View {
 
             if let route {
                 // Populate criteria from the stored route values.
-                avoidMotorways = route.avoidMotorways
-                avoidTolls     = route.avoidTolls
-                avoidUnpaved   = route.avoidUnpaved
-                avoidFerries   = route.avoidFerries
-                shortestRoute  = route.shortestRoute
+                avoidMotorways   = route.avoidMotorways
+                avoidTolls       = route.avoidTolls
+                avoidUnpaved     = route.avoidUnpaved
+                avoidFerries     = route.avoidFerries
+                shortestRoute    = route.shortestRoute
                 appliedProfileName = route.appliedProfileName
+                selectedColorHex = route.colorHex
 
                 // Snapshot originals for change detection.
                 originalAvoidMotorways = route.avoidMotorways
@@ -320,7 +342,8 @@ struct RoutePropertiesSheet: View {
                     avoidTolls:         avoidTolls,
                     avoidUnpaved:       avoidUnpaved,
                     avoidFerries:       avoidFerries,
-                    shortestRoute:      shortestRoute
+                    shortestRoute:      shortestRoute,
+                    colorHex:           selectedColorHex
                 )
             } catch {
                 showSaveError = true

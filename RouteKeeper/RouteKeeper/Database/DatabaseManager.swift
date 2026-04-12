@@ -86,6 +86,14 @@ actor DatabaseManager {
             try db.execute(sql: "ALTER TABLE waypoints ADD COLUMN elevation REAL")
         }
 
+        // v3 — adds colour column to routes; default covers all existing rows.
+        migrator.registerMigration("v3") { db in
+            try db.execute(
+                sql: "ALTER TABLE routes " +
+                     "ADD COLUMN color_hex TEXT NOT NULL DEFAULT '#1A73E8'"
+            )
+        }
+
         try await migrator.migrate(dbQueue)
         _dbQueue = dbQueue
     }
@@ -350,7 +358,8 @@ actor DatabaseManager {
         avoidTolls: Bool = false,
         avoidUnpaved: Bool = false,
         avoidFerries: Bool = false,
-        shortestRoute: Bool = false
+        shortestRoute: Bool = false,
+        colorHex: String = "#1A73E8"
     ) async throws -> Int64 {
         let q = try requireQueue()
         return try await q.write { db in
@@ -368,13 +377,13 @@ actor DatabaseManager {
                 sql: "INSERT INTO routes " +
                      "(item_id, routing_profile, geometry, distance_km, duration_seconds, " +
                      "applied_profile_name, avoid_motorways, avoid_tolls, " +
-                     "avoid_unpaved, avoid_ferries, shortest_route) " +
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     "avoid_unpaved, avoid_ferries, shortest_route, color_hex) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 arguments: [itemId, "motorcycle", geometry, distanceKm, durationSeconds,
                             appliedProfileName,
                             avoidMotorways ? 1 : 0, avoidTolls ? 1 : 0,
                             avoidUnpaved ? 1 : 0, avoidFerries ? 1 : 0,
-                            shortestRoute ? 1 : 0]
+                            shortestRoute ? 1 : 0, colorHex]
             )
 
             // 3. Insert route_points for start (seq 1) and end (seq 2) if supplied.
@@ -491,8 +500,8 @@ actor DatabaseManager {
         }
     }
 
-    /// Updates the route name (in `items`) and all five routing criteria columns
-    /// (in `routes`) in a single write transaction.
+    /// Updates the route name (in `items`), colour, and all five routing criteria
+    /// columns (in `routes`) in a single write transaction.
     func updateRouteProperties(
         itemId: Int64,
         name: String,
@@ -501,7 +510,8 @@ actor DatabaseManager {
         avoidTolls: Bool,
         avoidUnpaved: Bool,
         avoidFerries: Bool,
-        shortestRoute: Bool
+        shortestRoute: Bool,
+        colorHex: String
     ) async throws {
         let q = try requireQueue()
         try await q.write { db in
@@ -513,12 +523,13 @@ actor DatabaseManager {
                 sql: "UPDATE routes " +
                      "SET applied_profile_name = ?, " +
                      "avoid_motorways = ?, avoid_tolls = ?, " +
-                     "avoid_unpaved = ?, avoid_ferries = ?, shortest_route = ? " +
+                     "avoid_unpaved = ?, avoid_ferries = ?, shortest_route = ?, " +
+                     "color_hex = ? " +
                      "WHERE item_id = ?",
                 arguments: [appliedProfileName,
                             avoidMotorways ? 1 : 0, avoidTolls ? 1 : 0,
                             avoidUnpaved ? 1 : 0, avoidFerries ? 1 : 0,
-                            shortestRoute ? 1 : 0, itemId]
+                            shortestRoute ? 1 : 0, colorHex, itemId]
             )
         }
     }

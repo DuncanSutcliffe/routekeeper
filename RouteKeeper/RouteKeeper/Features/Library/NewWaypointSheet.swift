@@ -46,10 +46,7 @@ struct NewWaypointSheet: View {
 
     // MARK: Constants
 
-    private static let presetColours = [
-        "#E8453C", "#E8873C", "#E8D83C", "#4CAF50",
-        "#2196F3", "#9C27B0", "#795548", "#607D8B",
-    ]
+    private let presetColours = waypointPresetColours
 
     // MARK: Derived
 
@@ -261,7 +258,7 @@ struct NewWaypointSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 8) {
-                    ForEach(Self.presetColours, id: \.self) { hex in
+                    ForEach(presetColours, id: \.self) { hex in
                         ColourSwatch(hex: hex, isSelected: selectedColorHex == hex) {
                             selectedColorHex = hex
                         }
@@ -413,47 +410,6 @@ struct NewWaypointSheet: View {
     }
 }
 
-// MARK: - ColourSwatch
-
-private struct ColourSwatch: View {
-    let hex: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(Color(hex: hex))
-                    .frame(width: 24, height: 24)
-                if isSelected {
-                    Circle()
-                        .strokeBorder(.white, lineWidth: 2.5)
-                        .frame(width: 24, height: 24)
-                    Circle()
-                        .strokeBorder(.black.opacity(0.25), lineWidth: 3.5)
-                        .frame(width: 24, height: 24)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .help(hex)
-    }
-}
-
-// MARK: - Color+hex
-
-private extension Color {
-    /// Initialises a `Color` from a CSS hex string such as `"#E8453C"`.
-    init(hex: String) {
-        let clean = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
-        let value = UInt64(clean, radix: 16) ?? 0xFF0000
-        let r = Double((value >> 16) & 0xFF) / 255
-        let g = Double((value >> 8)  & 0xFF) / 255
-        let b = Double(value         & 0xFF) / 255
-        self.init(red: r, green: g, blue: b)
-    }
-}
 
 #Preview {
     NewWaypointSheet(viewModel: LibraryViewModel(), preselectedListID: nil)

@@ -27,6 +27,10 @@ struct NewRouteSheet: View {
     @State private var startWaypoint: Waypoint? = nil
     @State private var endWaypoint: Waypoint? = nil
 
+    // MARK: - Colour state
+
+    @State private var selectedColorHex = "#1A73E8"
+
     // MARK: - List assignment state
 
     @State private var selectedListIDs: Set<Int64> = []
@@ -119,6 +123,7 @@ struct NewRouteSheet: View {
                     nameSection
                     startSection
                     endSection
+                    colourSection
                     profileSection
                     listsSection
                 }
@@ -319,6 +324,22 @@ struct NewRouteSheet: View {
         .padding(.vertical, 6)
     }
 
+    private var colourSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Colour", systemImage: "paintpalette")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+
+            HStack(spacing: 8) {
+                ForEach(routePresetColours, id: \.self) { hex in
+                    ColourSwatch(hex: hex, isSelected: selectedColorHex == hex) {
+                        selectedColorHex = hex
+                    }
+                }
+            }
+        }
+    }
+
     private var listsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Add to Lists", systemImage: "list.bullet")
@@ -415,7 +436,8 @@ struct NewRouteSheet: View {
                     avoidTolls:         avoidTolls,
                     avoidUnpaved:       avoidUnpaved,
                     avoidFerries:       avoidFerries,
-                    shortestRoute:      shortestRoute
+                    shortestRoute:      shortestRoute,
+                    colorHex:           selectedColorHex
                 )
                 if viewModel.creationError == nil {
                     dismiss()

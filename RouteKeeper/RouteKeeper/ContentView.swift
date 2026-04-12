@@ -254,7 +254,11 @@ struct ContentView: View {
                 let viaWaypoints = intermediates.enumerated().map { i, pt in
                     ViaWaypoint(latitude: pt.latitude, longitude: pt.longitude, index: i + 1)
                 }
-                mapViewModel.showRoute(RouteDisplay(geojson: geometry, viaWaypoints: viaWaypoints))
+                mapViewModel.showRoute(RouteDisplay(
+                    geojson: geometry,
+                    viaWaypoints: viaWaypoints,
+                    colorHex: routeRecord?.colorHex ?? "#1A73E8"
+                ))
             } else {
                 mapViewModel.clearRoute()
             }
@@ -320,6 +324,7 @@ struct ContentView: View {
                 ), let geometry = routeRecord.geometry {
                     entries.append(MultiItemEntry(
                         type: .route,
+                        color: routeRecord.colorHex,
                         geojson: geometry, startIcon: startIcon, endIcon: endIcon
                     ))
                 }

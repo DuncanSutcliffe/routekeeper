@@ -177,7 +177,8 @@ final class LibraryViewModel {
         avoidTolls: Bool = false,
         avoidUnpaved: Bool = false,
         avoidFerries: Bool = false,
-        shortestRoute: Bool = false
+        shortestRoute: Bool = false,
+        colorHex: String = "#1A73E8"
     ) async {
         do {
             try await DatabaseManager.shared.createRoute(
@@ -193,7 +194,8 @@ final class LibraryViewModel {
                 avoidTolls: avoidTolls,
                 avoidUnpaved: avoidUnpaved,
                 avoidFerries: avoidFerries,
-                shortestRoute: shortestRoute
+                shortestRoute: shortestRoute,
+                colorHex: colorHex
             )
         } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
             creationError = "A route with that name already exists."

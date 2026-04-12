@@ -56,11 +56,13 @@ struct ViaWaypoint: Equatable {
 
 // MARK: - RouteDisplay
 
-/// Everything the map needs to render a stored route: the GeoJSON line and any
-/// intermediate via-waypoint circles.
+/// Everything the map needs to render a stored route: the GeoJSON line,
+/// any intermediate via-waypoint circles, and the route's colour.
 struct RouteDisplay: Equatable {
     let geojson: String
     let viaWaypoints: [ViaWaypoint]
+    /// CSS hex colour string for the route line, e.g. `"#1A73E8"`.
+    let colorHex: String
 }
 
 // MARK: - MapViewModel
@@ -439,7 +441,8 @@ struct MapView: NSViewRepresentable {
                 let viaEscaped = viaRaw
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
-                let js = "showRoute(\"\(escaped)\", \"\(startIcon)\", \"\(endIcon)\", \"\(viaEscaped)\")"
+                let js = "showRoute(\"\(escaped)\", \"\(startIcon)\", \"\(endIcon)\"," +
+                         " \"\(viaEscaped)\", \"\(display.colorHex)\")"
                 webView.evaluateJavaScript(js)
             } else {
                 webView.evaluateJavaScript("clearRoute();")

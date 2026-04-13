@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–31 complete (including Part 1 of Increment 31).**
+**Increments 1–31 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -253,9 +253,12 @@ display paths, non-announcing (shaping) route point support with
 bell/bell.slash toggle in the route editor and distinct solid-dot map
 rendering, route elevation profiles with ascent/descent totals and a
 filled area chart in the floating stats overlay, compact name label
-popups for all selected map items, and custom SF Symbol category icons
-on waypoint markers with vector circle+icon two-layer rendering for all
-map markers (waypoints and route start/end flags).
+popups for all selected map items, custom SF Symbol category icons on
+waypoint markers with vector circle+icon two-layer rendering for all map
+markers (waypoints and route start/end flags), and a full category
+management UI with a standalone Categories window, add/edit/delete
+controls for user-created categories, and an inline "Add category…"
+action in the waypoint sheets.
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -397,7 +400,7 @@ shapingWaypoints fields on MultiItemEntry (using the same announcing/
 shaping split as the single-item display path), backed by two new private
 Encodable structs MultiViaWaypoint and MultiShapingWaypoint.
 
-Increment 31 Part 1 detail (custom map markers): All map markers are now
+Increment 31 detail (custom map markers): All map markers are now
 rendered as two MapLibre layers on a shared GeoJSON point source: a vector
 circle layer (white fill, coloured stroke, radius 14) and a centred symbol
 layer using a pre-registered SF Symbol icon. SF Symbols are rendered in
@@ -421,4 +424,24 @@ cleanup. icon-ignore-placement: true and icon-allow-overlap: true are set
 on all symbol layers to prevent MapLibre's placement algorithm from
 drifting icons away from their backing circles at lower zoom levels.
 
-**Next step: Increment 31 Part 2 — category management UI.**
+Increment 31 detail (category management): A new is_default column
+(INTEGER NOT NULL DEFAULT 0) was added to the categories table via
+migration v4; the twelve seed categories have is_default = 1. A new
+"Manage" top-level menu contains a single item "Categories…" that opens
+CategoryManagementWindow, a standalone non-modal SwiftUI Window scene.
+The window lists all categories alphabetically; default categories are
+read-only with a lock badge; user-created categories have edit (pencil)
+and delete (trash) controls. The delete button is disabled with a tooltip
+when any waypoints are assigned to the category. A CategoryEditSheet
+handles both adding and editing, with a name field (inline uniqueness
+validation) and a scrollable curated grid of 45 SF Symbols organised into
+eight labelled groups. CategoryViewModel manages all category CRUD and
+posts routeKeeperCategoriesChanged after any write so the map Coordinator
+re-registers icons immediately via NotificationCenter. In NewWaypointSheet
+and EditWaypointSheet, the category Picker has been replaced with a Menu
+control that includes an "Add category…" option at the bottom; selecting
+it presents CategoryEditSheet as a sheet directly on top of the waypoint
+sheet; on save the new category is automatically pre-selected and the
+dropdown refreshes via an onSave callback.
+
+**Next step: Increment 32 — TBD.**

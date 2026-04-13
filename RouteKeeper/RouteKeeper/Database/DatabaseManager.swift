@@ -810,6 +810,46 @@ actor DatabaseManager {
         }
     }
 
+    /// Renames a folder.
+    ///
+    /// Throws a SQLITE_CONSTRAINT error if another folder with the same name
+    /// already exists (enforced by the UNIQUE constraint on `list_folders.name`).
+    func renameFolder(folderId: Int64, newName: String) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "UPDATE list_folders SET name = ? WHERE id = ?",
+                arguments: [newName, folderId]
+            )
+        }
+    }
+
+    /// Updates a list's name and folder assignment in a single write.
+    ///
+    /// Throws a SQLITE_CONSTRAINT error if a list with the same name already
+    /// exists in the target folder (enforced by the UNIQUE constraint on
+    /// `lists(name, folder_id)`).
+    func updateList(listId: Int64, newName: String, newFolderId: Int64) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "UPDATE lists SET name = ?, folder_id = ? WHERE id = ?",
+                arguments: [newName, newFolderId, listId]
+            )
+        }
+    }
+
+    /// Moves a list to a different folder without changing its name.
+    func moveList(listId: Int64, toFolderId: Int64) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "UPDATE lists SET folder_id = ? WHERE id = ?",
+                arguments: [toFolderId, listId]
+            )
+        }
+    }
+
     // MARK: - Routing profiles
 
     /// Returns all routing profiles ordered by name.

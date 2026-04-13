@@ -94,19 +94,17 @@ struct RouteKeeperCommands: Commands {
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(showNewFolderSheet == nil)
-
-            Divider()
-
-            Button("Route Profiles…") {
-                showRoutingProfilesSheet?.wrappedValue = true
-            }
-            .disabled(showRoutingProfilesSheet == nil)
         }
 
         CommandMenu("Manage") {
             Button("Categories…") {
                 openWindow(id: "category-management")
             }
+            Divider()
+            Button("Route Profiles…") {
+                showRoutingProfilesSheet?.wrappedValue = true
+            }
+            .disabled(showRoutingProfilesSheet == nil)
         }
     }
 }

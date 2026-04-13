@@ -473,4 +473,56 @@ final class LibraryViewModel {
         }
         await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
     }
+
+    // MARK: - Folder and list rename / move
+
+    /// Renames `folderId` to `newName` and reloads the folder tree.
+    ///
+    /// Sets `creationError` if a folder with that name already exists.
+    func renameFolder(folderId: Int64, newName: String) async {
+        do {
+            try await DatabaseManager.shared.renameFolder(folderId: folderId, newName: newName)
+        } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
+            creationError = "A folder with that name already exists."
+            return
+        } catch {
+            print("Rename folder failed: \(error)")
+            return
+        }
+        await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
+    }
+
+    /// Updates a list's name and folder assignment, then reloads the sidebar.
+    ///
+    /// Sets `creationError` if the new name conflicts with another list in the
+    /// target folder.
+    func updateList(listId: Int64, newName: String, newFolderId: Int64) async {
+        do {
+            try await DatabaseManager.shared.updateList(
+                listId: listId,
+                newName: newName,
+                newFolderId: newFolderId
+            )
+        } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
+            creationError = "A list with that name already exists in the selected folder."
+            return
+        } catch {
+            print("Update list failed: \(error)")
+            return
+        }
+        await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
+    }
+
+    /// Moves a list to `newFolderId` without changing its name, then reloads the sidebar.
+    ///
+    /// No-op if the list is already in the target folder.
+    func moveList(listId: Int64, toFolderId: Int64) async {
+        do {
+            try await DatabaseManager.shared.moveList(listId: listId, toFolderId: toFolderId)
+        } catch {
+            print("Move list failed: \(error)")
+            return
+        }
+        await load(sortColumn: currentSortColumn, ascending: currentSortAscending)
+    }
 }

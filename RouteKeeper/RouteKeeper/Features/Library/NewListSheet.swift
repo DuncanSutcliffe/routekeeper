@@ -2,22 +2,27 @@
 //  NewListSheet.swift
 //  RouteKeeper
 //
-//  Sheet presented when the user creates a new list. Allows the user to
-//  name the list and choose which folder to place it in.
+//  Sheet for creating a new list or editing an existing one.
+//  Pass `editingList: nil` (default) for create mode, or a `RouteList` for
+//  edit mode. In edit mode the sheet is pre-populated with the list's current
+//  name and folder; saving calls updateList rather than createList.
 //
 
 import SwiftUI
 
 struct NewListSheet: View {
     let viewModel: LibraryViewModel
-    /// Folder to pre-select in the picker. Defaults to the first real folder
-    /// when nil.
+    /// Folder to pre-select when creating a new list. Ignored in edit mode.
     let preselectedFolderID: Int64?
+    /// Non-nil when the sheet is in edit mode.
+    var editingList: RouteList? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var listName = ""
     @State private var selectedFolderID: Int64?
     @FocusState private var fieldIsFocused: Bool
+
+    private var isEditMode: Bool { editingList != nil }
 
     /// All non-sentinel folders available for selection.
     private var realFolders: [(folder: ListFolder, lists: [RouteList])] {
@@ -29,7 +34,7 @@ struct NewListSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("New List")
+            Text(isEditMode ? "Edit List" : "New List")
                 .font(.headline)
 
             TextField("List name", text: $listName)
@@ -62,7 +67,7 @@ struct NewListSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
 
-                Button("OK") {
+                Button(isEditMode ? "Save" : "OK") {
                     submit()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -75,7 +80,14 @@ struct NewListSheet: View {
         .onAppear {
             viewModel.creationError = nil
             fieldIsFocused = true
-            selectedFolderID = preselectedFolderID ?? realFolders.first?.folder.id
+            if let editing = editingList {
+                listName = editing.name
+                selectedFolderID = editing.folderId
+                    ?? preselectedFolderID
+                    ?? realFolders.first?.folder.id
+            } else {
+                selectedFolderID = preselectedFolderID ?? realFolders.first?.folder.id
+            }
         }
     }
 
@@ -83,7 +95,15 @@ struct NewListSheet: View {
         let trimmed = listName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, let folderID = selectedFolderID else { return }
         Task {
-            await viewModel.createList(name: trimmed, folderId: folderID)
+            if let editing = editingList, let listId = editing.id {
+                await viewModel.updateList(
+                    listId: listId,
+                    newName: trimmed,
+                    newFolderId: folderID
+                )
+            } else {
+                await viewModel.createList(name: trimmed, folderId: folderID)
+            }
             if viewModel.creationError == nil {
                 dismiss()
             }

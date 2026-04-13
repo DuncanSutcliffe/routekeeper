@@ -16,8 +16,8 @@ import GRDB
 
 /// A category used to classify favourite waypoints (e.g. Fuel, Hotel, Viewpoint).
 ///
-/// Seeded with twelve defaults on first run; the user cannot create or delete
-/// categories in the initial implementation.
+/// Seeded with twelve defaults on first run. Default categories are read-only
+/// in the UI; users may create, edit, and delete their own categories.
 struct Category: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "categories"
 
@@ -25,24 +25,30 @@ struct Category: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     var name: String
     /// SF Symbol name used to represent this category in the UI.
     var iconName: String
+    /// `true` for the twelve seed categories that ship with the app.
+    /// Default categories are read-only — no edit or delete in the UI.
+    var isDefault: Bool = false
     /// Populated by the database on insert; read back when fetched.
     var createdAt: String = ""
 
-    init(name: String, iconName: String) {
-        self.name = name
-        self.iconName = iconName
+    init(name: String, iconName: String, isDefault: Bool = false) {
+        self.name      = name
+        self.iconName  = iconName
+        self.isDefault = isDefault
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name
         case iconName  = "icon_name"
+        case isDefault = "is_default"
         case createdAt = "created_at"
     }
 
     func encode(to container: inout PersistenceContainer) throws {
-        container["id"]        = id
-        container["name"]      = name
-        container["icon_name"] = iconName
+        container["id"]         = id
+        container["name"]       = name
+        container["icon_name"]  = iconName
+        container["is_default"] = isDefault ? 1 : 0
         // created_at omitted — database provides default.
     }
 

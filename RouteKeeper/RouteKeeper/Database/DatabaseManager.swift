@@ -94,6 +94,25 @@ actor DatabaseManager {
             )
         }
 
+        // v4 — adds is_default flag to categories; marks the twelve seed rows.
+        migrator.registerMigration("v4") { db in
+            try db.execute(
+                sql: "ALTER TABLE categories " +
+                     "ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0"
+            )
+            let defaultNames: [String] = [
+                "Café", "Campsite", "Ferry", "Fuel", "Hotel",
+                "Landmark", "Other", "Parking", "Pass",
+                "Restaurant", "Viewpoint", "Workshop"
+            ]
+            for name in defaultNames {
+                try db.execute(
+                    sql: "UPDATE categories SET is_default = 1 WHERE name = ?",
+                    arguments: [name]
+                )
+            }
+        }
+
         try await migrator.migrate(dbQueue)
         _dbQueue = dbQueue
     }
@@ -1252,6 +1271,102 @@ actor DatabaseManager {
                 sql: "INSERT INTO categories (name, icon_name) VALUES (?, ?)",
                 arguments: [c.name, c.iconName]
             )
+        }
+    }
+
+    // MARK: - Category management
+
+    /// Creates a new user-defined category and returns it with its database id.
+    @discardableResult
+    func createCategory(name: String, iconName: String) async throws -> Category {
+        let q = try requireQueue()
+        return try await q.write { db in
+            try db.execute(
+                sql: "INSERT INTO categories (name, icon_name, is_default) " +
+                     "VALUES (?, ?, 0)",
+                arguments: [name, iconName]
+            )
+            guard let id = try Int64.fetchOne(db, sql: "SELECT last_insert_rowid()") else {
+                throw DatabaseManagerError.insertFailed(
+                    "Could not retrieve new category ID"
+                )
+            }
+            guard let cat = try Category.fetchOne(
+                db,
+                sql: "SELECT * FROM categories WHERE id = ?",
+                arguments: [id]
+            ) else {
+                throw DatabaseManagerError.insertFailed(
+                    "Could not fetch newly created category (id: \(id))"
+                )
+            }
+            return cat
+        }
+    }
+
+    /// Updates the name and icon of an existing user-defined category.
+    func updateCategory(id: Int64, name: String, iconName: String) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "UPDATE categories SET name = ?, icon_name = ? " +
+                     "WHERE id = ? AND is_default = 0",
+                arguments: [name, iconName, id]
+            )
+        }
+    }
+
+    /// Permanently deletes a user-defined category.
+    ///
+    /// The foreign key `ON DELETE SET NULL` on `waypoints.category_id` ensures
+    /// that affected waypoints lose their category rather than being removed.
+    func deleteCategory(id: Int64) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "DELETE FROM categories WHERE id = ? AND is_default = 0",
+                arguments: [id]
+            )
+        }
+    }
+
+    /// Returns the number of waypoints currently assigned to the given category.
+    func fetchCategoryUsageCount(categoryId: Int64) async throws -> Int {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM waypoints WHERE category_id = ?",
+                arguments: [categoryId]
+            ) ?? 0
+        }
+    }
+
+    /// Returns `true` if a category with `name` already exists (case-insensitive),
+    /// optionally excluding the category identified by `excludingId`.
+    func categoryNameExists(
+        _ name: String,
+        excludingId: Int64? = nil
+    ) async throws -> Bool {
+        let q = try requireQueue()
+        return try await q.read { db in
+            if let excludeId = excludingId {
+                let count = try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM categories " +
+                         "WHERE lower(name) = lower(?) AND id != ?",
+                    arguments: [name, excludeId]
+                ) ?? 0
+                return count > 0
+            } else {
+                let count = try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM categories " +
+                         "WHERE lower(name) = lower(?)",
+                    arguments: [name]
+                ) ?? 0
+                return count > 0
+            }
         }
     }
 }

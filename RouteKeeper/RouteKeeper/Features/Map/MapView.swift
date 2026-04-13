@@ -352,6 +352,30 @@ struct MapView: NSViewRepresentable {
     /// receives JS → Swift messages.
     final class Coordinator: NSObject, WKScriptMessageHandler {
 
+        // MARK: Notification observation
+
+        private var categoriesChangedObserver: (any NSObjectProtocol)?
+
+        override init() {
+            super.init()
+            // Re-register category icons with MapLibre whenever the user
+            // creates, edits, or deletes a category via the management window.
+            categoriesChangedObserver = NotificationCenter.default.addObserver(
+                forName: .routeKeeperCategoriesChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self, let wv = self.webView, self.mapIsReady else { return }
+                self.applyRegisteredCategoryIcons(in: wv)
+            }
+        }
+
+        deinit {
+            if let observer = categoriesChangedObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+
         // MARK: Map-ready gate
 
         /// Set to true when JS posts { type: "mapReady" }.

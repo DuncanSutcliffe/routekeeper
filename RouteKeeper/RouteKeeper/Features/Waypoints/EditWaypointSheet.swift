@@ -54,6 +54,11 @@ struct EditWaypointSheet: View {
 
     @State private var selectedListIDs: Set<Int64> = []
 
+    // MARK: - Add-category sheet state
+
+    @State private var showingAddCategorySheet = false
+    @State private var addCategoryViewModel = CategoryViewModel()
+
     // MARK: - Loading state
 
     @State private var isLoaded: Bool = false
@@ -131,6 +136,18 @@ struct EditWaypointSheet: View {
         }
         .onAppear {
             viewModel.creationError = nil
+        }
+        .sheet(isPresented: $showingAddCategorySheet) {
+            CategoryEditSheet(
+                viewModel: addCategoryViewModel,
+                editingCategory: nil,
+                onSave: { newCat in
+                    Task { @MainActor in
+                        await viewModel.forceReloadCategories()
+                        selectedCategoryId = newCat.id
+                    }
+                }
+            )
         }
     }
 
@@ -239,15 +256,7 @@ struct EditWaypointSheet: View {
                 Text("Category")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Picker("Category", selection: $selectedCategoryId) {
-                    Text("None").tag(nil as Int64?)
-                    ForEach(viewModel.categories) { cat in
-                        Label(cat.name, systemImage: cat.iconName)
-                            .tag(cat.id as Int64?)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
+                categoryMenu
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -325,6 +334,46 @@ struct EditWaypointSheet: View {
                 }
                 .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 8))
             }
+        }
+    }
+
+    // MARK: - Category menu
+
+    /// A `Menu`-style category selector that includes an "Add category…" action
+    /// at the bottom, separated from the category list by a `Divider`.
+    ///
+    /// "Add category…" presents `CategoryEditSheet` directly on top of this
+    /// sheet.  The `onSave` callback refreshes the category list and
+    /// pre-selects the new item without leaving the waypoint sheet.
+    private var categoryMenu: some View {
+        let selectedCat = selectedCategoryId.flatMap { id in
+            viewModel.categories.first { $0.id == id }
+        }
+        return Menu {
+            Button("None") { selectedCategoryId = nil }
+            Divider()
+            ForEach(viewModel.categories) { cat in
+                Button {
+                    selectedCategoryId = cat.id
+                } label: {
+                    Label(cat.name, systemImage: cat.iconName)
+                }
+            }
+            Divider()
+            Button("Add category…") {
+                addCategoryViewModel.errorMessage = nil
+                showingAddCategorySheet = true
+            }
+        } label: {
+            HStack {
+                if let cat = selectedCat {
+                    Label(cat.name, systemImage: cat.iconName)
+                } else {
+                    Text("None")
+                }
+                Spacer()
+            }
+            .contentShape(Rectangle())
         }
     }
 

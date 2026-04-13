@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–31 complete.**
+**Increments 1–31 complete (including Part 1 of Increment 31).**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -240,21 +240,22 @@ and list management, full waypoint creation and editing (including
 silent elevation capture via MapTiler), route creation with intermediate
 waypoints, GPX export (Standard GPX 1.1 and Garmin GPX 1.1), drag and
 drop and context menu move/copy between lists, full delete functionality,
-SF Symbol start/end markers on routes, numbered intermediate waypoint
-markers, a native Settings window, routing profiles and criteria-based
-routing, a floating route stats overlay, multi-select in the sidebar
-with simultaneous map display of all selected items and auto-fit bounds,
-right-click on the map to add a waypoint directly at the clicked
-coordinate, a floating map style switcher (Streets / Satellite / Topo)
-that persists the selection across launches via app_settings, a native
-MapLibre scale bar whose units track the existing units preference,
-per-route colour selection with eight preset swatches stored as
-color_hex in the routes table and applied to all display paths,
-non-announcing (shaping) route point support with bell/bell.slash toggle
-in the route editor and distinct solid-dot map rendering, route
-elevation profiles with ascent/descent totals and a filled area chart
-in the floating stats overlay, and compact name label popups for all
-selected map items.
+numbered intermediate waypoint markers, a native Settings window, routing
+profiles and criteria-based routing, a floating route stats overlay,
+multi-select in the sidebar with simultaneous map display of all selected
+items and auto-fit bounds, right-click on the map to add a waypoint
+directly at the clicked coordinate, a floating map style switcher
+(Streets / Satellite / Topo) that persists the selection across launches
+via app_settings, a native MapLibre scale bar whose units track the
+existing units preference, per-route colour selection with eight preset
+swatches stored as color_hex in the routes table and applied to all
+display paths, non-announcing (shaping) route point support with
+bell/bell.slash toggle in the route editor and distinct solid-dot map
+rendering, route elevation profiles with ascent/descent totals and a
+filled area chart in the floating stats overlay, compact name label
+popups for all selected map items, and custom SF Symbol category icons
+on waypoint markers with vector circle+icon two-layer rendering for all
+map markers (waypoints and route start/end flags).
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -367,7 +368,7 @@ of the chart in 9pt secondary colour. The overlay is fixed at 320pt
 maximum width, centred at the bottom of the map. Routes with a null
 elevation_profile show only the original distance and duration figures.
 
-Increment 31 detail: MapLibreMap.html has three new functions:
+Increment 31 detail (labels): MapLibreMap.html has three new functions:
 showLabel(itemId, lng, lat, name) creates a compact dark tooltip-style
 maplibregl.Popup (no close button, no close-on-click) anchored at the
 given coordinates and stored in a module-level dictionary keyed by
@@ -396,4 +397,28 @@ shapingWaypoints fields on MultiItemEntry (using the same announcing/
 shaping split as the single-item display path), backed by two new private
 Encodable structs MultiViaWaypoint and MultiShapingWaypoint.
 
-**Next step: Increment 32 — TBD.**
+Increment 31 Part 1 detail (custom map markers): All map markers are now
+rendered as two MapLibre layers on a shared GeoJSON point source: a vector
+circle layer (white fill, coloured stroke, radius 14) and a centred symbol
+layer using a pre-registered SF Symbol icon. SF Symbols are rendered in
+Swift by categoryIconBase64() at 22pt on an 84×84px canvas at 3× scale,
+encoded as base64 PNGs, and registered with MapLibre via
+registerCategoryIcons() at map load and again after every map.setStyle()
+call (which wipes all registered images). Category icons are registered as
+"icon-<category-name>". Route start and end flags (flag.fill and
+flag.checkered) are pre-registered as "icon-route-start" and
+"icon-route-end" in the same payload, replacing the previous per-call
+async raster image approach. showRoute is no longer async. All source and
+layer IDs across showWaypoint/clearWaypoint, showRoute/clearRoute, and
+showMultipleItems/clearMultipleItems have been audited and made fully
+distinct: route marker layers use route-start-/route-end- prefixes keyed
+by itemId (e.g. route-start-circle-42), single waypoint layers use
+waypoint-, and multi-select waypoint layers use multi-waypoint-{id} per
+item. The previous batched multi-markers-source/multi-waypoints-source
+approach in showMultipleItems has been replaced with per-item dynamic
+sources and layers, all tracked in multiViaLayerIds/multiViaSources for
+cleanup. icon-ignore-placement: true and icon-allow-overlap: true are set
+on all symbol layers to prevent MapLibre's placement algorithm from
+drifting icons away from their backing circles at lower zoom levels.
+
+**Next step: Increment 31 Part 2 — category management UI.**

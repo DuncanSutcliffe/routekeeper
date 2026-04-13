@@ -67,6 +67,7 @@ struct RouteKeeperCommands: Commands {
     @FocusedValue(\.showNewWaypointSheet)      private var showNewWaypointSheet:      Binding<Bool>?
     @FocusedValue(\.showNewRouteSheet)         private var showNewRouteSheet:         Binding<Bool>?
     @FocusedValue(\.showRoutingProfilesSheet)  private var showRoutingProfilesSheet:  Binding<Bool>?
+    @Environment(\.openWindow)                 private var openWindow
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
@@ -101,6 +102,12 @@ struct RouteKeeperCommands: Commands {
             }
             .disabled(showRoutingProfilesSheet == nil)
         }
+
+        CommandMenu("Manage") {
+            Button("Categories…") {
+                openWindow(id: "category-management")
+            }
+        }
     }
 }
 
@@ -116,6 +123,11 @@ struct RouteKeeperApp: App {
         .commands {
             RouteKeeperCommands()
         }
+
+        Window("Categories", id: "category-management") {
+            CategoryManagementView()
+        }
+        .defaultSize(width: 420, height: 520)
 
         Settings {
             TabView {

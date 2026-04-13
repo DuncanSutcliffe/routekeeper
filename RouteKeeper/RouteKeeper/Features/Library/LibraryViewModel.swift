@@ -143,6 +143,19 @@ final class LibraryViewModel {
         }
     }
 
+    /// Always fetches a fresh copy of categories from the database, bypassing
+    /// the no-op guard in ``loadCategories()``.
+    ///
+    /// Called from waypoint sheets after receiving a `routeKeeperCategoryCreated`
+    /// notification so the new category appears immediately in the picker.
+    func forceReloadCategories() async {
+        do {
+            categories = try await DatabaseManager.shared.fetchCategories()
+        } catch {
+            print("Force reload categories failed: \(error)")
+        }
+    }
+
     /// Loads all waypoints that have stored coordinates from the database.
     ///
     /// Called from the New Route sheet's `onAppear`. Always fetches fresh so

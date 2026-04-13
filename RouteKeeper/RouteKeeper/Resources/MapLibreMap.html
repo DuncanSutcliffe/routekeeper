@@ -100,6 +100,49 @@
         var multiViaLayerIds = [];
         var multiViaSources  = [];
 
+        /// Returns the coordinate at 50% of the cumulative Euclidean length of
+        /// a LineString defined by an array of [lng, lat] pairs.
+        ///
+        /// The midpoint is found by:
+        ///   1. Summing the straight-line distances between consecutive pairs to
+        ///      obtain the total length.
+        ///   2. Walking the segments again until the running total reaches half
+        ///      the total length, then linearly interpolating between the two
+        ///      coordinates that straddle the halfway point.
+        ///
+        /// Returns coords[0] when the array has fewer than two points.
+        function lineMidpoint(coords) {
+            if (!coords || coords.length < 2) return coords[0];
+
+            // Pass 1 — total length.
+            var total = 0;
+            for (var i = 0; i < coords.length - 1; i++) {
+                var dx = coords[i + 1][0] - coords[i][0];
+                var dy = coords[i + 1][1] - coords[i][1];
+                total += Math.sqrt(dx * dx + dy * dy);
+            }
+
+            // Pass 2 — walk to the halfway point and interpolate.
+            var half = total / 2;
+            var running = 0;
+            for (var i = 0; i < coords.length - 1; i++) {
+                var dx = coords[i + 1][0] - coords[i][0];
+                var dy = coords[i + 1][1] - coords[i][1];
+                var segLen = Math.sqrt(dx * dx + dy * dy);
+                if (running + segLen >= half) {
+                    var t = segLen > 0 ? (half - running) / segLen : 0;
+                    return [
+                        coords[i][0] + t * dx,
+                        coords[i][1] + t * dy
+                    ];
+                }
+                running += segLen;
+            }
+
+            // Fallback: return the last coordinate.
+            return coords[coords.length - 1];
+        }
+
         /// Creates (or replaces) a compact name label popup anchored at [lng, lat].
         ///
         /// itemId — unique integer identifier for the item; used as the dictionary key
@@ -477,7 +520,8 @@
             }
 
             if (itemId !== undefined && itemId !== null) {
-                showLabel(itemId, startCoord[0], startCoord[1], name || '');
+                var labelCoord = lineMidpoint(coords);
+                showLabel(itemId, labelCoord[0], labelCoord[1], name || '');
             }
         }
 
@@ -662,6 +706,7 @@
                         routeMarkerGroups.push({
                             startCoord:  allLineCoords[0],
                             endCoord:    allLineCoords[allLineCoords.length - 1],
+                            allCoords:   allLineCoords,
                             routeColour: routeColour,
                             rId:         item.itemId,
                             name:        item.name || ''
@@ -770,7 +815,8 @@
                 multiViaLayerIds.push(endCircleId, endSymbolId);
                 multiViaSources.push(endSrcId);
 
-                showLabel(rm.rId, rm.startCoord[0], rm.startCoord[1], rm.name);
+                var rmLabelCoord = lineMidpoint(rm.allCoords);
+                showLabel(rm.rId, rmLabelCoord[0], rmLabelCoord[1], rm.name);
             }
 
             // ── Per-route via circles (white fill, route-coloured stroke, numbered) ─

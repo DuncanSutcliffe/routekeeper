@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–31 complete.**
+**Increments 1–32 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -255,10 +255,18 @@ rendering, route elevation profiles with ascent/descent totals and a
 filled area chart in the floating stats overlay, compact name label
 popups for all selected map items, custom SF Symbol category icons on
 waypoint markers with vector circle+icon two-layer rendering for all map
-markers (waypoints and route start/end flags), and a full category
+markers (waypoints and route start/end flags), a full category
 management UI with a standalone Categories window, add/edit/delete
 controls for user-created categories, and an inline "Add category…"
-action in the waypoint sheets.
+action in the waypoint sheets, inline folder rename (double-click or
+"Rename…" context menu entry triggers an in-place text editor confirmed
+with Return and cancelled with Escape), list editing via double-click or
+"Edit List…" context menu (pre-populated name and folder picker in a
+repurposed creation sheet), Route Profiles moved to the Manage menu
+alongside Categories, and a sidebar refactor splitting LibrarySidebarView
+into four files (LibrarySidebarView.swift, FolderLabelView.swift,
+ListRowView.swift, LibraryBottomPanel.swift) to resolve systemic Swift
+type-checker timeout errors.
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -275,14 +283,6 @@ coordinates and a Nominatim reverse geocode request fires immediately
 to pre-populate the name field. Silent elevation capture and all other
 sheet behaviour is unchanged. Existing sheet entry points (toolbar,
 context menu, keyboard shortcut) pass `prefilledCoordinate: nil`.
-
-**Known issues / deferred:**
-- Valhalla uses the public OSM community instance — rate-limited.
-  To be replaced before release.
-- Route direction arrows (Increment 28) were attempted using a
-  canvas-drawn custom image registered via map.addImage. The approach
-  proved unreliable and was fully reverted. To be revisited using an
-  SDF image approach.
 
 Increment 26 detail: A floating SwiftUI overlay (MapStylePicker) in the
 top-left corner of the map provides three style buttons (Streets,
@@ -444,4 +444,37 @@ it presents CategoryEditSheet as a sheet directly on top of the waypoint
 sheet; on save the new category is automatically pre-selected and the
 dropdown refreshes via an onSave callback.
 
-**Next step: Increment 32 — TBD.**
+Increment 32 detail: Folders can be renamed via double-click or a new
+"Rename…" right-click context menu entry; both trigger an inline
+TextField on the folder name row (FolderLabelView), confirmed with Return
+and cancelled with Escape. Empty or unchanged input is treated as a
+cancel. Lists can be edited via double-click or a new "Edit List…"
+right-click context menu entry; both open NewListSheet repurposed as an
+edit sheet, pre-populated with the current name and parent folder,
+allowing rename and folder reassignment in a single action. Route
+Profiles has been moved from the File menu to the Manage menu, separated
+from Categories by a Divider. LibrarySidebarView.swift was refactored
+from a single 1000+ line file into four files to resolve systemic Swift
+type-checker timeout errors caused by excessive view body complexity:
+FolderLabelView.swift (folder DisclosureGroup labels), ListRowView.swift
+(list rows within folders), LibraryBottomPanel.swift (the resizable items
+panel including its drag-to-resize divider), and a slimmed
+LibrarySidebarView.swift with all modal modifiers extracted into a
+dedicated LibrarySidebarModals ViewModifier. A UTExportedTypeDeclarations
+entry for com.routekeeper.listitem was added to Info.plist. List drag and
+drop between folders was attempted but proved unreliable within a
+DisclosureGroup label inside a sidebar List on macOS; lists can be moved
+between folders via the Edit List sheet instead.
+
+**Known issues / deferred:**
+- Valhalla uses the public OSM community instance — rate-limited.
+  To be replaced before release.
+- Route direction arrows (Increment 28) were attempted using a
+  canvas-drawn custom image registered via map.addImage. The approach
+  proved unreliable and was fully reverted. To be revisited using an
+  SDF image approach.
+- List drag and drop between folders within the sidebar is deferred.
+  The Edit List sheet (Increment 32) provides folder reassignment
+  as an alternative.
+
+**Next step: Increment 33 — TBD.**

@@ -113,6 +113,20 @@ actor DatabaseManager {
             }
         }
 
+        // v5 — adds waypoint back-reference to route_points and recalculation
+        //      flag to routes; both default to no-op values on existing rows.
+        migrator.registerMigration("v5") { db in
+            try db.execute(
+                sql: "ALTER TABLE route_points " +
+                     "ADD COLUMN waypoint_item_id INTEGER " +
+                     "REFERENCES waypoints(item_id) ON DELETE SET NULL"
+            )
+            try db.execute(
+                sql: "ALTER TABLE routes " +
+                     "ADD COLUMN needs_recalculation INTEGER NOT NULL DEFAULT 0"
+            )
+        }
+
         try await migrator.migrate(dbQueue)
         _dbQueue = dbQueue
     }
@@ -413,10 +427,11 @@ actor DatabaseManager {
                     sql: """
                         INSERT INTO route_points
                             (route_item_id, sequence_number, latitude, longitude,
-                             announces_arrival, name)
-                        VALUES (?, 1, ?, ?, 1, ?)
+                             announces_arrival, name, waypoint_item_id)
+                        VALUES (?, 1, ?, ?, 1, ?, ?)
                         """,
-                    arguments: [itemId, start.latitude, start.longitude, start.name]
+                    arguments: [itemId, start.latitude, start.longitude,
+                                start.name, start.itemId]
                 )
             }
             if let end = endWaypoint {
@@ -424,10 +439,11 @@ actor DatabaseManager {
                     sql: """
                         INSERT INTO route_points
                             (route_item_id, sequence_number, latitude, longitude,
-                             announces_arrival, name)
-                        VALUES (?, 2, ?, ?, 1, ?)
+                             announces_arrival, name, waypoint_item_id)
+                        VALUES (?, 2, ?, ?, 1, ?, ?)
                         """,
-                    arguments: [itemId, end.latitude, end.longitude, end.name]
+                    arguments: [itemId, end.latitude, end.longitude,
+                                end.name, end.itemId]
                 )
             }
 
@@ -471,8 +487,8 @@ actor DatabaseManager {
                     sql: """
                         INSERT INTO route_points
                             (route_item_id, sequence_number, latitude, longitude,
-                             elevation, announces_arrival, name)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                             elevation, announces_arrival, name, waypoint_item_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                     arguments: [
                         routeItemId,
@@ -481,7 +497,8 @@ actor DatabaseManager {
                         point.longitude,
                         point.elevation,
                         point.announcesArrival ? 1 : 0,
-                        point.name
+                        point.name,
+                        point.waypointItemId
                     ]
                 )
             }
@@ -498,6 +515,33 @@ actor DatabaseManager {
                     """,
                 arguments: [geometry, distanceKm, durationSeconds,
                             elevationProfile, routeItemId]
+            )
+        }
+    }
+
+    /// Moves a single route point to new coordinates.
+    ///
+    /// Matches the row by both `route_item_id` and `sequence_number` so exactly
+    /// one row is affected. Used after a map drag to persist the dropped position
+    /// before re-routing through Valhalla.
+    func updateRoutePointPosition(
+        routeItemId: Int64,
+        sequenceNumber: Int,
+        latitude: Double,
+        longitude: Double
+    ) async throws {
+        let coordinateName = String(format: "%.4f, %.4f", latitude, longitude)
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE route_points
+                    SET latitude = ?, longitude = ?,
+                        waypoint_item_id = NULL, name = ?
+                    WHERE route_item_id = ? AND sequence_number = ?
+                    """,
+                arguments: [latitude, longitude, coordinateName,
+                            routeItemId, sequenceNumber]
             )
         }
     }

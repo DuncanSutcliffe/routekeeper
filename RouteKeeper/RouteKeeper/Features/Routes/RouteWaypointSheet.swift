@@ -73,7 +73,8 @@ struct RouteWaypointSheet: View {
                     longitude: summary.longitude,
                     elevation: nil,
                     announcesArrival: true,
-                    name: summary.name
+                    name: summary.name,
+                    waypointItemId: summary.itemId
                 )
                 let index = insertionIndex ?? points.count
                 points.insert(newPoint, at: min(index, points.count))

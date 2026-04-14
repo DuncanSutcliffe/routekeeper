@@ -115,6 +115,9 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
     var elevationProfile: String?
     /// Free-form notes attached to this route.
     var notes: String?
+    /// Set to `true` when the route's waypoints have changed and a fresh
+    /// Valhalla calculation is needed. Defaults to `false` on all existing rows.
+    var needsRecalculation: Bool
 
     init(itemId: Int64, routingProfile: String = "motorcycle") {
         self.itemId = itemId
@@ -125,6 +128,7 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
         self.avoidFerries   = false
         self.shortestRoute  = false
         self.colorHex       = "#1A73E8"
+        self.needsRecalculation = false
     }
 
     enum CodingKeys: String, CodingKey {
@@ -143,6 +147,7 @@ struct Route: Codable, FetchableRecord, PersistableRecord {
         case colorHex       = "color_hex"
         case elevationProfile = "elevation_profile"
         case notes
+        case needsRecalculation = "needs_recalculation"
     }
 }
 
@@ -162,6 +167,10 @@ struct RoutePoint: Codable, FetchableRecord, PersistableRecord {
     /// `false` = shaping point (silent; influences the route shape only).
     var announcesArrival: Bool
     var name: String?
+    /// Foreign key back to the library waypoint this point was created from.
+    /// `nil` for all points created before migration v5, and for points added
+    /// without a corresponding library waypoint.
+    var waypointItemId: Int64?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -170,6 +179,7 @@ struct RoutePoint: Codable, FetchableRecord, PersistableRecord {
         case latitude, longitude, elevation
         case announcesArrival = "announces_arrival"
         case name
+        case waypointItemId = "waypoint_item_id"
     }
 }
 

@@ -25,6 +25,7 @@
 import SwiftUI
 import WebKit
 import Observation
+import CoreLocation
 
 // MARK: - WaypointDisplay
 
@@ -67,6 +68,10 @@ struct ViaWaypoint: Equatable {
     /// `true` = via point rendered as a numbered circle.
     /// `false` = shaping point rendered as a small filled dot.
     let announcesArrival: Bool
+    /// The `sequence_number` of the corresponding `route_points` row.
+    /// Sent back to Swift in the `waypointDragged` bridge message so the
+    /// correct DB row can be identified after a drag.
+    let sequenceNumber: Int
 }
 
 // MARK: - RouteDisplay
@@ -82,6 +87,10 @@ struct RouteDisplay: Equatable {
     let colorHex: String
     /// Display name shown as a compact label at the route start point.
     let name: String
+    /// `sequence_number` of the start route_point (the first row in DB order).
+    let startSeq: Int
+    /// `sequence_number` of the end route_point (the last row in DB order).
+    let endSeq: Int
 }
 
 // MARK: - MapViewModel
@@ -523,19 +532,21 @@ struct MapView: NSViewRepresentable {
                     .replacingOccurrences(of: "\"", with: "\\\"")
                     .replacingOccurrences(of: "\n", with: "")
 
-                // Announcing via points — numbered circles.
+                // Announcing via points — numbered, draggable circles.
                 let announcing = display.viaWaypoints.filter { $0.announcesArrival }
                 let viaItems = announcing.map { wp in
-                    "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude),\"index\":\(wp.index)}"
+                    "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude)," +
+                    "\"index\":\(wp.index),\"seq\":\(wp.sequenceNumber)}"
                 }.joined(separator: ",")
                 let viaEscaped = "[\(viaItems)]"
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
 
-                // Shaping points — small filled dots, no label.
+                // Shaping points — small filled dots, draggable, no label.
                 let shaping = display.viaWaypoints.filter { !$0.announcesArrival }
                 let shapingItems = shaping.map { wp in
-                    "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude)}"
+                    "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude)," +
+                    "\"seq\":\(wp.sequenceNumber)}"
                 }.joined(separator: ",")
                 let shapingEscaped = "[\(shapingItems)]"
                     .replacingOccurrences(of: "\\", with: "\\\\")
@@ -546,7 +557,8 @@ struct MapView: NSViewRepresentable {
                     .replacingOccurrences(of: "\"", with: "\\\"")
                 let js = "showRoute(\"\(escaped)\", \"\(viaEscaped)\"," +
                          " \"\(display.colorHex)\", \"\(shapingEscaped)\"," +
-                         " \(display.itemId), \"\(escapedName)\")"
+                         " \(display.itemId), \"\(escapedName)\"," +
+                         " \(display.startSeq), \(display.endSeq))"
                 webView.evaluateJavaScript(js)
             } else {
                 webView.evaluateJavaScript("clearRoute();")
@@ -570,6 +582,86 @@ struct MapView: NSViewRepresentable {
                 guard let lat = body["lat"] as? Double,
                       let lng = body["lng"] as? Double else { return }
                 onAddWaypointAtCoordinate?(lat, lng)
+                return
+            }
+
+            if type == "waypointDragged" {
+                guard let routeItemIdInt = body["routeItemId"]    as? Int,
+                      let sequenceNumber = body["sequenceNumber"] as? Int,
+                      let latitude       = body["latitude"]       as? Double,
+                      let longitude      = body["longitude"]      as? Double else { return }
+                let routeItemId = Int64(routeItemIdInt)
+                guard let display = lastRouteDisplay else { return }
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    do {
+                        // 1. Persist the dropped position.
+                        try await DatabaseManager.shared.updateRoutePointPosition(
+                            routeItemId:    routeItemId,
+                            sequenceNumber: sequenceNumber,
+                            latitude:       latitude,
+                            longitude:      longitude
+                        )
+                        // 2. Reload all points so Valhalla sees the updated position.
+                        let allPoints = try await DatabaseManager.shared.fetchRoutePoints(
+                            routeItemId: routeItemId
+                        )
+                        // 3. Fetch stored routing criteria from the route record.
+                        guard let route = try await DatabaseManager.shared.fetchRouteRecord(
+                            itemId: routeItemId
+                        ) else { return }
+                        // 4. Recalculate via Valhalla using the same costing options.
+                        let coords = allPoints.map {
+                            CLLocationCoordinate2D(latitude: $0.latitude,
+                                                   longitude: $0.longitude)
+                        }
+                        let result = try await RoutingService.shared.calculateRoute(
+                            through:        coords,
+                            avoidMotorways: route.avoidMotorways,
+                            avoidTolls:     route.avoidTolls,
+                            avoidUnpaved:   route.avoidUnpaved,
+                            avoidFerries:   route.avoidFerries,
+                            shortestRoute:  route.shortestRoute
+                        )
+                        // 5. Save the new geometry back to the routes table.
+                        try await DatabaseManager.shared.updateRouteGeometryAndStats(
+                            itemId:           routeItemId,
+                            geometry:         result.geometry,
+                            distanceKm:       result.distanceKm,
+                            durationSeconds:  result.durationSeconds,
+                            elevationProfile: result.elevationProfile
+                        )
+                        // 6. Rebuild RouteDisplay with updated positions and redraw.
+                        //    suppressRecentre prevents the viewport jumping to fitBounds.
+                        let intermediates = allPoints.count > 2
+                            ? Array(allPoints.dropFirst().dropLast()) : []
+                        var announcingCount = 0
+                        let viaWaypoints = intermediates.map { pt -> ViaWaypoint in
+                            if pt.announcesArrival { announcingCount += 1 }
+                            return ViaWaypoint(
+                                latitude:         pt.latitude,
+                                longitude:        pt.longitude,
+                                index:            announcingCount,
+                                announcesArrival: pt.announcesArrival,
+                                sequenceNumber:   pt.sequenceNumber
+                            )
+                        }
+                        let newDisplay = RouteDisplay(
+                            itemId:       display.itemId,
+                            geojson:      result.geometry,
+                            viaWaypoints: viaWaypoints,
+                            colorHex:     display.colorHex,
+                            name:         display.name,
+                            startSeq:     allPoints.first?.sequenceNumber ?? display.startSeq,
+                            endSeq:       allPoints.last?.sequenceNumber  ?? display.endSeq
+                        )
+                        guard let wv = self.webView else { return }
+                        try await wv.evaluateJavaScript("suppressRecentre = true;")
+                        self.applyRouteDisplay(newDisplay, in: wv)
+                    } catch {
+                        print("waypointDragged recalculation failed: \(error)")
+                    }
+                }
                 return
             }
 

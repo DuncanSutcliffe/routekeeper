@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–32 complete.**
+**Increments 1–33 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -266,7 +266,8 @@ repurposed creation sheet), Route Profiles moved to the Manage menu
 alongside Categories, and a sidebar refactor splitting LibrarySidebarView
 into four files (LibrarySidebarView.swift, FolderLabelView.swift,
 ListRowView.swift, LibraryBottomPanel.swift) to resolve systemic Swift
-type-checker timeout errors.
+type-checker timeout errors, and route label anchoring moved to the
+geometric midpoint of each route's LineString (Increment 33).
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -466,6 +467,18 @@ drop between folders was attempted but proved unreliable within a
 DisclosureGroup label inside a sidebar List on macOS; lists can be moved
 between folders via the Edit List sheet instead.
 
+Increment 33 detail: Route label anchoring in MapLibreMap.html was
+changed from the route's first coordinate to the geometric midpoint of
+its LineString. A new `lineMidpoint(coords)` JavaScript helper takes an
+array of [lng, lat] pairs, sums Euclidean distances between consecutive
+pairs to find the total length, then walks the segments a second time
+until the running total reaches 50% of that length, interpolating
+between the two straddling coordinates. Both call sites were updated:
+`showRoute` applies `lineMidpoint` to the full coordinate array already
+in scope; `showMultipleItems` stores the full `allLineCoords` array as
+`allCoords` on each route marker group and applies `lineMidpoint` there.
+Waypoint labels are unaffected.
+
 **Known issues / deferred:**
 - Valhalla uses the public OSM community instance — rate-limited.
   To be replaced before release.
@@ -477,4 +490,4 @@ between folders via the Edit List sheet instead.
   The Edit List sheet (Increment 32) provides folder reassignment
   as an alternative.
 
-**Next step: Increment 33 — TBD.**
+**Next step: Increment 34 — TBD.**

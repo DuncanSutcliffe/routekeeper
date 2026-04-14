@@ -100,6 +100,14 @@
         var multiViaLayerIds = [];
         var multiViaSources  = [];
 
+        // Holds maplibregl.Marker instances for draggable via/shaping waypoints on
+        // the currently displayed single route.  Cleared by clearRoute().
+        var routeDraggableMarkers = [];
+
+        // Holds the start and end maplibregl.Marker instances for the currently
+        // displayed single route.  Cleared by clearRoute().
+        var routeMarkers = [];
+
         /// Returns the coordinate at 50% of the cumulative Euclidean length of
         /// a LineString defined by an array of [lng, lat] pairs.
         ///
@@ -382,8 +390,9 @@
         /// Image loading is Promise-based because HTMLImageElement src loading
         /// is async — MapLibre silently ignores addImage calls on unloaded images.
         /// fitBounds is suppressed when suppressRecentre is true (set by prepareStyleSwitch).
-        function showRoute(geojsonString, viaWaypointsJSON, lineColour, shapingWaypointsJSON, itemId, name) {
+        function showRoute(geojsonString, viaWaypointsJSON, lineColour, shapingWaypointsJSON, itemId, name, startSeq, endSeq) {
             lineColour = lineColour || '#1A73E8';
+
             clearRoute();
             const geojson = JSON.parse(geojsonString);
             const coords = geojson.features[0].geometry.coordinates;
@@ -399,114 +408,78 @@
                 paint: { 'line-color': lineColour, 'line-width': 4 }
             });
 
-            // Start flag — white circle with route-coloured stroke and pre-registered icon.
-            map.addSource('route-start-source', {
-                type: 'geojson',
-                data: { type: 'Feature', geometry: { type: 'Point', coordinates: startCoord }, properties: {} }
+            // Start marker — draggable, coloured to match the route line.
+            const startMarker = new maplibregl.Marker({ draggable: true, color: lineColour })
+                .setLngLat(startCoord)
+                .addTo(map);
+            startMarker.on('dragend', () => {
+                const pos = startMarker.getLngLat();
+                postToSwift({
+                    type: 'waypointDragged',
+                    routeItemId: itemId,
+                    sequenceNumber: startSeq,
+                    latitude: pos.lat,
+                    longitude: pos.lng
+                });
             });
-            map.addLayer({
-                id: 'route-start-circle-layer',
-                type: 'circle',
-                source: 'route-start-source',
-                paint: { 'circle-radius': 14, 'circle-color': '#FFFFFF',
-                         'circle-stroke-width': 2.5, 'circle-stroke-color': lineColour }
-            });
-            map.addLayer({
-                id: 'route-start-symbol-layer',
-                type: 'symbol',
-                source: 'route-start-source',
-                layout: { 'icon-image': 'icon-route-start', 'icon-anchor': 'center',
-                          'icon-size': 1.0, 'icon-allow-overlap': true,
-                          'icon-ignore-placement': true }
-            });
+            routeMarkers.push(startMarker);
 
-            // End flag — same treatment using the checkered flag icon.
-            map.addSource('route-end-source', {
-                type: 'geojson',
-                data: { type: 'Feature', geometry: { type: 'Point', coordinates: endCoord }, properties: {} }
+            // End marker — same treatment.
+            const endMarker = new maplibregl.Marker({ draggable: true, color: lineColour })
+                .setLngLat(endCoord)
+                .addTo(map);
+            endMarker.on('dragend', () => {
+                const pos = endMarker.getLngLat();
+                postToSwift({
+                    type: 'waypointDragged',
+                    routeItemId: itemId,
+                    sequenceNumber: endSeq,
+                    latitude: pos.lat,
+                    longitude: pos.lng
+                });
             });
-            map.addLayer({
-                id: 'route-end-circle-layer',
-                type: 'circle',
-                source: 'route-end-source',
-                paint: { 'circle-radius': 14, 'circle-color': '#FFFFFF',
-                         'circle-stroke-width': 2.5, 'circle-stroke-color': lineColour }
-            });
-            map.addLayer({
-                id: 'route-end-symbol-layer',
-                type: 'symbol',
-                source: 'route-end-source',
-                layout: { 'icon-image': 'icon-route-end', 'icon-anchor': 'center',
-                          'icon-size': 1.0, 'icon-allow-overlap': true,
-                          'icon-ignore-placement': true }
-            });
+            routeMarkers.push(endMarker);
 
-            // Announcing via waypoint circles — white fill, route-coloured stroke, numbered.
+            // Announcing via waypoint markers — draggable, route-coloured, smaller than start/end.
             const viaWaypoints = (viaWaypointsJSON && viaWaypointsJSON.length > 2)
                 ? JSON.parse(viaWaypointsJSON) : [];
-            if (viaWaypoints.length > 0) {
-                const viaFeatures = viaWaypoints.map(function(w) {
-                    return {
-                        type: 'Feature',
-                        geometry: { type: 'Point', coordinates: [w.lng, w.lat] },
-                        properties: { index: w.index }
-                    };
+            viaWaypoints.forEach(function(w) {
+                const viaMarker = new maplibregl.Marker({ draggable: true, color: lineColour, scale: 0.7 })
+                    .setLngLat([w.lng, w.lat])
+                    .addTo(map);
+                viaMarker.on('dragend', () => {
+                    const pos = viaMarker.getLngLat();
+                    postToSwift({
+                        type: 'waypointDragged',
+                        routeItemId: itemId,
+                        sequenceNumber: w.seq,
+                        latitude: pos.lat,
+                        longitude: pos.lng
+                    });
                 });
-                map.addSource('route-via-source', {
-                    type: 'geojson',
-                    data: { type: 'FeatureCollection', features: viaFeatures }
-                });
-                map.addLayer({
-                    id: 'route-via-circles',
-                    type: 'circle',
-                    source: 'route-via-source',
-                    paint: {
-                        'circle-radius': 10,
-                        'circle-color': '#FFFFFF',
-                        'circle-stroke-color': lineColour,
-                        'circle-stroke-width': 2
-                    }
-                });
-                map.addLayer({
-                    id: 'route-via-labels',
-                    type: 'symbol',
-                    source: 'route-via-source',
-                    layout: {
-                        'text-field': ['to-string', ['get', 'index']],
-                        'text-size': 11,
-                        'text-allow-overlap': true,
-                        'text-ignore-placement': true
-                    },
-                    paint: { 'text-color': '#1a1a1a' }
-                });
-            }
+                routeMarkers.push(viaMarker);
+            });
 
-            // Shaping waypoint dots — small filled circle in the route colour, no label.
+            // Shaping waypoint markers — subtle grey, smaller than via markers.
             const shapingWaypoints = (shapingWaypointsJSON && shapingWaypointsJSON.length > 2)
                 ? JSON.parse(shapingWaypointsJSON) : [];
-            if (shapingWaypoints.length > 0) {
-                const shapingFeatures = shapingWaypoints.map(function(w) {
-                    return {
-                        type: 'Feature',
-                        geometry: { type: 'Point', coordinates: [w.lng, w.lat] },
-                        properties: {}
-                    };
+
+            shapingWaypoints.forEach(function(w) {
+                const shapingMarker = new maplibregl.Marker({ draggable: true, color: '#888888', scale: 0.5 })
+                    .setLngLat([w.lng, w.lat])
+                    .addTo(map);
+                shapingMarker.on('dragend', () => {
+                    const pos = shapingMarker.getLngLat();
+                    postToSwift({
+                        type: 'waypointDragged',
+                        routeItemId: itemId,
+                        sequenceNumber: w.seq,
+                        latitude: pos.lat,
+                        longitude: pos.lng
+                    });
                 });
-                map.addSource('route-shaping-source', {
-                    type: 'geojson',
-                    data: { type: 'FeatureCollection', features: shapingFeatures }
-                });
-                map.addLayer({
-                    id: 'route-shaping-circles',
-                    type: 'circle',
-                    source: 'route-shaping-source',
-                    paint: {
-                        'circle-radius': 7.5,
-                        'circle-color': lineColour,
-                        'circle-stroke-width': 0
-                    }
-                });
-            }
+                routeMarkers.push(shapingMarker);
+            });
 
             if (suppressRecentre) {
                 suppressRecentre = false;
@@ -531,17 +504,8 @@
         /// Also clears the legacy "active-route" id used by drawRoute() so that
         /// switching between the two mechanisms never leaves orphaned layers.
         function clearRoute() {
-            if (map.getLayer('route-shaping-circles'))    map.removeLayer('route-shaping-circles');
-            if (map.getSource('route-shaping-source'))    map.removeSource('route-shaping-source');
-            if (map.getLayer('route-via-labels'))         map.removeLayer('route-via-labels');
-            if (map.getLayer('route-via-circles'))        map.removeLayer('route-via-circles');
-            if (map.getSource('route-via-source'))        map.removeSource('route-via-source');
-            if (map.getLayer('route-end-symbol-layer'))   map.removeLayer('route-end-symbol-layer');
-            if (map.getLayer('route-end-circle-layer'))   map.removeLayer('route-end-circle-layer');
-            if (map.getSource('route-end-source'))        map.removeSource('route-end-source');
-            if (map.getLayer('route-start-symbol-layer')) map.removeLayer('route-start-symbol-layer');
-            if (map.getLayer('route-start-circle-layer')) map.removeLayer('route-start-circle-layer');
-            if (map.getSource('route-start-source'))      map.removeSource('route-start-source');
+            routeMarkers.forEach(function(m) { m.remove(); });
+            routeMarkers = [];
             if (map.getLayer('route-layer'))              map.removeLayer('route-layer');
             if (map.getSource('route-source'))            map.removeSource('route-source');
             if (map.getLayer('active-route'))             map.removeLayer('active-route');

@@ -315,7 +315,8 @@ struct ContentView: View {
                         latitude: pt.latitude,
                         longitude: pt.longitude,
                         index: announcingCount,
-                        announcesArrival: pt.announcesArrival
+                        announcesArrival: pt.announcesArrival,
+                        sequenceNumber: pt.sequenceNumber
                     )
                 }
                 mapViewModel.showRoute(RouteDisplay(
@@ -323,7 +324,9 @@ struct ContentView: View {
                     geojson: geometry,
                     viaWaypoints: viaWaypoints,
                     colorHex: routeRecord?.colorHex ?? "#1A73E8",
-                    name: item.name
+                    name: item.name,
+                    startSeq: allPoints.first?.sequenceNumber ?? 0,
+                    endSeq: allPoints.last?.sequenceNumber ?? 0
                 ))
             } else {
                 mapViewModel.clearRoute()

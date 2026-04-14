@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import CoreLocation
 
 // MARK: - MultiItemEntry helpers
 
@@ -269,12 +270,13 @@ struct ContentView: View {
             routeElevationProfile = nil
             do {
                 if let wp = try await DatabaseManager.shared.fetchWaypointDetails(itemId: itemId) {
-                    // Derive the category icon image name if a category is assigned.
+                    // Derive the SF Symbol name for the category icon, used by
+                    // applyWaypointDisplay to render a base64 PNG via categoryIconBase64().
                     var iconImageName: String? = nil
                     if let categoryId = wp.categoryId {
                         let categories = (try? await DatabaseManager.shared.fetchCategories()) ?? []
                         if let cat = categories.first(where: { $0.id == categoryId }) {
-                            iconImageName = "icon-\(cat.name.lowercased())"
+                            iconImageName = cat.iconName
                         }
                     }
                     mapViewModel.showWaypoint(
@@ -294,7 +296,40 @@ struct ContentView: View {
             }
         case .route:
             mapViewModel.clearWaypoint()
-            let routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(itemId: itemId)
+            var routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(itemId: itemId)
+            // If a library waypoint was moved since this route was last drawn,
+            // recalculate via Valhalla now so the display is immediately current.
+            if routeRecord?.needsRecalculation == true {
+                let points = (try? await DatabaseManager.shared.fetchRoutePoints(
+                    routeItemId: itemId
+                )) ?? []
+                if points.count >= 2,
+                   let record = routeRecord {
+                    let coords = points.map {
+                        CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+                    }
+                    if let result = try? await RoutingService.shared.calculateRoute(
+                        through:        coords,
+                        avoidMotorways: record.avoidMotorways,
+                        avoidTolls:     record.avoidTolls,
+                        avoidUnpaved:   record.avoidUnpaved,
+                        avoidFerries:   record.avoidFerries,
+                        shortestRoute:  record.shortestRoute
+                    ) {
+                        try? await DatabaseManager.shared.updateRouteGeometryAndStats(
+                            itemId:           itemId,
+                            geometry:         result.geometry,
+                            distanceKm:       result.distanceKm,
+                            durationSeconds:  result.durationSeconds,
+                            elevationProfile: result.elevationProfile
+                        )
+                        // Re-fetch so the display uses the updated geometry and stats.
+                        routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(
+                            itemId: itemId
+                        )
+                    }
+                }
+            }
             routeDistanceKm       = routeRecord?.distanceKm
             routeDurationSeconds  = routeRecord?.durationSeconds
             routeElevationProfile = routeRecord?.elevationProfile
@@ -393,41 +428,66 @@ struct ContentView: View {
                     ))
                 }
             case .route:
-                if let routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(
+                guard let routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(
                     itemId: itemId
-                ), let geometry = routeRecord.geometry {
-                    // Fetch route points to build via and shaping waypoint arrays,
-                    // matching the logic used in the single-route display path.
-                    let allPoints = (try? await DatabaseManager.shared.fetchRoutePoints(
-                        routeItemId: itemId
-                    )) ?? []
-                    let intermediates = allPoints.count > 2
-                        ? Array(allPoints.dropFirst().dropLast())
-                        : []
-                    var announcingCount = 0
-                    var viaWps: [MultiViaWaypoint] = []
-                    var shapingWps: [MultiShapingWaypoint] = []
-                    for pt in intermediates {
-                        if pt.announcesArrival {
-                            announcingCount += 1
-                            viaWps.append(MultiViaWaypoint(
-                                lat: pt.latitude, lng: pt.longitude, index: announcingCount
-                            ))
-                        } else {
-                            shapingWps.append(MultiShapingWaypoint(
-                                lat: pt.latitude, lng: pt.longitude
-                            ))
-                        }
+                ) else { break }
+                // Fetch points once — used for both recalculation and via/shaping arrays.
+                let allPoints = (try? await DatabaseManager.shared.fetchRoutePoints(
+                    routeItemId: itemId
+                )) ?? []
+                // If a library waypoint was moved since the route was last calculated,
+                // recalculate via Valhalla now and save the fresh geometry.
+                var geometry = routeRecord.geometry
+                if routeRecord.needsRecalculation, allPoints.count >= 2 {
+                    let coords = allPoints.map {
+                        CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
                     }
-                    entries.append(MultiItemEntry(
-                        type: .route,
-                        color: routeRecord.colorHex,
-                        geojson: geometry,
-                        itemId: itemId, name: item.name,
-                        viaWaypoints:     viaWps.isEmpty     ? nil : viaWps,
-                        shapingWaypoints: shapingWps.isEmpty ? nil : shapingWps
-                    ))
+                    if let result = try? await RoutingService.shared.calculateRoute(
+                        through:        coords,
+                        avoidMotorways: routeRecord.avoidMotorways,
+                        avoidTolls:     routeRecord.avoidTolls,
+                        avoidUnpaved:   routeRecord.avoidUnpaved,
+                        avoidFerries:   routeRecord.avoidFerries,
+                        shortestRoute:  routeRecord.shortestRoute
+                    ) {
+                        try? await DatabaseManager.shared.updateRouteGeometryAndStats(
+                            itemId:           itemId,
+                            geometry:         result.geometry,
+                            distanceKm:       result.distanceKm,
+                            durationSeconds:  result.durationSeconds,
+                            elevationProfile: result.elevationProfile
+                        )
+                        geometry = result.geometry
+                    }
                 }
+                guard let geometry else { break }
+                // Build via and shaping waypoint arrays, matching the single-item path.
+                let intermediates = allPoints.count > 2
+                    ? Array(allPoints.dropFirst().dropLast())
+                    : []
+                var announcingCount = 0
+                var viaWps: [MultiViaWaypoint] = []
+                var shapingWps: [MultiShapingWaypoint] = []
+                for pt in intermediates {
+                    if pt.announcesArrival {
+                        announcingCount += 1
+                        viaWps.append(MultiViaWaypoint(
+                            lat: pt.latitude, lng: pt.longitude, index: announcingCount
+                        ))
+                    } else {
+                        shapingWps.append(MultiShapingWaypoint(
+                            lat: pt.latitude, lng: pt.longitude
+                        ))
+                    }
+                }
+                entries.append(MultiItemEntry(
+                    type: .route,
+                    color: routeRecord.colorHex,
+                    geojson: geometry,
+                    itemId: itemId, name: item.name,
+                    viaWaypoints:     viaWps.isEmpty     ? nil : viaWps,
+                    shapingWaypoints: shapingWps.isEmpty ? nil : shapingWps
+                ))
             case .track:
                 break
             }

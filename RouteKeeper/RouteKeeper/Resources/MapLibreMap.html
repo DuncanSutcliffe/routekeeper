@@ -108,6 +108,10 @@
         // displayed single route.  Cleared by clearRoute().
         var routeMarkers = [];
 
+        // Holds the maplibregl.Marker instance for the currently displayed library
+        // waypoint, or null when no waypoint is shown.  Cleared by clearWaypoint().
+        var waypointMarker = null;
+
         /// Returns the coordinate at 50% of the cumulative Euclidean length of
         /// a LineString defined by an array of [lng, lat] pairs.
         ///
@@ -519,66 +523,62 @@
 
         /// Shows a single waypoint marker on the map.
         ///
-        /// lat, lng       — WGS-84 coordinates
-        /// colour         — CSS colour string used for the circle stroke, e.g. "#E8453C"
-        /// itemId         — (optional) item identifier; when supplied a name label is shown
-        /// name           — (optional) plain-text label displayed adjacent to the marker
-        /// iconImageName  — (optional) registered MapLibre image name, e.g. "icon-cafe";
-        ///                  pass null or omit to render the circle only
-        ///
-        /// Renders a white-filled circle with a coloured stroke (waypoint-circle layer)
-        /// and, when iconImageName is provided, a centred SF Symbol icon on top
-        /// (waypoint-icon layer).
+        /// lat, lng    — WGS-84 coordinates
+        /// colour      — CSS colour string used for the circle stroke, e.g. "#E8453C"
+        /// itemId      — (optional) item identifier; when supplied a name label is shown
+        /// name        — (optional) plain-text label displayed adjacent to the marker
+        /// iconBase64  — (optional) base64-encoded PNG of the SF Symbol category icon;
+        ///               pass null or omit to render the plain circle only
         ///
         /// Any existing waypoint marker is removed first. If the style is not yet
         /// loaded the call is deferred until the map is idle.
         /// flyTo is suppressed when suppressRecentre is true (set by prepareStyleSwitch).
-        function showWaypoint(lat, lng, colour, itemId, name, iconImageName) {
+        function showWaypoint(lat, lng, colour, itemId, name, iconBase64) {
             if (!map.isStyleLoaded()) {
                 map.once("idle", function () {
-                    showWaypoint(lat, lng, colour, itemId, name, iconImageName);
+                    showWaypoint(lat, lng, colour, itemId, name, iconBase64);
                 });
                 return;
             }
 
             clearWaypoint();
 
-            map.addSource("waypoint-source", {
-                type: "geojson",
-                data: {
-                    type: "Feature",
-                    geometry: { type: "Point", coordinates: [lng, lat] }
-                }
-            });
+            // Custom HTML element: white circle with a coloured stroke.
+            var el = document.createElement('div');
+            el.style.width           = '33px';
+            el.style.height          = '33px';
+            el.style.borderRadius    = '50%';
+            el.style.backgroundColor = 'white';
+            el.style.border          = '2.5px solid ' + colour;
+            el.style.cursor          = 'grab';
 
-            // White-filled circle with a coloured stroke.
-            map.addLayer({
-                id: "waypoint-circle",
-                type: "circle",
-                source: "waypoint-source",
-                paint: {
-                    "circle-radius": 14,
-                    "circle-color": "#FFFFFF",
-                    "circle-stroke-width": 2.5,
-                    "circle-stroke-color": colour
-                }
-            });
-
-            // Category icon centred on the circle (only when a name is provided).
-            if (iconImageName) {
-                map.addLayer({
-                    id: "waypoint-icon",
-                    type: "symbol",
-                    source: "waypoint-source",
-                    layout: {
-                        "icon-image": iconImageName,
-                        "icon-anchor": "center",
-                        "icon-size": 1.0,
-                        "icon-allow-overlap": true,
-                        "icon-ignore-placement": true
-                    }
-                });
+            if (iconBase64) {
+                const img = document.createElement('img');
+                img.src = 'data:image/png;base64,' + iconBase64;
+                img.style.width = '20px';
+                img.style.height = '20px';
+                img.style.position = 'absolute';
+                img.style.top = '50%';
+                img.style.left = '50%';
+                img.style.transform = 'translate(-50%, -50%)';
+                img.style.pointerEvents = 'none';
+                el.style.position = 'relative';
+                el.appendChild(img);
             }
+
+            waypointMarker = new maplibregl.Marker({ element: el, draggable: true })
+                .setLngLat([lng, lat])
+                .addTo(map);
+
+            waypointMarker.on('dragend', () => {
+                const pos = waypointMarker.getLngLat();
+                postToSwift({
+                    type: 'waypointMoved',
+                    itemId: itemId,
+                    latitude: pos.lat,
+                    longitude: pos.lng
+                });
+            });
 
             if (suppressRecentre) {
                 suppressRecentre = false;
@@ -591,11 +591,12 @@
             }
         }
 
-        /// Removes the waypoint circle layer, optional icon layer, source, and all labels.
+        /// Removes the waypoint marker and all labels.
         function clearWaypoint() {
-            if (map.getLayer("waypoint-icon"))   map.removeLayer("waypoint-icon");
-            if (map.getLayer("waypoint-circle")) map.removeLayer("waypoint-circle");
-            if (map.getSource("waypoint-source")) map.removeSource("waypoint-source");
+            if (waypointMarker) {
+                waypointMarker.remove();
+                waypointMarker = null;
+            }
             hideAllLabels();
         }
 

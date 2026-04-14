@@ -563,7 +563,7 @@ actor DatabaseManager {
             try db.execute(
                 sql: "UPDATE routes " +
                      "SET geometry = ?, distance_km = ?, duration_seconds = ?, " +
-                     "elevation_profile = ? " +
+                     "elevation_profile = ?, needs_recalculation = 0 " +
                      "WHERE item_id = ?",
                 arguments: [geometry, distanceKm, durationSeconds,
                             elevationProfile, itemId]
@@ -667,6 +667,83 @@ actor DatabaseManager {
                     arguments: [itemId, listId]
                 )
             }
+        }
+    }
+
+    /// Updates the latitude and longitude of an existing waypoint.
+    ///
+    /// Only position columns are touched; name, colour, category, and notes are
+    /// unchanged. Used after the user drags the waypoint marker on the map.
+    func updateWaypointPosition(
+        itemId: Int64,
+        latitude: Double,
+        longitude: Double
+    ) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "UPDATE waypoints " +
+                     "SET latitude = ?, longitude = ? " +
+                     "WHERE item_id = ?",
+                arguments: [latitude, longitude, itemId]
+            )
+        }
+    }
+
+    /// Returns all routes that contain a `route_points` row referencing the given
+    /// waypoint item, together with the route's display name.
+    ///
+    /// Used after a library waypoint is moved on the map to ask the user whether
+    /// dependent routes should have their via/shaping positions updated.
+    func fetchRoutesContainingWaypoint(
+        itemId: Int64
+    ) async throws -> [(routeItemId: Int64, routeName: String)] {
+        let q = try requireQueue()
+        return try await q.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT DISTINCT rp.route_item_id, i.name " +
+                     "FROM route_points rp " +
+                     "JOIN items i ON i.id = rp.route_item_id " +
+                     "WHERE rp.waypoint_item_id = ? " +
+                     "ORDER BY i.name",
+                arguments: [itemId]
+            )
+            return rows.map {
+                (routeItemId: $0["route_item_id"] as Int64,
+                 routeName:   $0["name"]          as String)
+            }
+        }
+    }
+
+    /// Updates the position of every `route_points` row that references the
+    /// given waypoint item, then marks each affected route as needing
+    /// recalculation.
+    ///
+    /// Both operations execute in a single write transaction. The
+    /// `needs_recalculation` flag is set to `1`; Valhalla recalculation itself
+    /// is not performed here and must be triggered separately.
+    func updateRoutePointsForWaypoint(
+        waypointItemId: Int64,
+        latitude: Double,
+        longitude: Double
+    ) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "UPDATE route_points " +
+                     "SET latitude = ?, longitude = ? " +
+                     "WHERE waypoint_item_id = ?",
+                arguments: [latitude, longitude, waypointItemId]
+            )
+            try db.execute(
+                sql: "UPDATE routes SET needs_recalculation = 1 " +
+                     "WHERE item_id IN (" +
+                     "    SELECT DISTINCT route_item_id " +
+                     "    FROM route_points WHERE waypoint_item_id = ?" +
+                     ")",
+                arguments: [waypointItemId]
+            )
         }
     }
 

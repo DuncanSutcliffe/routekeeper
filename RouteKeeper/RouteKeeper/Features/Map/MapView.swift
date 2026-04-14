@@ -462,10 +462,12 @@ struct MapView: NSViewRepresentable {
                 let escapedName = wp.name
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
-                // Pass iconImageName as a JS string, or null when absent.
+                // Generate a base64 PNG for the category icon and pass it directly
+                // to showWaypoint(), or pass null when the waypoint has no category.
                 let iconArg: String
-                if let icon = wp.iconImageName, !icon.isEmpty {
-                    iconArg = "\"\(icon)\""
+                if let symbolName = wp.iconImageName, !symbolName.isEmpty,
+                   let b64 = categoryIconBase64Compact(symbolName) {
+                    iconArg = "\"\(b64)\""
                 } else {
                     iconArg = "null"
                 }
@@ -577,6 +579,57 @@ struct MapView: NSViewRepresentable {
             print("JS → Swift: \(body)")
 
             guard let type = body["type"] as? String else { return }
+
+            if type == "debugLog" {
+                let msg = body["message"] as? String ?? "(no message)"
+                print("JS debugLog: \(msg)")
+                return
+            }
+
+            if type == "waypointMoved" {
+                guard let itemIdInt = body["itemId"]   as? Int,
+                      let latitude  = body["latitude"]  as? Double,
+                      let longitude = body["longitude"] as? Double else { return }
+                let itemId = Int64(itemIdInt)
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    do {
+                        // 1. Persist the new waypoint position.
+                        try await DatabaseManager.shared.updateWaypointPosition(
+                            itemId:    itemId,
+                            latitude:  latitude,
+                            longitude: longitude
+                        )
+                        // 2. Find any routes whose route_points reference this waypoint.
+                        let routes = try await DatabaseManager.shared
+                            .fetchRoutesContainingWaypoint(itemId: itemId)
+                        guard !routes.isEmpty else { return }
+                        // 3. Ask the user whether to propagate the new position.
+                        let alert = NSAlert()
+                        alert.messageText = "Update Route Waypoints?"
+                        let count = routes.count
+                        let routeList = routes.map { $0.routeName }.joined(separator: ", ")
+                        alert.informativeText = "This waypoint is used by " +
+                            "\(count == 1 ? "1 route" : "\(count) routes"): " +
+                            "\(routeList). Update those routes to use the new " +
+                            "position? (Routes will be recalculated next time " +
+                            "they are edited.)"
+                        alert.addButton(withTitle: "Update Routes")
+                        alert.addButton(withTitle: "Leave Routes")
+                        let response = alert.runModal()
+                        guard response == .alertFirstButtonReturn else { return }
+                        // 4. Update route_points rows and mark routes for recalculation.
+                        try await DatabaseManager.shared.updateRoutePointsForWaypoint(
+                            waypointItemId: itemId,
+                            latitude:       latitude,
+                            longitude:      longitude
+                        )
+                    } catch {
+                        print("waypointMoved update failed: \(error)")
+                    }
+                }
+                return
+            }
 
             if type == "addWaypointAtCoordinate" {
                 guard let lat = body["lat"] as? Double,
@@ -761,6 +814,54 @@ func sfSymbolBase64(_ name: String, color: NSColor, size: CGFloat = 24) -> Strin
 private func categoryIconBase64(_ symbolName: String) -> String? {
     let ptSize:   CGFloat = 22
     let canvasPx: Int     = 84  // 28 pt × 3×
+
+    let config = NSImage.SymbolConfiguration(pointSize: ptSize, weight: .medium)
+        .applying(NSImage.SymbolConfiguration(paletteColors: [NSColor.black]))
+    guard let symbol = NSImage(systemSymbolName: symbolName,
+                               accessibilityDescription: nil)?
+        .withSymbolConfiguration(config) else { return nil }
+
+    guard let rep = NSBitmapImageRep(
+        bitmapDataPlanes:  nil,
+        pixelsWide:        canvasPx,
+        pixelsHigh:        canvasPx,
+        bitsPerSample:     8,
+        samplesPerPixel:   4,
+        hasAlpha:          true,
+        isPlanar:          false,
+        colorSpaceName:    .deviceRGB,
+        bytesPerRow:       0,
+        bitsPerPixel:      0
+    ) else { return nil }
+
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    guard let ctx = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+    NSGraphicsContext.current = ctx
+
+    // Clear to fully transparent.
+    NSColor.clear.setFill()
+    NSRect(x: 0, y: 0, width: canvasPx, height: canvasPx).fill()
+
+    // Draw the symbol centred in the canvas.
+    let sw = symbol.size.width
+    let sh = symbol.size.height
+    let ox = (CGFloat(canvasPx) - sw) / 2
+    let oy = (CGFloat(canvasPx) - sh) / 2
+    symbol.draw(in: NSRect(x: ox, y: oy, width: sw, height: sh))
+
+    return rep.representation(using: .png, properties: [:])?.base64EncodedString()
+}
+
+/// Renders a single SF Symbol at 14 pt into a transparent 28 × 28 px (14 pt @2×)
+/// PNG and returns it as a base64-encoded string, or `nil` on failure.
+///
+/// Produces a compact icon sized to sit inside the 28 px waypoint marker circle
+/// rendered by `showWaypoint()`. Uses the same weight and colour as
+/// `categoryIconBase64(_:)` but on a tighter canvas with no surrounding padding.
+private func categoryIconBase64Compact(_ symbolName: String) -> String? {
+    let ptSize:   CGFloat = 18
+    let canvasPx: Int     = 36  // 18 pt × 2×
 
     let config = NSImage.SymbolConfiguration(pointSize: ptSize, weight: .medium)
         .applying(NSImage.SymbolConfiguration(paletteColors: [NSColor.black]))

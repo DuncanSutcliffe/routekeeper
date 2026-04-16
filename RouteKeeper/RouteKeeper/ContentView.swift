@@ -56,11 +56,15 @@ private struct MultiItemEntry: Encodable {
     /// Base64 PNG of the route SF Symbol icon used in the route name label popup.
     /// `nil` when the item is not a route.
     var routeIconBase64: String?
+    /// Base64 PNG of the category SF Symbol rendered in white, used in the
+    /// waypoint name label popup. `nil` when the waypoint has no category or
+    /// the item is not a waypoint.
+    var labelIconBase64: String?
 
     // Custom encoding so nil fields are omitted, keeping the JSON compact.
     enum CodingKeys: String, CodingKey {
         case type, lat, lng, color, geojson, itemId, name
-        case viaWaypoints, shapingWaypoints, iconImageName, routeIconBase64
+        case viaWaypoints, shapingWaypoints, iconImageName, routeIconBase64, labelIconBase64
     }
 
     func encode(to encoder: Encoder) throws {
@@ -76,6 +80,7 @@ private struct MultiItemEntry: Encodable {
         try c.encodeIfPresent(shapingWaypoints, forKey: .shapingWaypoints)
         try c.encodeIfPresent(iconImageName,    forKey: .iconImageName)
         try c.encodeIfPresent(routeIconBase64,  forKey: .routeIconBase64)
+        try c.encodeIfPresent(labelIconBase64,  forKey: .labelIconBase64)
     }
 }
 
@@ -428,15 +433,20 @@ struct ContentView: View {
             case .waypoint:
                 if let wp = try? await DatabaseManager.shared.fetchWaypointDetails(itemId: itemId) {
                     var iconImageName: String? = nil
+                    var labelIconBase64: String? = nil
                     if let categoryId = wp.categoryId,
                        let cat = allCategories.first(where: { $0.id == categoryId }) {
                         iconImageName = "icon-\(cat.name.lowercased())"
+                        labelIconBase64 = categoryIconBase64Compact(
+                            cat.iconName, color: .white, ptSize: 18, canvasPx: 36
+                        )
                     }
                     entries.append(MultiItemEntry(
                         type: .waypoint,
                         lat: wp.latitude, lng: wp.longitude, color: wp.colorHex,
                         itemId: itemId, name: item.name,
-                        iconImageName: iconImageName
+                        iconImageName: iconImageName,
+                        labelIconBase64: labelIconBase64
                     ))
                 }
             case .route:

@@ -172,17 +172,17 @@
                 closeButton: false,
                 closeOnClick: false,
                 anchor: 'bottom',
-                offset: [0, -15],
+                offset: [16, -38],
                 className: 'item-label'
             })
             .setLngLat([lng, lat]);
             if (iconBase64) {
                 var safe = name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                popup.setHTML('<span style="display:inline-flex;align-items:center;' +
-                    'justify-content:center;gap:4px;line-height:1;">' +
+                popup.setHTML('<div style="display:flex;align-items:center;gap:6px;">' +
                     '<img src="data:image/png;base64,' + iconBase64 + '" ' +
-                    'style="width:18px;height:18px;flex-shrink:0;filter:brightness(1.2);">' +
-                    safe + '</span>');
+                    'style="width:20px;height:20px;flex-shrink:0;opacity:0.9;" />' +
+                    '<span>' + safe + '</span>' +
+                    '</div>');
             } else {
                 popup.setText(name);
             }
@@ -557,30 +557,7 @@
 
             clearWaypoint();
 
-            // Custom HTML element: white circle with a coloured stroke.
-            var el = document.createElement('div');
-            el.style.width           = '33px';
-            el.style.height          = '33px';
-            el.style.borderRadius    = '50%';
-            el.style.backgroundColor = 'white';
-            el.style.border          = '2.5px solid ' + colour;
-            el.style.cursor          = 'grab';
-
-            if (iconBase64) {
-                const img = document.createElement('img');
-                img.src = 'data:image/png;base64,' + iconBase64;
-                img.style.width = '20px';
-                img.style.height = '20px';
-                img.style.position = 'absolute';
-                img.style.top = '50%';
-                img.style.left = '50%';
-                img.style.transform = 'translate(-50%, -50%)';
-                img.style.pointerEvents = 'none';
-                el.style.position = 'relative';
-                el.appendChild(img);
-            }
-
-            waypointMarker = new maplibregl.Marker({ element: el, draggable: true })
+            waypointMarker = new maplibregl.Marker({ color: colour, draggable: true })
                 .setLngLat([lng, lat])
                 .addTo(map);
 
@@ -601,7 +578,7 @@
             }
 
             if (itemId !== undefined && itemId !== null) {
-                showLabel(itemId, lng, lat, name || '');
+                showLabel(itemId, lng, lat, name || '', iconBase64 || null);
             }
         }
 
@@ -650,18 +627,19 @@
             var routeMarkerGroups = []; // { startCoord, endCoord, routeColour, rId }
             var viaGroups         = []; // { sourceId, circleId, labelId, features, colour }
             var shapingGroups     = []; // { sourceId, layerId, features, colour }
-            var waypointGroups    = []; // { wpId, lng, lat, colour, iconImageName, name }
+            var waypointGroups    = []; // { wpId, lng, lat, colour, iconImageName, name, labelIconBase64 }
 
             for (var i = 0; i < items.length; i++) {
                 var item = items[i];
                 if (item.type === "waypoint") {
                     waypointGroups.push({
-                        wpId:          item.itemId,
-                        lng:           item.lng,
-                        lat:           item.lat,
-                        colour:        item.color || '#E8453C',
-                        iconImageName: item.iconImageName || '',
-                        name:          item.name || ''
+                        wpId:            item.itemId,
+                        lng:             item.lng,
+                        lat:             item.lat,
+                        colour:          item.color || '#E8453C',
+                        iconImageName:   item.iconImageName || '',
+                        name:            item.name || '',
+                        labelIconBase64: item.labelIconBase64 || null
                     });
                     boundsCoords.push([item.lng, item.lat]);
                 } else if (item.type === "route") {
@@ -791,34 +769,15 @@
                 }
             }
 
-            // ── Per-waypoint markers (circle + optional symbol, keyed by itemId) ────
+            // ── Per-waypoint markers (native Marker, keyed by itemId) ─────────────
             for (var wi = 0; wi < waypointGroups.length; wi++) {
                 var wg = waypointGroups[wi];
                 if (wg.wpId === undefined || wg.wpId === null) continue;
-                var wpSrcId    = 'multi-waypoint-source-' + wg.wpId;
-                var wpCircleId = 'multi-waypoint-circle-' + wg.wpId;
-                var wpSymbolId = 'multi-waypoint-symbol-' + wg.wpId;
-                map.addSource(wpSrcId, {
-                    type: 'geojson',
-                    data: { type: 'Feature', geometry: { type: 'Point', coordinates: [wg.lng, wg.lat] }, properties: {} }
-                });
-                map.addLayer({
-                    id: wpCircleId, type: 'circle', source: wpSrcId,
-                    paint: { 'circle-radius': 14, 'circle-color': '#FFFFFF',
-                             'circle-stroke-width': 2.5, 'circle-stroke-color': wg.colour }
-                });
-                if (wg.iconImageName) {
-                    map.addLayer({
-                        id: wpSymbolId, type: 'symbol', source: wpSrcId,
-                        layout: { 'icon-image': wg.iconImageName, 'icon-anchor': 'center',
-                                  'icon-size': 1.0, 'icon-allow-overlap': true, 'icon-ignore-placement': true }
-                    });
-                    multiViaLayerIds.push(wpCircleId, wpSymbolId);
-                } else {
-                    multiViaLayerIds.push(wpCircleId);
-                }
-                multiViaSources.push(wpSrcId);
-                showLabel(wg.wpId, wg.lng, wg.lat, wg.name);
+                var wpMarker = new maplibregl.Marker({ color: wg.colour })
+                    .setLngLat([wg.lng, wg.lat])
+                    .addTo(map);
+                multiRouteMarkers.push(wpMarker);
+                showLabel(wg.wpId, wg.lng, wg.lat, wg.name, wg.labelIconBase64);
             }
 
             // ── Fit viewport ─────────────────────────────────────────────────────────

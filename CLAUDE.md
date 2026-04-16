@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–35 complete.**
+**Increments 1–35 complete, plus sidebar drag-and-drop regression fix.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -270,12 +270,17 @@ type-checker timeout errors, route label anchoring moved to the
 geometric midpoint of each route's LineString (Increment 33), fully
 draggable route and library waypoint markers with live Valhalla
 recalculation, needs_recalculation flag propagation, and base64 PNG
-category icons in marker divs (Increment 34), and consistent native
+category icons in marker divs (Increment 34), consistent native
 maplibregl.Marker instances for all route point markers (start, end,
 via, shaping) in both showRoute() and showMultipleItems(), replacing
 all previous GeoJSON source/layer pair approaches, plus route label
 popups now include a white arrow.triangle.turn.up.right.diamond SF
-Symbol icon prepended to the route name (Increment 35).
+Symbol icon prepended to the route name (Increment 35), and a fix for
+the sidebar drag-and-drop regression introduced during the Increment 32
+refactor — both LibraryBottomPanel.swift and ListRowView.swift have been
+reverted from .onDrag {} (NSItemProvider-based, blocked by NSTableView
+event interception) to .draggable() (Transferable-based, compatible with
+NSTableView-backed List).
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -559,11 +564,4 @@ accepts an optional `iconBase64` parameter; when present it uses
   zoom levels with MapLibre custom elements. Native maplibregl.Marker
   instances are used instead for all four marker types in both
   showRoute() and showMultipleItems().
-- Sidebar drag-and-drop for items between lists and lists between
-  folders has regressed, likely due to right-click context menu work
-  in a previous increment.
-- List drag and drop between folders within the sidebar is deferred.
-  The Edit List sheet (Increment 32) provides folder reassignment
-  as an alternative.
-
-**Next step: fix sidebar drag-and-drop regression.**
+**Next step: to be decided.**

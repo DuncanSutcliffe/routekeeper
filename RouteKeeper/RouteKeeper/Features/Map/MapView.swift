@@ -466,7 +466,7 @@ struct MapView: NSViewRepresentable {
                 // to showWaypoint(), or pass null when the waypoint has no category.
                 let iconArg: String
                 if let symbolName = wp.iconImageName, !symbolName.isEmpty,
-                   let b64 = categoryIconBase64Compact(symbolName) {
+                   let b64 = categoryIconBase64Compact(symbolName, color: .white) {
                     iconArg = "\"\(b64)\""
                 } else {
                     iconArg = "null"

@@ -11,7 +11,6 @@
 
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// The resizable panel pinned to the bottom of the sidebar.
 ///
@@ -103,26 +102,13 @@ struct LibraryBottomPanel: View {
                 .foregroundStyle(iconColor(for: item))
         }
         .tag(item)
-        .onDrag {
-            guard let data = try? JSONEncoder().encode(
-                DraggableItem(
-                    itemId: item.id ?? 0,
-                    sourceListId: viewModel.currentList?.id ?? -1
-                )
-            ) else { return NSItemProvider() }
-            let provider = NSItemProvider()
-            provider.registerDataRepresentation(
-                forTypeIdentifier: UTType.routeKeeperItem.identifier,
-                visibility: .all
-            ) { completion in
-                completion(data, nil)
-                return nil
-            }
-            return provider
-        }
         .contextMenu {
             itemContextMenu(for: item)
         }
+        .draggable(DraggableItem(
+            itemId: item.id ?? 0,
+            sourceListId: viewModel.currentList?.id ?? -1
+        ))
         .overlay(
             DoubleClickHandler {
                 guard let itemId = item.id else { return }

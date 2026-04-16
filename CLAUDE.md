@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–34 complete.**
+**Increments 1–35 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -267,16 +267,15 @@ alongside Categories, and a sidebar refactor splitting LibrarySidebarView
 into four files (LibrarySidebarView.swift, FolderLabelView.swift,
 ListRowView.swift, LibraryBottomPanel.swift) to resolve systemic Swift
 type-checker timeout errors, route label anchoring moved to the
-geometric midpoint of each route's LineString (Increment 33), and
-fully draggable route and library waypoint markers with live Valhalla
+geometric midpoint of each route's LineString (Increment 33), fully
+draggable route and library waypoint markers with live Valhalla
 recalculation, needs_recalculation flag propagation, and base64 PNG
-category icons in marker divs (Increment 34), and route point markers
-in the single-item route view reverted to plain native maplibregl.Marker
-instances (no custom HTML element) to resolve persistent anchor
-positioning drift at different zoom levels — start and end use
-`{ color: lineColour }`, via uses `{ color: lineColour, scale: 0.7 }`,
-shaping uses `{ color: '#888888', scale: 0.5 }` (Increment 35,
-in progress).
+category icons in marker divs (Increment 34), and consistent native
+maplibregl.Marker instances for all route point markers (start, end,
+via, shaping) in both showRoute() and showMultipleItems(), replacing
+all previous GeoJSON source/layer pair approaches, plus route label
+popups now include a white arrow.triangle.turn.up.right.diamond SF
+Symbol icon prepended to the route name (Increment 35).
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -523,6 +522,31 @@ PNGs (18 pt at 2× scale), embedded as HTML `<img>` elements (20×20 CSS
 px) inside the 33×33 px marker div; this bypasses the MapLibre image
 registry entirely for the single-waypoint display path.
 
+Increment 35 detail: All route point markers (start, end, via, shaping)
+in showRoute() use native `maplibregl.Marker` instances with
+`draggable: true`; start and end use `{ color: lineColour }`, via uses
+`{ color: lineColour, scale: 0.7 }`, shaping uses
+`{ color: '#888888', scale: 0.5 }`. In showMultipleItems(), start and
+end markers were converted from GeoJSON source/layer pairs to native
+`maplibregl.Marker` instances (no `draggable`; multi-select is
+display-only). Via and shaping markers in showMultipleItems() were
+likewise replaced with native Marker instances iterating over the
+features arrays from viaGroups and shapingGroups. All multi-item route
+markers (start, end, via, shaping) are pushed into `multiRouteMarkers`
+and removed by `clearMultipleItems()`. The `multiViaLayerIds` and
+`multiViaSources` arrays are retained for waypoint GeoJSON layers, which
+remain as circle+symbol source/layer pairs. Route label popups in both
+showRoute() and showMultipleItems() now include a white
+`arrow.triangle.turn.up.right.diamond` SF Symbol icon (18 pt,
+rendered via `categoryIconBase64Compact()` at 2× scale, 36×36 px)
+prepended to the route name. The icon is generated in `applyRouteDisplay`
+(single-item path) and once per `buildMultiItemsJson` call (multi-item
+path), embedded as a base64 PNG passed through `RouteDisplay.routeIconBase64`
+and `MultiItemEntry.routeIconBase64` respectively. `showLabel()` in JS
+accepts an optional `iconBase64` parameter; when present it uses
+`setHTML()` with an inline flex span; waypoint labels continue to use
+`setText()` unchanged.
+
 **Known issues / deferred:**
 - Valhalla uses the public OSM community instance — rate-limited.
   To be replaced before release.
@@ -533,17 +557,13 @@ registry entirely for the single-waypoint display path.
 - Custom HTML element approach for route point markers in showRoute()
   was abandoned due to persistent anchor positioning drift at different
   zoom levels with MapLibre custom elements. Native maplibregl.Marker
-  instances are used instead. The `startFlagBase64`, `endFlagBase64`,
-  `startLat`, `startLng`, `endLat`, and `endLng` fields have been
-  removed from RouteDisplay; start and end marker positions come from
-  `coords[0]` and `coords[coords.length - 1]` in the Valhalla GeoJSON.
-- Sidebar drag-and-drop for items between lists has regressed, likely
-  due to the right-click context menu work in a recent increment.
+  instances are used instead for all four marker types in both
+  showRoute() and showMultipleItems().
+- Sidebar drag-and-drop for items between lists and lists between
+  folders has regressed, likely due to right-click context menu work
+  in a previous increment.
 - List drag and drop between folders within the sidebar is deferred.
   The Edit List sheet (Increment 32) provides folder reassignment
   as an alternative.
 
-**Next steps (Increment 35, in progress):**
-1. Update route markers in showMultipleItems() to use plain
-   maplibregl.Marker instances matching the single-item view.
-2. Add a small route icon to route name labels on the map.
+**Next step: fix sidebar drag-and-drop regression.**

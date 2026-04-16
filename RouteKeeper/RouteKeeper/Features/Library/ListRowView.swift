@@ -9,7 +9,6 @@
 
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// The row for a single list inside the folder tree.
 struct ListRowView: View {
@@ -39,8 +38,8 @@ struct ListRowView: View {
                 Image(systemName: "map")
             }
         }
-        .onDrag { makeListDragProvider() }
         .contextMenu { listContextMenu }
+        .draggable(DraggableList(listId: list.id ?? 0, sourceFolderId: sourceFolderId))
         .overlay(
             Group {
                 if list.id != -1 {
@@ -52,23 +51,6 @@ struct ListRowView: View {
             of: [.routeKeeperItem],
             delegate: ListDropDelegate(targetList: list, viewModel: viewModel)
         )
-    }
-
-    private func makeListDragProvider() -> NSItemProvider {
-        guard list.id != nil,
-              let data = try? JSONEncoder().encode(
-                DraggableList(listId: list.id ?? 0, sourceFolderId: sourceFolderId)
-              )
-        else { return NSItemProvider() }
-        let provider = NSItemProvider()
-        provider.registerDataRepresentation(
-            forTypeIdentifier: UTType.routeKeeperListItem.identifier,
-            visibility: .all
-        ) { completion in
-            completion(data, nil)
-            return nil
-        }
-        return provider
     }
 
     @ViewBuilder

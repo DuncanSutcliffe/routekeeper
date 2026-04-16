@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–35 complete, plus sidebar drag-and-drop regression fix.**
+**Increments 1–36 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -280,7 +280,12 @@ the sidebar drag-and-drop regression introduced during the Increment 32
 refactor — both LibraryBottomPanel.swift and ListRowView.swift have been
 reverted from .onDrag {} (NSItemProvider-based, blocked by NSTableView
 event interception) to .draggable() (Transferable-based, compatible with
-NSTableView-backed List).
+NSTableView-backed List), and consistent native MapLibre markers and
+icon-enhanced labels — showWaypoint() and the waypoint path in
+showMultipleItems() simplified to plain maplibregl.Marker({ color:
+colorHex }), showLabel() updated to render an optional white SF Symbol
+icon in an HTML flex row alongside the name, category icons passed
+through both the single-item and multi-select code paths (Increment 36).
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -549,8 +554,35 @@ prepended to the route name. The icon is generated in `applyRouteDisplay`
 path), embedded as a base64 PNG passed through `RouteDisplay.routeIconBase64`
 and `MultiItemEntry.routeIconBase64` respectively. `showLabel()` in JS
 accepts an optional `iconBase64` parameter; when present it uses
-`setHTML()` with an inline flex span; waypoint labels continue to use
-`setText()` unchanged.
+`setHTML()` with an inline flex span; waypoint labels used `setText()`
+at the time of Increment 35 but were updated in Increment 36 to use
+the icon path.
+
+Increment 36 detail: showWaypoint() and the waypoint rendering path in
+showMultipleItems() have been simplified to use plain
+maplibregl.Marker({ color: colorHex }) instances, replacing the
+previous custom HTML element approach (white circle div with coloured
+border and embedded SF Symbol img). All markers on the map — route
+start/end flags, via points, shaping points, and library waypoints —
+now use MapLibre native markers consistently. The showLabel() function
+now accepts an optional iconBase64 parameter; when present it renders
+the popup content as an HTML flex row with a 20px white SF Symbol icon
+(opacity 0.9) to the left of the name, using setHTML(); when absent it
+falls back to setText() unchanged. For the single-item waypoint path,
+applyWaypointDisplay() generates a white rendering of the category icon
+via categoryIconBase64Compact() and passes it to showWaypoint() as
+iconBase64, which forwards it to showLabel(). For the multi-select
+path, buildMultiItemsJson() generates the white icon per waypoint entry
+(using cat.iconName with color: .white) and serialises it as
+labelIconBase64 on the JSON object; showMultipleItems() picks this up
+via waypointGroups and passes it to showLabel(). Route labels are
+unchanged — they continue to use routeIconBase64. Label offset is
+[16, -38] to position labels above and slightly right of the marker tip.
+The sidebar drag-and-drop regression (introduced in the Increment 32
+refactor) was also fixed: LibraryBottomPanel.swift and ListRowView.swift
+were reverted from .onDrag {} (NSItemProvider-based, blocked by
+NSTableView event interception) to .draggable() (Transferable-based,
+compatible with NSTableView-backed List).
 
 **Known issues / deferred:**
 - Valhalla uses the public OSM community instance — rate-limited.
@@ -564,4 +596,4 @@ accepts an optional `iconBase64` parameter; when present it uses
   zoom levels with MapLibre custom elements. Native maplibregl.Marker
   instances are used instead for all four marker types in both
   showRoute() and showMultipleItems().
-**Next step: to be decided.**
+**Next step: Increment 37 — TBD.**

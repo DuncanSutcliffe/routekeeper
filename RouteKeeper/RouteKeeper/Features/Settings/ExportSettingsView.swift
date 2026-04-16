@@ -19,8 +19,9 @@ struct ExportSettingsView: View {
             )) {
                 Text("Standard GPX 1.1").tag("standard")
                 Text("Garmin GPX 1.1").tag("garmin")
+                Text("Beeline").tag("beeline")
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
         }
         .formStyle(.grouped)
         .padding()

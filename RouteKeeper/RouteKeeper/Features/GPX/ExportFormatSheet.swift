@@ -2,8 +2,8 @@
 //  ExportFormatSheet.swift
 //  RouteKeeper
 //
-//  A small modal sheet that lets the user choose between Standard GPX 1.1 and
-//  Garmin GPX 1.1 before the macOS save panel is presented.
+//  A small modal sheet that lets the user choose a GPX export format
+//  before the macOS save panel is presented.
 //
 
 import SwiftUI
@@ -16,8 +16,13 @@ struct ExportFormatSheet: View {
     /// Called with the chosen format after the sheet is dismissed.
     let onExport: (GPXFormat) -> Void
 
-    @State private var selectedFormat: GPXFormat = PreferencesManager.shared.defaultExportFormat == "garmin"
-        ? .garmin : .standard
+    @State private var selectedFormat: GPXFormat = {
+        switch PreferencesManager.shared.defaultExportFormat {
+        case "garmin": return .garmin
+        case "beeline": return .beeline
+        default: return .standard
+        }
+    }()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -27,9 +32,9 @@ struct ExportFormatSheet: View {
             Picker("Format", selection: $selectedFormat) {
                 Text("Standard GPX 1.1").tag(GPXFormat.standard)
                 Text("Garmin GPX 1.1").tag(GPXFormat.garmin)
+                Text("Beeline").tag(GPXFormat.beeline)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            .pickerStyle(.menu)
 
             Text(formatDescription)
                 .font(.caption)
@@ -68,6 +73,9 @@ struct ExportFormatSheet: View {
         case .garmin:
             return "Includes Garmin extensions for shaping points. " +
                    "Use for Garmin devices and Basecamp."
+        case .beeline:
+            return "Exports route points as individual waypoints. " +
+                   "Use for importing into the Beeline app."
         }
     }
 

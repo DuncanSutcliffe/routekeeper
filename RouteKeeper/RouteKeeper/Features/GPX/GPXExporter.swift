@@ -17,6 +17,8 @@ enum GPXFormat {
     /// GPX 1.1 with Garmin gpxx and gpxtpx namespace extensions.
     /// Shaping points receive a gpxx:RoutePointExtension block.
     case garmin
+    /// Route points emitted as top-level <wpt> elements for import into Beeline.
+    case beeline
 }
 
 // MARK: - Export model types
@@ -94,7 +96,11 @@ enum GPXExporter {
             case .waypoint(let wpt):
                 xml += waypointElement(wpt)
             case .route(let rte):
-                xml += routeElement(rte, format: format)
+                if format == .beeline {
+                    xml += beelineRouteElements(rte)
+                } else {
+                    xml += routeElement(rte, format: format)
+                }
             case .track(let trk):
                 xml += trackElement(trk)
             }
@@ -118,6 +124,29 @@ enum GPXExporter {
         tag += "     xsi:schemaLocation=\"http://www.topografix.com/GPX/1/1 "
         tag += "http://www.topografix.com/GPX/1/1/gpx.xsd\">"
         return tag
+    }
+
+    // MARK: - Beeline route export
+
+    /// Emits each point in a route as a top-level <wpt> element for Beeline import.
+    private static func beelineRouteElements(_ rte: ExportRoute) -> String {
+        var el = ""
+        for pt in rte.points {
+            let latlon = coordAttr(lat: pt.latitude, lon: pt.longitude)
+            let name: String
+            if let n = pt.name, !n.isEmpty {
+                name = n
+            } else {
+                name = String(format: "%.4f, %.4f", pt.latitude, pt.longitude)
+            }
+            el += "  <wpt \(latlon)>\n"
+            el += "    <name>\(xmlEscape(name))</name>\n"
+            if let ele = pt.elevation {
+                el += "    <ele>\(String(format: "%.1f", ele))</ele>\n"
+            }
+            el += "  </wpt>\n"
+        }
+        return el
     }
 
     // MARK: - Waypoint element

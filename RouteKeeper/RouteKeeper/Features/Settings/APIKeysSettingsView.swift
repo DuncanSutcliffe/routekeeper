@@ -30,7 +30,7 @@ struct APIKeysSettingsView: View {
                     label: "What3Words",
                     value: $manager.what3WordsKey,
                     isVisible: $showWhat3WordsKey,
-                    hint: "Required for What3Words address lookup. Get a free key at what3words.com"
+                    hint: "Requires a paid What3Words Business plan. Get a key at what3words.com"
                 )
             }
 

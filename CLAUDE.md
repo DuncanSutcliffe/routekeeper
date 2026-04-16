@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–37 complete.**
+**Increments 1–38 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -601,6 +601,27 @@ stored default from `app_settings`, and includes the Beeline option with the
 description: "Exports route points as individual waypoints. Use for importing
 into the Beeline app."
 
+Increment 38 detail: A native macOS Settings scene (⌘,) has been
+extended with an API Keys tab containing fields for MapTiler and
+What3Words keys. Each field is masked by default with a show/hide
+toggle, and a Save button writes both values to the macOS Keychain via
+a new `KeychainManager` (`RouteKeeper/Services/KeychainManager.swift`),
+which uses `kSecClassGenericPassword` with `kSecAttrAccessibleWhenUnlocked`.
+A new `APIKeysManager` (`RouteKeeper/Services/APIKeysManager.swift`) is
+an `@Observable` class injected into the SwiftUI environment at app
+startup via `RouteKeeperApp`; it loads both keys from the Keychain on
+`init` and exposes them as observable properties. A one-time migration
+reads the MapTiler key from `Config.plist` via `ConfigService` on first
+launch if the Keychain entry is empty, writes it to the Keychain, and
+uses it from there on subsequent launches. The What3Words key is stored
+but not yet used. `ConfigService` is retained as a fallback during
+transition. `MapView` now accepts `mapTilerAPIKey: String` as a
+parameter (passed from `ContentView` via the environment) and uses it
+in `makeConfiguration` in place of the direct `ConfigService` call.
+The Settings window minimum width was updated to 480pt to accommodate
+the key fields. The new UI file is
+`RouteKeeper/Features/Settings/APIKeysSettingsView.swift`.
+
 **Known issues / deferred:**
 - Valhalla uses the public OSM community instance — rate-limited.
   To be replaced before release.
@@ -613,4 +634,4 @@ into the Beeline app."
   zoom levels with MapLibre custom elements. Native maplibregl.Marker
   instances are used instead for all four marker types in both
   showRoute() and showMultipleItems().
-**Next step: Increment 38 — TBD.**
+**Next step: Increment 39 — TBD.**

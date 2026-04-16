@@ -22,6 +22,7 @@ struct NewWaypointSheet: View {
     var prefilledCoordinate: MapCoordinate? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(APIKeysManager.self) private var apiKeysManager
 
     // MARK: Location search state
 
@@ -193,7 +194,7 @@ struct NewWaypointSheet: View {
                 .padding(10)
                 .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 8))
             } else {
-                // Search field + live results list.
+                // Nominatim search field.
                 HStack(spacing: 6) {
                     TextField("Search for a place…", text: $searchQuery)
                         .textFieldStyle(.roundedBorder)
@@ -305,36 +306,39 @@ struct NewWaypointSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                VStack(spacing: 0) {
-                    ForEach(allLists, id: \.list.id) { item in
-                        Toggle(
-                            isOn: Binding(
-                                get: { item.list.id.map { selectedListIDs.contains($0) } ?? false },
-                                set: { checked in
-                                    guard let id = item.list.id else { return }
-                                    if checked { selectedListIDs.insert(id) }
-                                    else       { selectedListIDs.remove(id) }
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(allLists, id: \.list.id) { item in
+                            Toggle(
+                                isOn: Binding(
+                                    get: { item.list.id.map { selectedListIDs.contains($0) } ?? false },
+                                    set: { checked in
+                                        guard let id = item.list.id else { return }
+                                        if checked { selectedListIDs.insert(id) }
+                                        else       { selectedListIDs.remove(id) }
+                                    }
+                                )
+                            ) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(item.list.name)
+                                    Text(item.folderName)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
-                            )
-                        ) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(item.list.name)
-                                Text(item.folderName)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
                             }
-                        }
-                        .toggleStyle(.checkbox)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 5)
-                        .padding(.horizontal, 10)
+                            .toggleStyle(.checkbox)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 5)
+                            .padding(.horizontal, 10)
 
-                        if item.list.id != allLists.last?.list.id {
-                            Divider()
-                                .padding(.leading, 10)
+                            if item.list.id != allLists.last?.list.id {
+                                Divider()
+                                    .padding(.leading, 10)
+                            }
                         }
                     }
                 }
+                .frame(height: 160)
                 .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 8))
             }
         }
@@ -398,7 +402,7 @@ struct NewWaypointSheet: View {
     /// Updates `confirmedElevation` on success. Fails silently on any error
     /// since elevation is supplementary data and not critical to waypoint creation.
     private func fetchElevation(latitude: Double, longitude: Double) {
-        let key = ConfigService.mapTilerAPIKey
+        let key = apiKeysManager.mapTilerKey
         guard !key.isEmpty else { return }
         let urlStr = "https://api.maptiler.com/elevation/point" +
             "?coordinates=\(longitude),\(latitude)&key=\(key)"

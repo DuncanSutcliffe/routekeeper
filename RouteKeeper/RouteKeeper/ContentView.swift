@@ -98,6 +98,7 @@ private struct MapTapPresentation: Identifiable {
 // MARK: - ContentView
 
 struct ContentView: View {
+    @Environment(APIKeysManager.self) private var apiKeysManager
     @State private var selectedList: RouteList?
     /// Items selected in the bottom panel. Empty means nothing is selected.
     @State private var selectedItems: Set<Item> = []
@@ -152,6 +153,7 @@ struct ContentView: View {
                         mapStyle:        mapViewModel.currentMapStyle,
                         mapScaleUnit:    PreferencesManager.shared.units == "imperial"
                                              ? "imperial" : "metric",
+                        mapTilerAPIKey:  apiKeysManager.mapTilerKey,
                         onAddWaypointAtCoordinate: { lat, lng in
                             mapTapPresentation = MapTapPresentation(
                                 coordinate: MapCoordinate(latitude: lat, longitude: lng)

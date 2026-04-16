@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–36 complete.**
+**Increments 1–37 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -584,6 +584,23 @@ were reverted from .onDrag {} (NSItemProvider-based, blocked by
 NSTableView event interception) to .draggable() (Transferable-based,
 compatible with NSTableView-backed List).
 
+Increment 37 detail: A third GPX export format, Beeline, has been added
+throughout the export pipeline. `GPXFormat` in `GPXExporter.swift` gains a
+`.beeline` case. The `exportGPX(items:format:)` function handles it by emitting
+each route point as a top-level `<wpt>` element rather than wrapping them in a
+`<rte>` block. Each `<wpt>` includes `lat`/`lon` attributes, an `<ele>` element
+where elevation is non-nil, and a `<name>` element using the point's stored name
+if present, or the coordinate pair formatted to 4 decimal places as a fallback
+(e.g. `"51.5123, -0.1234"`). Waypoints and tracks export identically across all
+three formats. `ExportSettingsView` (Export tab in Settings) was updated from a
+segmented picker to a menu-style dropdown (`.pickerStyle(.menu)`) with all three
+options: Standard GPX 1.1, Garmin GPX 1.1, and Beeline, stored as `"beeline"` in
+`app_settings` via `PreferencesManager.defaultExportFormat`.
+`ExportFormatSheet` likewise uses a menu-style picker, pre-selects the user's
+stored default from `app_settings`, and includes the Beeline option with the
+description: "Exports route points as individual waypoints. Use for importing
+into the Beeline app."
+
 **Known issues / deferred:**
 - Valhalla uses the public OSM community instance — rate-limited.
   To be replaced before release.
@@ -596,4 +613,4 @@ compatible with NSTableView-backed List).
   zoom levels with MapLibre custom elements. Native maplibregl.Marker
   instances are used instead for all four marker types in both
   showRoute() and showMultipleItems().
-**Next step: Increment 37 — TBD.**
+**Next step: Increment 38 — TBD.**

@@ -113,11 +113,14 @@ struct RouteKeeperCommands: Commands {
 
 @main
 struct RouteKeeperApp: App {
+    @State private var apiKeysManager = APIKeysManager()
+
     var body: some Scene {
         WindowGroup {
             ContentView()
         }
         .defaultSize(width: 1200, height: 750)
+        .environment(apiKeysManager)
         .commands {
             RouteKeeperCommands()
         }
@@ -137,8 +140,13 @@ struct RouteKeeperApp: App {
                     .tabItem {
                         Label("Export", systemImage: "square.and.arrow.up")
                     }
+                APIKeysSettingsView()
+                    .tabItem {
+                        Label("API Keys", systemImage: "key")
+                    }
+                    .environment(apiKeysManager)
             }
-            .frame(width: 400)
+            .frame(minWidth: 480)
         }
     }
 }

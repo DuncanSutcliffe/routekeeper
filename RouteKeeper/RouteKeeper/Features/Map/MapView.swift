@@ -207,6 +207,8 @@ struct MapView: NSViewRepresentable {
     /// Scale control unit — `"metric"` or `"imperial"` — mirrors the units preference.
     /// Passed to `setScaleUnits()` in JS when the preference changes.
     let mapScaleUnit: String
+    /// The MapTiler API key injected into the map HTML at WebView creation time.
+    let mapTilerAPIKey: String
     /// Called on the main thread when the user selects "New waypoint here" from the map
     /// context menu. Receives the WGS-84 latitude and longitude of the right-click point.
     let onAddWaypointAtCoordinate: ((Double, Double) -> Void)?
@@ -342,7 +344,7 @@ struct MapView: NSViewRepresentable {
         // run so MapLibreMap.html's getInitialStyleUrl() can build the full URL.
         // mapStyle is read from app_settings before the map first appears, so this
         // always reflects the user's saved choice on first render.
-        let apiKey = ConfigService.mapTilerAPIKey
+        let apiKey = mapTilerAPIKey
         let script = WKUserScript(
             source: "var mapStyleName = \"\(mapStyle)\"; var mapApiKey = \"\(apiKey)\";" +
                     " var mapScaleUnit = \"\(mapScaleUnit)\";",
@@ -789,6 +791,7 @@ struct MapView: NSViewRepresentable {
         routeGeoJSON: nil, centerLon: -2.0, centerLat: 54.0, zoom: 5,
         waypointDisplay: nil, routeDisplay: nil, multiDisplay: nil,
         mapStyle: "streets-v4", mapScaleUnit: "metric",
+        mapTilerAPIKey: "",
         onAddWaypointAtCoordinate: nil
     )
     .frame(width: 800, height: 600)

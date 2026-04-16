@@ -412,7 +412,7 @@
                 paint: { 'line-color': lineColour, 'line-width': 4 }
             });
 
-            // Start marker — draggable, coloured to match the route line.
+            // Start marker.
             const startMarker = new maplibregl.Marker({ draggable: true, color: lineColour })
                 .setLngLat(startCoord)
                 .addTo(map);
@@ -428,7 +428,7 @@
             });
             routeMarkers.push(startMarker);
 
-            // End marker — same treatment.
+            // End marker.
             const endMarker = new maplibregl.Marker({ draggable: true, color: lineColour })
                 .setLngLat(endCoord)
                 .addTo(map);
@@ -444,7 +444,7 @@
             });
             routeMarkers.push(endMarker);
 
-            // Announcing via waypoint markers — draggable, route-coloured, smaller than start/end.
+            // Announcing via waypoint markers.
             const viaWaypoints = (viaWaypointsJSON && viaWaypointsJSON.length > 2)
                 ? JSON.parse(viaWaypointsJSON) : [];
             viaWaypoints.forEach(function(w) {
@@ -464,10 +464,9 @@
                 routeMarkers.push(viaMarker);
             });
 
-            // Shaping waypoint markers — subtle grey, smaller than via markers.
+            // Shaping waypoint markers.
             const shapingWaypoints = (shapingWaypointsJSON && shapingWaypointsJSON.length > 2)
                 ? JSON.parse(shapingWaypointsJSON) : [];
-
             shapingWaypoints.forEach(function(w) {
                 const shapingMarker = new maplibregl.Marker({ draggable: true, color: '#888888', scale: 0.5 })
                     .setLngLat([w.lng, w.lat])

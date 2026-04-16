@@ -232,8 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–33 complete. Increment 34 (draggable route waypoint
-markers) partially complete — steps 1–4 done, steps 5–7 remaining.**
+**Increments 1–34 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -267,10 +266,11 @@ repurposed creation sheet), Route Profiles moved to the Manage menu
 alongside Categories, and a sidebar refactor splitting LibrarySidebarView
 into four files (LibrarySidebarView.swift, FolderLabelView.swift,
 ListRowView.swift, LibraryBottomPanel.swift) to resolve systemic Swift
-type-checker timeout errors, and route label anchoring moved to the
+type-checker timeout errors, route label anchoring moved to the
 geometric midpoint of each route's LineString (Increment 33), and
-draggable route waypoint markers with live Valhalla recalculation
-on drag (Increment 34, steps 1–4).
+fully draggable route and library waypoint markers with live Valhalla
+recalculation, needs_recalculation flag propagation, and base64 PNG
+category icons in marker divs (Increment 34).
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -482,32 +482,40 @@ in scope; `showMultipleItems` stores the full `allLineCoords` array as
 `allCoords` on each route marker group and applies `lineMidpoint` there.
 Waypoint labels are unaffected.
 
-Increment 34 detail (steps 1–4 complete): Schema migration v5 added
-`waypoint_item_id` (nullable INTEGER, FK to `waypoints.item_id` ON
-DELETE SET NULL) to `route_points`, and `needs_recalculation` (INTEGER
-NOT NULL DEFAULT 0) to `routes`. Route creation now populates
-`waypoint_item_id` when a route point is created from a library waypoint
-(in both `DatabaseManager.createRoute` for start/end points and
-`RouteWaypointSheet` for intermediate picks). In MapLibreMap.html, all
-route waypoint markers (start, end, via, shaping) have been converted
-from GeoJSON source/layer pairs to `maplibregl.Marker` instances with
-`draggable: true`; the `routeMarkers` module-level array and
-`clearRoute()` cleanup handle their lifecycle. The `showRoute()` function
-signature was extended with `startSeq` and `endSeq` parameters (carried
-through `RouteDisplay` and `ViaWaypoint` structs on the Swift side) so
-every marker type has its `sequence_number` available at creation time.
-On `dragend`, a `waypointDragged` bridge message fires with
-`routeItemId`, `sequenceNumber`, and new coordinates. Swift handles this
-in the `Coordinator`'s `WKScriptMessageHandler` by: updating the
-`route_points` row (new coordinates, `waypoint_item_id` set to NULL,
-`name` set to `"lat, lon"` rounded to 4 decimal places via
-`updateRoutePointPosition`), fetching all route points, recalculating
-via Valhalla using the route's stored costing options, saving the updated
-geometry via `updateRouteGeometryAndStats`, and redrawing the route via
-`applyRouteDisplay` with `suppressRecentre = true`. The
-`needs_recalculation` flag and steps 5–7 (update saved waypoint prompt,
-library waypoint position propagation, honouring the flag on draw)
-remain as future work.
+Increment 34 detail: Schema migration v5 added `waypoint_item_id`
+(nullable INTEGER, FK to `waypoints.item_id` ON DELETE SET NULL) to
+`route_points`, and `needs_recalculation` (INTEGER NOT NULL DEFAULT 0)
+to `routes`. Route creation populates `waypoint_item_id` when a route
+point originates from a library waypoint (in both
+`DatabaseManager.createRoute` for start/end points and
+`RouteWaypointSheet` for intermediate picks). All route waypoint markers
+(start, end, via, shaping) were converted from GeoJSON source/layer
+pairs to `maplibregl.Marker` instances with `draggable: true`;
+`showRoute()` was extended with `startSeq` and `endSeq` parameters
+(carried through `RouteDisplay` and `ViaWaypoint` structs on the Swift
+side) so every marker type carries its `sequence_number`. On `dragend`,
+a `waypointDragged` bridge message fires; Swift updates the
+`route_points` row (new coordinates, `waypoint_item_id` cleared to NULL,
+`name` set to `"lat, lon"` to 4 decimal places via
+`updateRoutePointPosition`), recalculates via Valhalla using the route's
+stored costing options, saves updated geometry via
+`updateRouteGeometryAndStats`, and redraws the route with
+`suppressRecentre = true`. Library waypoint markers were converted from
+GeoJSON layers to draggable `maplibregl.Marker` instances using custom
+HTML div elements. On `dragend`, a `waypointMoved` bridge message fires;
+Swift updates the `waypoints` row, queries for routes containing that
+waypoint via `waypoint_item_id` (`fetchRoutesContainingWaypoint`), and
+if any exist presents a confirmation alert offering to update their
+`route_points` coordinates and set `needs_recalculation = 1` via
+`updateRoutePointsForWaypoint`. The `needs_recalculation` flag is
+honoured in both the single-item display path (`handleSingleItemSelection`
+in ContentView) and the multi-item path (`buildMultiItemsJson`) —
+affected routes recalculate via Valhalla before drawing and the flag is
+cleared by `updateRouteGeometryAndStats`. Waypoint marker icons are
+rendered via `categoryIconBase64Compact()` producing 36×36 px base64
+PNGs (18 pt at 2× scale), embedded as HTML `<img>` elements (20×20 CSS
+px) inside the 33×33 px marker div; this bypasses the MapLibre image
+registry entirely for the single-waypoint display path.
 
 **Known issues / deferred:**
 - Valhalla uses the public OSM community instance — rate-limited.
@@ -516,9 +524,10 @@ remain as future work.
   canvas-drawn custom image registered via map.addImage. The approach
   proved unreliable and was fully reverted. To be revisited using an
   SDF image approach.
+- Sidebar drag-and-drop for items between lists has regressed, likely
+  due to the right-click context menu work in a recent increment.
 - List drag and drop between folders within the sidebar is deferred.
   The Edit List sheet (Increment 32) provides folder reassignment
   as an alternative.
 
-**Next step: Increment 34 continued — Step 5, the 'Update saved
-waypoint?' prompt when a point with a waypoint_item_id is dragged.**
+**Next step: fix sidebar drag-and-drop regression.**

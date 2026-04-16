@@ -521,12 +521,12 @@ struct MapView: NSViewRepresentable {
         /// Calls either `showRoute()` or `clearRoute()` in JS depending on
         /// whether `display` is non-nil.
         ///
-        /// Start and end flag icons are pre-registered as `"icon-route-start"` and
-        /// `"icon-route-end"` via `registerCategoryIcons()` at map startup and after
-        /// every style change, so they no longer need to be passed as base64 here.
-        /// Intermediate waypoints are split into two JSON arrays: announcing via
-        /// points (numbered circles) and shaping points (small filled dots), passed
-        /// as the second and fourth arguments respectively.
+        /// Start and end flag icons are rendered as base64 PNGs using
+        /// `categoryIconBase64Compact()` in the route's colour and passed as the
+        /// final two arguments to `showRoute()`. Intermediate waypoints are split
+        /// into two JSON arrays: announcing via points (numbered circles) and
+        /// shaping points (small filled dots), passed as the second and fourth
+        /// arguments respectively.
         func applyRouteDisplay(_ display: RouteDisplay?, in webView: WKWebView) {
             if let display {
                 let escaped = display.geojson
@@ -557,6 +557,7 @@ struct MapView: NSViewRepresentable {
                 let escapedName = display.name
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
+
                 let js = "showRoute(\"\(escaped)\", \"\(viaEscaped)\"," +
                          " \"\(display.colorHex)\", \"\(shapingEscaped)\"," +
                          " \(display.itemId), \"\(escapedName)\"," +
@@ -853,18 +854,36 @@ private func categoryIconBase64(_ symbolName: String) -> String? {
     return rep.representation(using: .png, properties: [:])?.base64EncodedString()
 }
 
-/// Renders a single SF Symbol at 14 pt into a transparent 28 × 28 px (14 pt @2×)
+/// Converts a CSS hex colour string (e.g. `"#1A73E8"`) to an `NSColor`.
+private func nsColor(hex: String) -> NSColor {
+    let h = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+    var rgb: UInt64 = 0
+    Scanner(string: h).scanHexInt64(&rgb)
+    return NSColor(
+        srgbRed: CGFloat((rgb >> 16) & 0xFF) / 255,
+        green:   CGFloat((rgb >>  8) & 0xFF) / 255,
+        blue:    CGFloat( rgb        & 0xFF) / 255,
+        alpha:   1
+    )
+}
+
+/// Renders a single SF Symbol at 18 pt into a transparent 36 × 36 px (18 pt @2×)
 /// PNG and returns it as a base64-encoded string, or `nil` on failure.
 ///
-/// Produces a compact icon sized to sit inside the 28 px waypoint marker circle
-/// rendered by `showWaypoint()`. Uses the same weight and colour as
-/// `categoryIconBase64(_:)` but on a tighter canvas with no surrounding padding.
-private func categoryIconBase64Compact(_ symbolName: String) -> String? {
+/// Produces a compact icon sized to sit inside the waypoint marker circle
+/// rendered by `showWaypoint()`. Uses the same weight as `categoryIconBase64(_:)`
+/// but on a tighter canvas with no surrounding padding.
+///
+/// - Parameters:
+///   - symbolName: The SF Symbol name, e.g. `"cup.and.saucer"`.
+///   - color: The palette colour applied to the symbol. Defaults to black.
+private func categoryIconBase64Compact(_ symbolName: String,
+                                       color: NSColor = .black) -> String? {
     let ptSize:   CGFloat = 18
     let canvasPx: Int     = 36  // 18 pt × 2×
 
     let config = NSImage.SymbolConfiguration(pointSize: ptSize, weight: .medium)
-        .applying(NSImage.SymbolConfiguration(paletteColors: [NSColor.black]))
+        .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
     guard let symbol = NSImage(systemSymbolName: symbolName,
                                accessibilityDescription: nil)?
         .withSymbolConfiguration(config) else { return nil }

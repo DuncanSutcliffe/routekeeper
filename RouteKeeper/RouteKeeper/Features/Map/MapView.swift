@@ -558,10 +558,18 @@ struct MapView: NSViewRepresentable {
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
 
+                let routeIconArg = categoryIconBase64Compact(
+                    "arrow.triangle.turn.up.right.diamond",
+                    color: .white,
+                    ptSize: 18,
+                    canvasPx: 36
+                ).map { "\"\($0)\"" } ?? "null"
+
                 let js = "showRoute(\"\(escaped)\", \"\(viaEscaped)\"," +
                          " \"\(display.colorHex)\", \"\(shapingEscaped)\"," +
                          " \(display.itemId), \"\(escapedName)\"," +
-                         " \(display.startSeq), \(display.endSeq))"
+                         " \(display.startSeq), \(display.endSeq)," +
+                         " \(routeIconArg))"
                 webView.evaluateJavaScript(js)
             } else {
                 webView.evaluateJavaScript("clearRoute();")
@@ -877,10 +885,10 @@ private func nsColor(hex: String) -> NSColor {
 /// - Parameters:
 ///   - symbolName: The SF Symbol name, e.g. `"cup.and.saucer"`.
 ///   - color: The palette colour applied to the symbol. Defaults to black.
-private func categoryIconBase64Compact(_ symbolName: String,
-                                       color: NSColor = .black) -> String? {
-    let ptSize:   CGFloat = 18
-    let canvasPx: Int     = 36  // 18 pt × 2×
+func categoryIconBase64Compact(_ symbolName: String,
+                               color: NSColor = .black,
+                               ptSize: CGFloat = 18,
+                               canvasPx: Int = 36) -> String? {
 
     let config = NSImage.SymbolConfiguration(pointSize: ptSize, weight: .medium)
         .applying(NSImage.SymbolConfiguration(paletteColors: [color]))

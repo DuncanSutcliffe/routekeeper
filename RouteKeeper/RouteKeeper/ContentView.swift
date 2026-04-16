@@ -53,11 +53,14 @@ private struct MultiItemEntry: Encodable {
     /// MapLibre image name for the category icon, e.g. `"icon-cafe"`.
     /// `nil` when the waypoint has no category or the item is not a waypoint.
     var iconImageName: String?
+    /// Base64 PNG of the route SF Symbol icon used in the route name label popup.
+    /// `nil` when the item is not a route.
+    var routeIconBase64: String?
 
     // Custom encoding so nil fields are omitted, keeping the JSON compact.
     enum CodingKeys: String, CodingKey {
         case type, lat, lng, color, geojson, itemId, name
-        case viaWaypoints, shapingWaypoints, iconImageName
+        case viaWaypoints, shapingWaypoints, iconImageName, routeIconBase64
     }
 
     func encode(to encoder: Encoder) throws {
@@ -72,6 +75,7 @@ private struct MultiItemEntry: Encodable {
         try c.encodeIfPresent(viaWaypoints,     forKey: .viaWaypoints)
         try c.encodeIfPresent(shapingWaypoints, forKey: .shapingWaypoints)
         try c.encodeIfPresent(iconImageName,    forKey: .iconImageName)
+        try c.encodeIfPresent(routeIconBase64,  forKey: .routeIconBase64)
     }
 }
 
@@ -408,6 +412,14 @@ struct ContentView: View {
         // Fetch categories once so the per-waypoint icon name lookup is O(1).
         let allCategories = (try? await DatabaseManager.shared.fetchCategories()) ?? []
 
+        // Render the route label icon once — shared by all route entries.
+        let routeIconBase64 = categoryIconBase64Compact(
+            "arrow.triangle.turn.up.right.diamond",
+            color: .white,
+            ptSize: 18,
+            canvasPx: 36
+        )
+
         var entries: [MultiItemEntry] = []
 
         for item in items {
@@ -486,7 +498,8 @@ struct ContentView: View {
                     geojson: geometry,
                     itemId: itemId, name: item.name,
                     viaWaypoints:     viaWps.isEmpty     ? nil : viaWps,
-                    shapingWaypoints: shapingWps.isEmpty ? nil : shapingWps
+                    shapingWaypoints: shapingWps.isEmpty ? nil : shapingWps,
+                    routeIconBase64:  routeIconBase64
                 ))
             case .track:
                 break

@@ -270,7 +270,13 @@ type-checker timeout errors, route label anchoring moved to the
 geometric midpoint of each route's LineString (Increment 33), and
 fully draggable route and library waypoint markers with live Valhalla
 recalculation, needs_recalculation flag propagation, and base64 PNG
-category icons in marker divs (Increment 34).
+category icons in marker divs (Increment 34), and route point markers
+in the single-item route view reverted to plain native maplibregl.Marker
+instances (no custom HTML element) to resolve persistent anchor
+positioning drift at different zoom levels — start and end use
+`{ color: lineColour }`, via uses `{ color: lineColour, scale: 0.7 }`,
+shaping uses `{ color: '#888888', scale: 0.5 }` (Increment 35,
+in progress).
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -524,10 +530,20 @@ registry entirely for the single-waypoint display path.
   canvas-drawn custom image registered via map.addImage. The approach
   proved unreliable and was fully reverted. To be revisited using an
   SDF image approach.
+- Custom HTML element approach for route point markers in showRoute()
+  was abandoned due to persistent anchor positioning drift at different
+  zoom levels with MapLibre custom elements. Native maplibregl.Marker
+  instances are used instead. The `startFlagBase64`, `endFlagBase64`,
+  `startLat`, `startLng`, `endLat`, and `endLng` fields have been
+  removed from RouteDisplay; start and end marker positions come from
+  `coords[0]` and `coords[coords.length - 1]` in the Valhalla GeoJSON.
 - Sidebar drag-and-drop for items between lists has regressed, likely
   due to the right-click context menu work in a recent increment.
 - List drag and drop between folders within the sidebar is deferred.
   The Edit List sheet (Increment 32) provides folder reassignment
   as an alternative.
 
-**Next step: fix sidebar drag-and-drop regression.**
+**Next steps (Increment 35, in progress):**
+1. Update route markers in showMultipleItems() to use plain
+   maplibregl.Marker instances matching the single-item view.
+2. Add a small route icon to route name labels on the map.

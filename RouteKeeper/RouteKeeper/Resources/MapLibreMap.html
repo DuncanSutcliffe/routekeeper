@@ -71,6 +71,16 @@
 
     <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
     <script>
+        window.onerror = function(message, source, lineno, colno, error) {
+            var detail = message + ' (line ' + lineno + ')';
+            if (window.webkit && window.webkit.messageHandlers &&
+                window.webkit.messageHandlers.routekeeper) {
+                window.webkit.messageHandlers.routekeeper.postMessage(
+                    { type: 'debugLog', message: 'JS ERROR: ' + detail });
+            }
+            return false;
+        };
+
         // ---------------------------------------------------------------------------
         // Swift → JavaScript bridge
         // Messages sent from Swift via evaluateJavaScript() are handled here.
@@ -113,6 +123,15 @@
         // Holds the start and end maplibregl.Marker instances for the currently
         // displayed single route.  Cleared by clearRoute().
         var routeMarkers = [];
+
+        // State for the rubber-band drag-to-insert interaction.
+        var routeDragActive = false;
+        var routeDragAnchorA = null;
+        var routeDragAnchorB = null;
+
+        // Ordered [lng, lat] pairs for the actual route points (start, via, shaping, end)
+        // of the currently displayed single route.  Populated by showRoute(), cleared by clearRoute().
+        var routePointCoords = [];
 
         // Holds the maplibregl.Marker instance for the currently displayed library
         // waypoint, or null when no waypoint is shown.  Cleared by clearWaypoint().
@@ -482,6 +501,16 @@
             // Shaping waypoint markers.
             const shapingWaypoints = (shapingWaypointsJSON && shapingWaypointsJSON.length > 2)
                 ? JSON.parse(shapingWaypointsJSON) : [];
+
+            // Build ordered route point coords for rubber-band segment detection.
+            // Merge start, all via, all shaping, and end; sort by sequence number.
+            var allRoutePoints = [{ seq: startSeq, coord: startCoord }];
+            viaWaypoints.forEach(function(w) { allRoutePoints.push({ seq: w.seq, coord: [w.lng, w.lat] }); });
+            shapingWaypoints.forEach(function(w) { allRoutePoints.push({ seq: w.seq, coord: [w.lng, w.lat] }); });
+            allRoutePoints.push({ seq: endSeq, coord: endCoord });
+            allRoutePoints.sort(function(a, b) { return a.seq - b.seq; });
+            routePointCoords = allRoutePoints.map(function(p) { return p.coord; });
+
             shapingWaypoints.forEach(function(w) {
                 const shapingMarker = new maplibregl.Marker({ draggable: true, color: '#888888', scale: 0.5 })
                     .setLngLat([w.lng, w.lat])
@@ -524,6 +553,7 @@
         function clearRoute() {
             routeMarkers.forEach(function(m) { m.remove(); });
             routeMarkers = [];
+            routePointCoords = [];
             if (map.getLayer('route-layer'))              map.removeLayer('route-layer');
             if (map.getSource('route-source'))            map.removeSource('route-source');
             if (map.getLayer('active-route'))             map.removeLayer('active-route');
@@ -817,6 +847,90 @@
 
         map.on('click', function() { dismissContextMenu(); });
         map.on('move',  function() { dismissContextMenu(); });
+
+        function findNearestSegment(coords, clickLngLat) {
+            var cx = clickLngLat.lng, cy = clickLngLat.lat;
+            var bestDist = Infinity, bestIndex = 0;
+            var bestNearest = null;
+            for (var i = 0; i < coords.length - 1; i++) {
+                var ax = coords[i][0],     ay = coords[i][1];
+                var bx = coords[i+1][0],   by = coords[i+1][1];
+                var dx = bx - ax, dy = by - ay;
+                var lenSq = dx * dx + dy * dy;
+                var t = lenSq === 0 ? 0 : Math.max(0, Math.min(1,
+                    ((cx - ax) * dx + (cy - ay) * dy) / lenSq));
+                var nx = ax + t * dx, ny = ay + t * dy;
+                var ex = cx - nx, ey = cy - ny;
+                var dist = ex * ex + ey * ey;
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    bestIndex = i;
+                    bestNearest = { lng: nx, lat: ny };
+                }
+            }
+            return {
+                insertIndex: bestIndex + 1,
+                anchorA: { lng: coords[bestIndex][0],   lat: coords[bestIndex][1] },
+                anchorB: { lng: coords[bestIndex+1][0], lat: coords[bestIndex+1][1] },
+                nearestPoint: bestNearest
+            };
+        }
+
+        map.on('mousedown', function(e) {
+            if (!e.originalEvent.altKey) { return; }
+            var p = e.point;
+            var bbox = [[p.x - 8, p.y - 8], [p.x + 8, p.y + 8]];
+            var features = map.queryRenderedFeatures(bbox, { layers: ['route-layer'] });
+            if (!features || features.length === 0) { return; }
+            e.preventDefault();
+            postToSwift({ type: 'debugLog', message: 'Route hit at ' + JSON.stringify(e.lngLat) });
+            if (!routePointCoords || routePointCoords.length < 2) { return; }
+            var seg = findNearestSegment(routePointCoords, e.lngLat);
+            postToSwift({ type: 'debugLog', message: 'Segment found: ' + JSON.stringify(seg) });
+            routeDragAnchorA = seg.anchorA;
+            routeDragAnchorB = seg.anchorB;
+            routeDragActive  = true;
+        });
+
+        map.on('mousemove', function(e) {
+            if (!routeDragActive) { return; }
+            var rubberData = {
+                type: 'Feature',
+                geometry: {
+                    type: 'LineString',
+                    coordinates: [
+                        [routeDragAnchorA.lng, routeDragAnchorA.lat],
+                        [e.lngLat.lng, e.lngLat.lat],
+                        [routeDragAnchorB.lng, routeDragAnchorB.lat]
+                    ]
+                }
+            };
+            if (map.getSource('rubber-band-source')) {
+                map.getSource('rubber-band-source').setData(rubberData);
+            } else {
+                var rubberColour = map.getPaintProperty('route-layer', 'line-color') || '#1A73E8';
+                map.addSource('rubber-band-source', { type: 'geojson', data: rubberData });
+                map.addLayer({
+                    id: 'rubber-band-layer',
+                    type: 'line',
+                    source: 'rubber-band-source',
+                    layout: { 'line-cap': 'round', 'line-join': 'round' },
+                    paint: {
+                        'line-color': rubberColour,
+                        'line-width': 2,
+                        'line-dasharray': [2, 2]
+                    }
+                });
+            }
+        });
+
+        map.on('mouseup', function(e) {
+            if (!routeDragActive) { return; }
+            routeDragActive = false;
+            if (map.getLayer('rubber-band-layer')) { map.removeLayer('rubber-band-layer'); }
+            if (map.getSource('rubber-band-source')) { map.removeSource('rubber-band-source'); }
+            postToSwift({ type: 'debugLog', message: 'Drag complete at ' + JSON.stringify(e.lngLat) });
+        });
 
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') { dismissContextMenu(); }

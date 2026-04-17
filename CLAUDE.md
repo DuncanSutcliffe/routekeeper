@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–39 complete.**
+**Increments 1–40 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -285,7 +285,12 @@ icon-enhanced labels — showWaypoint() and the waypoint path in
 showMultipleItems() simplified to plain maplibregl.Marker({ color:
 colorHex }), showLabel() updated to render an optional white SF Symbol
 icon in an HTML flex row alongside the name, category icons passed
-through both the single-item and multi-select code paths (Increment 36).
+through both the single-item and multi-select code paths (Increment 36), a
+floating 'Labels' toggle (native macOS switch) in the top-left of the map
+that appears only during list selection, hides labels immediately via the
+bridge when switched off, and restores them without a full re-render when
+switched back on — backed by @AppStorage("showListItemLabels") defaulting
+to true (Increment 40).
 
 Increment 25 detail: In MapLibreMap.html, a `contextmenu` event
 listener on the MapLibre map object suppresses the default browser menu
@@ -684,4 +689,26 @@ normal creation flow. Cancel discards changes. `WaypointPickerSheet` search cove
 address columns via the same diacritic-insensitive OR logic used for name, category,
 notes, and list membership. New file: `RouteKeeper/Features/Waypoints/AddressEditSheet.swift`.
 
-**Next step: Increment 40 — TBD.**
+Increment 40 detail: When a list is selected in the library sidebar, a
+floating 'Labels' toggle appears in the top-left corner of the map view,
+below the map style picker, inside a dark semi-transparent rounded rectangle
+matching the existing floating controls. It uses a native macOS switch
+(`.toggleStyle(.switch)`) with the label "Labels", bound via `@Binding` to
+an `@AppStorage("showListItemLabels")` boolean in ContentView that defaults
+to `true`. The control is hidden when a single item or multiple items are
+selected — only visible during list selection (`selectedList != nil &&
+selectedItems.isEmpty`). Turning the toggle off calls `hideAllLabels()` via
+the bridge immediately (via a `LabelCommand.hide` on `MapViewModel`); turning
+it back on restores labels for each currently displayed item via
+`LabelCommand.show([LabelData])` without a full re-render. Label data
+(itemId, lat, lng, name, iconBase64) is collected during list rendering in
+`buildMultiItemsJson` — waypoint labels use the waypoint's own coordinates;
+route labels use a `lineStringMidpoint()` helper (Swift port of the JS
+`lineMidpoint()` function) applied to the stored GeoJSON geometry. When a
+list is first displayed with labels already off, `suppressMultiLabels: true`
+is passed to `MapView`, which appends `hideAllLabels()` to the
+`showMultipleItems()` JS call atomically to prevent a visible flash. The
+suppress flag is also propagated through `mapStyleLoaded` restores. New file:
+`RouteKeeper/Features/Map/ShowLabelsButton.swift`.
+
+**Next step: Increment 41 — TBD.**

@@ -29,8 +29,33 @@ struct WaypointSummary: Identifiable, Hashable {
     let name: String
     let latitude: Double
     let longitude: Double
+    /// CSS hex colour string from the `color_hex` column, e.g. `"#E8453C"`.
+    var colorHex: String = "#E8453C"
+    /// Display name of the assigned category, or `nil` if uncategorised.
+    var categoryName: String? = nil
+    /// SF Symbol name of the assigned category, or `nil` if uncategorised.
+    var categoryIconName: String? = nil
+    /// Free-form notes attached to the waypoint, or `nil` if none.
+    var notes: String? = nil
 
     var id: Int64 { itemId }
+}
+
+// MARK: - WaypointListSection
+
+/// A single section in the grouped waypoint picker: one library list and its waypoints.
+///
+/// Waypoints that belong to no list appear in a section whose `listId` is `nil`
+/// and whose `listName` is `"Unclassified"`.
+struct WaypointListSection: Identifiable {
+    let listId: Int64?
+    let listName: String
+    /// The name of the folder that contains this list, or `nil` for Unclassified.
+    let folderName: String?
+    /// Waypoints in this list that have coordinates, sorted alphabetically by name.
+    let waypoints: [WaypointSummary]
+
+    var id: String { listId.map { "list-\($0)" } ?? "unclassified" }
 }
 
 // MARK: - DatabaseManager
@@ -355,6 +380,100 @@ actor DatabaseManager {
                     name:      $0["name"],
                     latitude:  $0["latitude"],
                     longitude: $0["longitude"]
+                )
+            }
+        }
+    }
+
+    /// Fetches all coordinate-bearing waypoints grouped by library list membership.
+    ///
+    /// Waypoints belonging to multiple lists appear in each relevant section.
+    /// Waypoints not in any list appear in a trailing "Unclassified" section.
+    /// Sections are ordered by list `sort_order`; within each section waypoints
+    /// are sorted alphabetically by name.
+    func fetchWaypointsByList() async throws -> [WaypointListSection] {
+        let q = try requireQueue()
+        return try await q.read { db in
+            // Left-join to list membership so unclassified waypoints appear with
+            // NULL list columns.  CASE WHEN pushes the NULL (unclassified) rows to
+            // the end without requiring NULLS LAST syntax.
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT
+                    w.item_id, i.name AS waypoint_name,
+                    w.latitude, w.longitude,
+                    COALESCE(w.color_hex, '#E8453C') AS color_hex,
+                    w.notes,
+                    c.name AS category_name, c.icon_name AS category_icon,
+                    l.id AS list_id, l.name AS list_name,
+                    l.sort_order AS list_sort,
+                    f.name AS folder_name
+                FROM waypoints w
+                JOIN items i ON i.id = w.item_id
+                LEFT JOIN categories c ON c.id = w.category_id
+                LEFT JOIN item_list_membership m ON m.item_id = w.item_id
+                LEFT JOIN lists l ON l.id = m.list_id
+                LEFT JOIN list_folders f ON f.id = l.folder_id
+                WHERE w.latitude IS NOT NULL AND w.longitude IS NOT NULL
+                ORDER BY
+                    CASE WHEN l.id IS NULL THEN 1 ELSE 0 END ASC,
+                    l.sort_order ASC,
+                    l.name ASC,
+                    i.name ASC
+                """)
+
+            // Group into sections while preserving the SQL ordering.
+            var orderedKeys: [String] = []
+            var sectionData: [String: (
+                listId: Int64?,
+                listName: String,
+                folderName: String?,
+                waypoints: [WaypointSummary]
+            )] = [:]
+
+            for row in rows {
+                let itemId: Int64       = row["item_id"]
+                let wpName: String      = row["waypoint_name"]
+                let latitude: Double    = row["latitude"]
+                let longitude: Double   = row["longitude"]
+                let colorHex: String    = row["color_hex"]
+                let notes: String?      = row["notes"]
+                let catName: String?    = row["category_name"]
+                let catIcon: String?    = row["category_icon"]
+                let listId: Int64?      = row["list_id"]
+                let listName: String?   = row["list_name"]
+                let folderName: String? = row["folder_name"]
+
+                let sectionKey = listId.map { "list-\($0)" } ?? "unclassified"
+                let waypoint = WaypointSummary(
+                    itemId:           itemId,
+                    name:             wpName,
+                    latitude:         latitude,
+                    longitude:        longitude,
+                    colorHex:         colorHex,
+                    categoryName:     catName,
+                    categoryIconName: catIcon,
+                    notes:            notes
+                )
+
+                if sectionData[sectionKey] == nil {
+                    orderedKeys.append(sectionKey)
+                    sectionData[sectionKey] = (
+                        listId:     listId,
+                        listName:   listName ?? "Unclassified",
+                        folderName: folderName,
+                        waypoints:  []
+                    )
+                }
+                sectionData[sectionKey]!.waypoints.append(waypoint)
+            }
+
+            return orderedKeys.map { key in
+                let s = sectionData[key]!
+                return WaypointListSection(
+                    listId:     s.listId,
+                    listName:   s.listName,
+                    folderName: s.folderName,
+                    waypoints:  s.waypoints
                 )
             }
         }

@@ -48,6 +48,11 @@ struct NewRouteSheet: View {
     @State private var avoidFerries   = false
     @State private var shortestRoute  = false
 
+    // MARK: - Picker sheet state
+
+    @State private var showingStartPicker = false
+    @State private var showingEndPicker   = false
+
     // MARK: - Async / error state
 
     @State private var isCalculating = false
@@ -62,12 +67,6 @@ struct NewRouteSheet: View {
             .flatMap { folder, lists in
                 lists.map { list in (list: list, folderName: folder.name) }
             }
-    }
-
-    /// End-point options exclude whichever waypoint is already selected as start.
-    private var endWaypointOptions: [Waypoint] {
-        guard let start = startWaypoint else { return viewModel.availableWaypoints }
-        return viewModel.availableWaypoints.filter { $0.itemId != start.itemId }
     }
 
     /// True when the user has manually changed a criterion away from the loaded profile's values.
@@ -182,6 +181,26 @@ struct NewRouteSheet: View {
                 }
             }
         }
+        .sheet(isPresented: $showingStartPicker) {
+            WaypointPickerSheet(
+                onSelect: { summary in
+                    startWaypoint = viewModel.availableWaypoints
+                        .first { $0.itemId == summary.itemId }
+                },
+                excludingId: endWaypoint?.itemId,
+                title: "Select Start Point"
+            )
+        }
+        .sheet(isPresented: $showingEndPicker) {
+            WaypointPickerSheet(
+                onSelect: { summary in
+                    endWaypoint = viewModel.availableWaypoints
+                        .first { $0.itemId == summary.itemId }
+                },
+                excludingId: startWaypoint?.itemId,
+                title: "Select End Point"
+            )
+        }
         .alert("Route Calculation Failed", isPresented: $showRoutingError) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -232,14 +251,11 @@ struct NewRouteSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                Picker("Start Point", selection: $startWaypoint) {
-                    Text("Select a waypoint…").tag(nil as Waypoint?)
-                    ForEach(viewModel.availableWaypoints) { wp in
-                        Text(wp.name).tag(wp as Waypoint?)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
+                waypointPickerRow(
+                    placeholder: "Select start point…",
+                    selected: startWaypoint,
+                    action: { showingStartPicker = true }
+                )
             }
         }
     }
@@ -255,17 +271,41 @@ struct NewRouteSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                Picker("End Point", selection: $endWaypoint) {
-                    Text("Select a waypoint…").tag(nil as Waypoint?)
-                    ForEach(endWaypointOptions) { wp in
-                        Text(wp.name).tag(wp as Waypoint?)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .disabled(startWaypoint == nil)
+                waypointPickerRow(
+                    placeholder: "Select end point…",
+                    selected: endWaypoint,
+                    action: { showingEndPicker = true }
+                )
             }
         }
+    }
+
+    /// A tappable row that displays the selected waypoint name or a placeholder.
+    private func waypointPickerRow(
+        placeholder: String,
+        selected: Waypoint?,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack {
+                if let wp = selected {
+                    Text(wp.name)
+                        .foregroundStyle(.primary)
+                } else {
+                    Text(placeholder)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
     }
 
     private var profileSection: some View {

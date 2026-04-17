@@ -37,6 +37,13 @@ struct WaypointSummary: Identifiable, Hashable {
     var categoryIconName: String? = nil
     /// Free-form notes attached to the waypoint, or `nil` if none.
     var notes: String? = nil
+    /// Road name from the stored Nominatim address, or `nil` if absent.
+    var addressRoad: String? = nil
+    var addressSuburb: String? = nil
+    var addressCity: String? = nil
+    var addressState: String? = nil
+    var addressPostcode: String? = nil
+    var addressCountry: String? = nil
 
     var id: Int64 { itemId }
 }
@@ -150,6 +157,21 @@ actor DatabaseManager {
                 sql: "ALTER TABLE routes " +
                      "ADD COLUMN needs_recalculation INTEGER NOT NULL DEFAULT 0"
             )
+        }
+
+        // v6 — adds structured address columns to waypoints (from Nominatim).
+        migrator.registerMigration("v6") { db in
+            let cols = [
+                "address_house_number", "address_road",
+                "address_suburb",       "address_neighbourhood",
+                "address_city",         "address_municipality",
+                "address_county",       "address_state_district",
+                "address_state",        "address_postcode",
+                "address_country",      "address_country_code"
+            ]
+            for col in cols {
+                try db.execute(sql: "ALTER TABLE waypoints ADD COLUMN \(col) TEXT")
+            }
         }
 
         try await migrator.migrate(dbQueue)
@@ -276,6 +298,7 @@ actor DatabaseManager {
         categoryId: Int64?,
         colorHex: String,
         notes: String?,
+        address: AddressData? = nil,
         listIds: [Int64]
     ) async throws -> Waypoint {
         let q = try requireQueue()
@@ -293,10 +316,19 @@ actor DatabaseManager {
             try db.execute(
                 sql: "INSERT INTO waypoints " +
                      "(item_id, name, latitude, longitude, elevation, " +
-                     "category_id, color_hex, notes) " +
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                     "category_id, color_hex, notes, " +
+                     "address_house_number, address_road, address_suburb, address_neighbourhood, " +
+                     "address_city, address_municipality, address_county, address_state_district, " +
+                     "address_state, address_postcode, address_country, address_country_code) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 arguments: [itemId, name, latitude, longitude, elevation,
-                            categoryId, colorHex, notes]
+                            categoryId, colorHex, notes,
+                            address?.houseNumber, address?.road,
+                            address?.suburb, address?.neighbourhood,
+                            address?.city, address?.municipality,
+                            address?.county, address?.stateDistrict,
+                            address?.state, address?.postcode,
+                            address?.country, address?.countryCode]
             )
 
             // 3. Associate with requested lists.
@@ -406,7 +438,9 @@ actor DatabaseManager {
                     c.name AS category_name, c.icon_name AS category_icon,
                     l.id AS list_id, l.name AS list_name,
                     l.sort_order AS list_sort,
-                    f.name AS folder_name
+                    f.name AS folder_name,
+                    w.address_road, w.address_suburb, w.address_city,
+                    w.address_state, w.address_postcode, w.address_country
                 FROM waypoints w
                 JOIN items i ON i.id = w.item_id
                 LEFT JOIN categories c ON c.id = w.category_id
@@ -437,11 +471,17 @@ actor DatabaseManager {
                 let longitude: Double   = row["longitude"]
                 let colorHex: String    = row["color_hex"]
                 let notes: String?      = row["notes"]
-                let catName: String?    = row["category_name"]
-                let catIcon: String?    = row["category_icon"]
-                let listId: Int64?      = row["list_id"]
-                let listName: String?   = row["list_name"]
-                let folderName: String? = row["folder_name"]
+                let catName: String?      = row["category_name"]
+                let catIcon: String?      = row["category_icon"]
+                let listId: Int64?        = row["list_id"]
+                let listName: String?     = row["list_name"]
+                let folderName: String?   = row["folder_name"]
+                let addressRoad: String?     = row["address_road"]
+                let addressSuburb: String?   = row["address_suburb"]
+                let addressCity: String?     = row["address_city"]
+                let addressState: String?    = row["address_state"]
+                let addressPostcode: String? = row["address_postcode"]
+                let addressCountry: String?  = row["address_country"]
 
                 let sectionKey = listId.map { "list-\($0)" } ?? "unclassified"
                 let waypoint = WaypointSummary(
@@ -452,7 +492,13 @@ actor DatabaseManager {
                     colorHex:         colorHex,
                     categoryName:     catName,
                     categoryIconName: catIcon,
-                    notes:            notes
+                    notes:            notes,
+                    addressRoad:      addressRoad,
+                    addressSuburb:    addressSuburb,
+                    addressCity:      addressCity,
+                    addressState:     addressState,
+                    addressPostcode:  addressPostcode,
+                    addressCountry:   addressCountry
                 )
 
                 if sectionData[sectionKey] == nil {
@@ -751,6 +797,7 @@ actor DatabaseManager {
         categoryId: Int64?,
         colorHex: String,
         notes: String?,
+        address: AddressData? = nil,
         addListIds: Set<Int64>,
         removeListIds: Set<Int64>
     ) async throws {
@@ -765,10 +812,23 @@ actor DatabaseManager {
             try db.execute(
                 sql: "UPDATE waypoints " +
                      "SET name = ?, latitude = ?, longitude = ?, elevation = ?, " +
-                     "category_id = ?, color_hex = ?, notes = ? " +
+                     "category_id = ?, color_hex = ?, notes = ?, " +
+                     "address_house_number = ?, address_road = ?, " +
+                     "address_suburb = ?, address_neighbourhood = ?, " +
+                     "address_city = ?, address_municipality = ?, " +
+                     "address_county = ?, address_state_district = ?, " +
+                     "address_state = ?, address_postcode = ?, " +
+                     "address_country = ?, address_country_code = ? " +
                      "WHERE item_id = ?",
                 arguments: [name, latitude, longitude, elevation,
-                            categoryId, colorHex, notes, itemId]
+                            categoryId, colorHex, notes,
+                            address?.houseNumber, address?.road,
+                            address?.suburb, address?.neighbourhood,
+                            address?.city, address?.municipality,
+                            address?.county, address?.stateDistrict,
+                            address?.state, address?.postcode,
+                            address?.country, address?.countryCode,
+                            itemId]
             )
             // 3. Remove memberships for lists the user unchecked.
             for listId in removeListIds {
@@ -805,6 +865,35 @@ actor DatabaseManager {
                      "SET latitude = ?, longitude = ? " +
                      "WHERE item_id = ?",
                 arguments: [latitude, longitude, itemId]
+            )
+        }
+    }
+
+    /// Overwrites only the twelve address columns for the given waypoint.
+    ///
+    /// All other waypoint fields are untouched. Empty strings are stored as NULL
+    /// (callers should pass `nil` rather than `""` for absent values).
+    func updateWaypointAddress(itemId: Int64, address: AddressData) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "UPDATE waypoints " +
+                     "SET address_house_number = ?, address_road = ?, " +
+                     "address_suburb = ?, address_neighbourhood = ?, " +
+                     "address_city = ?, address_municipality = ?, " +
+                     "address_county = ?, address_state_district = ?, " +
+                     "address_state = ?, address_postcode = ?, " +
+                     "address_country = ?, address_country_code = ? " +
+                     "WHERE item_id = ?",
+                arguments: [
+                    address.houseNumber, address.road,
+                    address.suburb, address.neighbourhood,
+                    address.city, address.municipality,
+                    address.county, address.stateDistrict,
+                    address.state, address.postcode,
+                    address.country, address.countryCode,
+                    itemId
+                ]
             )
         }
     }

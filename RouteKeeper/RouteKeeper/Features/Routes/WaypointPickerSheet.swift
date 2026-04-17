@@ -58,7 +58,13 @@ struct WaypointPickerSheet: View {
                     return matchedViaListName.contains(wp.itemId) ||
                            matches(wp.name) ||
                            (wp.categoryName.map(matches) ?? false) ||
-                           (wp.notes.map(matches) ?? false)
+                           (wp.notes.map(matches) ?? false) ||
+                           (wp.addressRoad.map(matches) ?? false) ||
+                           (wp.addressSuburb.map(matches) ?? false) ||
+                           (wp.addressCity.map(matches) ?? false) ||
+                           (wp.addressState.map(matches) ?? false) ||
+                           (wp.addressPostcode.map(matches) ?? false) ||
+                           (wp.addressCountry.map(matches) ?? false)
                 }
                 guard !waypoints.isEmpty else { return nil }
                 return WaypointListSection(

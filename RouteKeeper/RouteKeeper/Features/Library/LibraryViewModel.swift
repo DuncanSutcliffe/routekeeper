@@ -234,6 +234,7 @@ final class LibraryViewModel {
         categoryId: Int64?,
         colorHex: String,
         notes: String?,
+        address: AddressData? = nil,
         listIds: [Int64]
     ) async {
         do {
@@ -245,6 +246,7 @@ final class LibraryViewModel {
                 categoryId: categoryId,
                 colorHex: colorHex,
                 notes: notes,
+                address: address,
                 listIds: listIds
             )
         } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
@@ -271,6 +273,7 @@ final class LibraryViewModel {
         categoryId: Int64?,
         colorHex: String,
         notes: String?,
+        address: AddressData? = nil,
         selectedListIds: Set<Int64>
     ) async {
         do {
@@ -286,6 +289,7 @@ final class LibraryViewModel {
                 categoryId: categoryId,
                 colorHex: colorHex,
                 notes: notes,
+                address: address,
                 addListIds: addListIds,
                 removeListIds: removeListIds
             )

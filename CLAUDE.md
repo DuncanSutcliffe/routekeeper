@@ -232,7 +232,7 @@ RouteKeeper/
 
 ## Current Status
 
-**Increments 1–38 complete.**
+**Increments 1–39 complete.**
 
 The application has a working shell, database layer, live map (MapTiler
 tiles), motorcycle routing via Valhalla, a library sidebar with folder
@@ -622,6 +622,30 @@ The Settings window minimum width was updated to 480pt to accommodate
 the key fields. The new UI file is
 `RouteKeeper/Features/Settings/APIKeysSettingsView.swift`.
 
+Increment 39 detail: `NewRouteSheet` now uses `WaypointPickerSheet` for both
+start and end point selection, replacing the previous flat `Picker` dropdowns.
+Each field displays the selected waypoint name or a grey placeholder prompt;
+tapping opens the picker sheet, which excludes the opposing selection via the
+existing `excludingId` parameter. `WaypointPickerSheet` was improved in four
+steps: (1) waypoints are grouped by library list, with the folder name shown as
+secondary text in each section header; waypoints belonging to multiple lists
+appear in each relevant section; a final "Unclassified" section catches
+waypoints with no list membership; grouping data comes from a new
+`fetchWaypointsByList()` method in `DatabaseManager` returning
+`[WaypointListSection]`; (2) each row now shows a filled colour dot, the
+category SF Symbol icon, the waypoint name, and the category name as secondary
+grey text beneath — consistent with the sidebar appearance; `WaypointSummary`
+was extended with `colorHex`, `categoryName`, `categoryIconName`, and `notes`
+fields (all defaulted so existing call sites are unaffected); (3) search is
+now case- and diacritic-insensitive using `.folding(options: [.caseInsensitive,
+.diacriticInsensitive])` and matches against waypoint name, category name,
+notes, and any list name the waypoint belongs to; a two-pass algorithm ensures
+that a waypoint matching via list name appears in all its sections; (4) the
+search bar is full-width at the top of the sheet below the navigation title,
+implemented as a plain `TextField` above the `List` (replacing `.searchable`);
+the sheet accepts `title: String = "Add Waypoint"` and `NewRouteSheet` passes
+`"Select Start Point"` and `"Select End Point"` at the respective call sites.
+
 **Known issues / deferred:**
 - Valhalla uses the public OSM community instance — rate-limited.
   To be replaced before release.
@@ -634,4 +658,26 @@ the key fields. The new UI file is
   zoom levels with MapLibre custom elements. Native maplibregl.Marker
   instances are used instead for all four marker types in both
   showRoute() and showMultipleItems().
+Increment 38 detail: Schema migration v6 adds twelve nullable TEXT address columns to
+the `waypoints` table: `address_house_number`, `address_road`, `address_suburb`,
+`address_neighbourhood`, `address_city`, `address_municipality`, `address_county`,
+`address_state_district`, `address_state`, `address_postcode`, `address_country`,
+`address_country_code`. A new `AddressData` struct in `GeocodingService.swift`
+carries these twelve fields; `GeocodingResult` gains an optional `address: AddressData?`
+property populated from the expanded `NominatimAddress` decoder (which now decodes all
+twelve Nominatim fields plus `town`/`village` as `city` fallbacks, with explicit
+`CodingKeys`). `Waypoint` in `WaypointRecords.swift` gains the twelve corresponding
+optional String properties with `CodingKeys` and `encode(to:)` entries.
+`DatabaseManager.createWaypoint` and `updateWaypoint` gain an `address: AddressData? = nil`
+parameter whose values are written into all twelve columns. `LibraryViewModel.createWaypoint`
+and `updateWaypoint` propagate the parameter through. `NewWaypointSheet` captures
+`confirmedAddress` from `selectResult()` and from the reverse-geocode result when a
+coordinate is pre-filled from the map; clears it when the location chip is dismissed.
+`EditWaypointSheet` reconstructs `confirmedAddress` from the twelve stored `Waypoint`
+fields on load, and refreshes it from the Nominatim result when the user selects a new
+location. `WaypointSummary` gains six address search fields (`addressRoad`, `addressSuburb`,
+`addressCity`, `addressState`, `addressPostcode`, `addressCountry`); `fetchWaypointsByList`
+includes them in the SELECT and row mapping; `WaypointPickerSheet.filteredSections`
+extends the OR-match to cover all six new fields. No address UI is shown yet.
+
 **Next step: Increment 39 — TBD.**

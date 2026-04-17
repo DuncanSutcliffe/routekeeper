@@ -35,6 +35,8 @@ struct NewWaypointSheet: View {
     /// Elevation in metres fetched from MapTiler after a location is confirmed.
     /// `nil` if the fetch failed or has not yet completed — stored silently.
     @State private var confirmedElevation: Double? = nil
+    /// Structured address from Nominatim; populated alongside `selectedLocation`.
+    @State private var confirmedAddress: AddressData? = nil
 
     // MARK: Waypoint detail state
 
@@ -51,6 +53,10 @@ struct NewWaypointSheet: View {
 
     @State private var showingAddCategorySheet = false
     @State private var addCategoryViewModel = CategoryViewModel()
+
+    // MARK: Address edit sheet state
+
+    @State private var showingAddressEditSheet = false
 
     // MARK: Constants
 
@@ -135,8 +141,11 @@ struct NewWaypointSheet: View {
                 Task {
                     if let result = await GeocodingService.shared.reverseGeocode(
                         latitude: coord.latitude, longitude: coord.longitude
-                    ), waypointName.isEmpty {
-                        waypointName = result.name
+                    ) {
+                        if waypointName.isEmpty {
+                            waypointName = result.name
+                        }
+                        confirmedAddress = result.address
                     }
                 }
             } else {
@@ -153,6 +162,12 @@ struct NewWaypointSheet: View {
                         selectedCategoryId = newCat.id
                     }
                 }
+            )
+        }
+        .sheet(isPresented: $showingAddressEditSheet) {
+            AddressEditSheet(
+                initialAddress: confirmedAddress ?? AddressData(),
+                onDone: { confirmedAddress = $0 }
             )
         }
     }
@@ -181,6 +196,7 @@ struct NewWaypointSheet: View {
                     Spacer()
                     Button {
                         selectedLocation = nil
+                        confirmedAddress = nil
                         searchResults = []
                         searchQuery = ""
                         searchFieldFocused = true
@@ -257,6 +273,8 @@ struct NewWaypointSheet: View {
                     .textFieldStyle(.roundedBorder)
                     .onChange(of: waypointName) { viewModel.creationError = nil }
             }
+
+            addressSummarySection
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Category")
@@ -344,6 +362,21 @@ struct NewWaypointSheet: View {
         }
     }
 
+    // MARK: - Address summary section
+
+    private var addressSummarySection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(confirmedAddress?.formattedSummary ?? "No address stored")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Edit Address") { showingAddressEditSheet = true }
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .foregroundColor(.accentColor)
+        }
+    }
+
     // MARK: - Category menu
 
     /// A `Menu`-style category selector that includes an "Add category…" action
@@ -388,9 +421,8 @@ struct NewWaypointSheet: View {
 
     private func selectResult(_ result: GeocodingResult) {
         selectedLocation = result
+        confirmedAddress = result.address
         searchResults = []
-        // Pre-fill name from the result title (place's own name or first
-        // component of display_name) if the field is still empty.
         if waypointName.isEmpty {
             waypointName = result.name
         }
@@ -456,6 +488,7 @@ struct NewWaypointSheet: View {
                 categoryId: selectedCategoryId,
                 colorHex: selectedColorHex,
                 notes: notes.isEmpty ? nil : notes,
+                address: confirmedAddress,
                 listIds: listIds
             )
             if viewModel.creationError == nil {

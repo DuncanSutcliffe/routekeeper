@@ -37,6 +37,9 @@ struct EditWaypointSheet: View {
     /// Elevation in metres — fetched from MapTiler when a new location is
     /// confirmed.  Carries the stored value until the location is changed.
     @State private var confirmedElevation: Double? = nil
+    /// Structured address from Nominatim; loaded from the stored record or
+    /// refreshed when the user picks a new location.
+    @State private var confirmedAddress: AddressData? = nil
 
     @State private var searchQuery: String = ""
     @State private var searchResults: [GeocodingResult] = []
@@ -58,6 +61,10 @@ struct EditWaypointSheet: View {
 
     @State private var showingAddCategorySheet = false
     @State private var addCategoryViewModel = CategoryViewModel()
+
+    // MARK: - Address edit sheet state
+
+    @State private var showingAddressEditSheet = false
 
     // MARK: - Loading state
 
@@ -145,6 +152,20 @@ struct EditWaypointSheet: View {
                     Task { @MainActor in
                         await viewModel.forceReloadCategories()
                         selectedCategoryId = newCat.id
+                    }
+                }
+            )
+        }
+        .sheet(isPresented: $showingAddressEditSheet) {
+            AddressEditSheet(
+                initialAddress: confirmedAddress ?? AddressData(),
+                onDone: { updated in
+                    confirmedAddress = updated
+                    Task {
+                        try? await DatabaseManager.shared.updateWaypointAddress(
+                            itemId: waypointItemId,
+                            address: updated
+                        )
                     }
                 }
             )
@@ -252,6 +273,8 @@ struct EditWaypointSheet: View {
                     .onChange(of: waypointName) { viewModel.creationError = nil }
             }
 
+            addressSummarySection
+
             VStack(alignment: .leading, spacing: 4) {
                 Text("Category")
                     .font(.caption)
@@ -337,6 +360,21 @@ struct EditWaypointSheet: View {
         }
     }
 
+    // MARK: - Address summary section
+
+    private var addressSummarySection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(confirmedAddress?.formattedSummary ?? "No address stored")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Edit Address") { showingAddressEditSheet = true }
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .foregroundColor(.accentColor)
+        }
+    }
+
     // MARK: - Category menu
 
     /// A `Menu`-style category selector that includes an "Add category…" action
@@ -394,6 +432,20 @@ struct EditWaypointSheet: View {
             selectedCategoryId = wp.categoryId
             selectedColorHex   = wp.colorHex
             notes              = wp.notes ?? ""
+            confirmedAddress   = AddressData(
+                houseNumber:   wp.addressHouseNumber,
+                road:          wp.addressRoad,
+                suburb:        wp.addressSuburb,
+                neighbourhood: wp.addressNeighbourhood,
+                city:          wp.addressCity,
+                municipality:  wp.addressMunicipality,
+                county:        wp.addressCounty,
+                stateDistrict: wp.addressStateDistrict,
+                state:         wp.addressState,
+                postcode:      wp.addressPostcode,
+                country:       wp.addressCountry,
+                countryCode:   wp.addressCountryCode
+            )
         }
         if let ids = try? await DatabaseManager.shared.fetchListIds(for: waypointItemId) {
             selectedListIDs = ids
@@ -404,11 +456,12 @@ struct EditWaypointSheet: View {
     private func selectResult(_ result: GeocodingResult) {
         confirmedLatitude  = result.latitude
         confirmedLongitude = result.longitude
-        confirmedElevation = nil   // reset until the fetch completes
+        confirmedElevation = nil
         chipDisplayName    = result.name
         chipSubtitle       = result.subtitle
         isLocationConfirmed = true
         searchResults      = []
+        confirmedAddress   = result.address
         if waypointName.isEmpty {
             waypointName = result.name
         }
@@ -474,6 +527,7 @@ struct EditWaypointSheet: View {
                 categoryId: selectedCategoryId,
                 colorHex: selectedColorHex,
                 notes: notes.isEmpty ? nil : notes,
+                address: confirmedAddress,
                 selectedListIds: selectedListIDs
             )
             if viewModel.creationError == nil {

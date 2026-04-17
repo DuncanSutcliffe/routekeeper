@@ -87,6 +87,22 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     /// Elevation in metres, fetched from the MapTiler Elevation API on creation
     /// or when the location is changed in the edit sheet. `nil` when unknown.
     var elevation: Double?
+
+    // MARK: Address fields (from Nominatim; all nullable)
+
+    var addressHouseNumber: String? = nil
+    var addressRoad: String? = nil
+    var addressSuburb: String? = nil
+    var addressNeighbourhood: String? = nil
+    var addressCity: String? = nil
+    var addressMunicipality: String? = nil
+    var addressCounty: String? = nil
+    var addressStateDistrict: String? = nil
+    var addressState: String? = nil
+    var addressPostcode: String? = nil
+    var addressCountry: String? = nil
+    var addressCountryCode: String? = nil
+
     /// Populated by the database on insert; read back when fetched.
     var createdAt: String = ""
 
@@ -116,6 +132,18 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
         case categoryId = "category_id"
         case colorHex   = "color_hex"
         case notes, elevation
+        case addressHouseNumber  = "address_house_number"
+        case addressRoad         = "address_road"
+        case addressSuburb       = "address_suburb"
+        case addressNeighbourhood = "address_neighbourhood"
+        case addressCity         = "address_city"
+        case addressMunicipality = "address_municipality"
+        case addressCounty       = "address_county"
+        case addressStateDistrict = "address_state_district"
+        case addressState        = "address_state"
+        case addressPostcode     = "address_postcode"
+        case addressCountry      = "address_country"
+        case addressCountryCode  = "address_country_code"
         case createdAt  = "created_at"
     }
 
@@ -128,6 +156,18 @@ struct Waypoint: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
         container["color_hex"]   = colorHex
         container["notes"]       = notes
         container["elevation"]   = elevation
+        container["address_house_number"]   = addressHouseNumber
+        container["address_road"]           = addressRoad
+        container["address_suburb"]         = addressSuburb
+        container["address_neighbourhood"]  = addressNeighbourhood
+        container["address_city"]           = addressCity
+        container["address_municipality"]   = addressMunicipality
+        container["address_county"]         = addressCounty
+        container["address_state_district"] = addressStateDistrict
+        container["address_state"]          = addressState
+        container["address_postcode"]       = addressPostcode
+        container["address_country"]        = addressCountry
+        container["address_country_code"]   = addressCountryCode
         // created_at omitted — database provides default.
     }
 

@@ -12,6 +12,43 @@
 
 import Foundation
 
+// MARK: - AddressData
+
+/// Structured address components captured from Nominatim when a waypoint location is set.
+///
+/// All fields are optional — Nominatim omits components that are not applicable
+/// to a given location (e.g. `suburb` and `municipality` are rarely both present).
+struct AddressData {
+    var houseNumber: String?
+    var road: String?
+    var suburb: String?
+    var neighbourhood: String?
+    var city: String?
+    var municipality: String?
+    var county: String?
+    var stateDistrict: String?
+    var state: String?
+    var postcode: String?
+    var country: String?
+    var countryCode: String?
+
+    /// A single-line readable summary of the stored address components.
+    ///
+    /// Joins non-nil, non-empty fields with ", " in natural address order.
+    /// Returns `"No address stored"` when all fields are absent.
+    var formattedSummary: String {
+        let parts = [
+            houseNumber, road, suburb, neighbourhood,
+            city, municipality, county, stateDistrict,
+            state, postcode, country
+        ].compactMap { v -> String? in
+            guard let v, !v.isEmpty else { return nil }
+            return v
+        }
+        return parts.isEmpty ? "No address stored" : parts.joined(separator: ", ")
+    }
+}
+
 // MARK: - GeocodingResult
 
 /// A single place returned from a geocoding search.
@@ -24,6 +61,8 @@ struct GeocodingResult: Identifiable {
     let longitude: Double
     /// Shorter secondary line: city (or town/village) and country.
     let subtitle: String
+    /// Structured address components from Nominatim, if available.
+    var address: AddressData? = nil
 }
 
 // MARK: - GeocodingService
@@ -123,10 +162,29 @@ private struct NominatimResult: Decodable {
 }
 
 private struct NominatimAddress: Decodable {
-    let city:    String?
-    let town:    String?
+    let houseNumber: String?
+    let road: String?
+    let suburb: String?
+    let neighbourhood: String?
+    let city: String?
+    let town: String?
     let village: String?
+    let municipality: String?
+    let county: String?
+    let stateDistrict: String?
+    let state: String?
+    let postcode: String?
     let country: String?
+    let countryCode: String?
+
+    enum CodingKeys: String, CodingKey {
+        case houseNumber   = "house_number"
+        case road, suburb, neighbourhood
+        case city, town, village, municipality, county
+        case stateDistrict = "state_district"
+        case state, postcode, country
+        case countryCode   = "country_code"
+    }
 }
 
 // MARK: - GeocodingResult initialiser from Nominatim data
@@ -136,6 +194,9 @@ private extension GeocodingResult {
     /// be parsed as `Double` (should never happen in practice).
     init?(nominatim raw: NominatimResult) {
         guard let lat = Double(raw.lat), let lon = Double(raw.lon) else { return nil }
+
+        // TEMPORARY DEBUG — remove before release
+        print("[Nominatim Address Debug] raw.address = \(String(describing: raw.address))")
 
         // Build the subtitle from the most specific available address fields.
         var parts: [String] = []
@@ -160,5 +221,21 @@ private extension GeocodingResult {
         latitude  = lat
         longitude = lon
         subtitle  = parts.isEmpty ? raw.displayName : parts.joined(separator: ", ")
+        address = raw.address.map { a in
+            AddressData(
+                houseNumber:   a.houseNumber,
+                road:          a.road,
+                suburb:        a.suburb,
+                neighbourhood: a.neighbourhood,
+                city:          a.city ?? a.town ?? a.village,
+                municipality:  a.municipality,
+                county:        a.county,
+                stateDistrict: a.stateDistrict,
+                state:         a.state,
+                postcode:      a.postcode,
+                country:       a.country,
+                countryCode:   a.countryCode
+            )
+        }
     }
 }

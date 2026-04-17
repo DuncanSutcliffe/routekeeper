@@ -754,7 +754,7 @@ struct MapView: NSViewRepresentable {
                             longitude:      longitude
                         )
                         // 2. Reload all points so Valhalla sees the updated position.
-                        let allPoints = try await DatabaseManager.shared.fetchRoutePoints(
+                        var allPoints = try await DatabaseManager.shared.fetchRoutePoints(
                             routeItemId: routeItemId
                         )
                         // 3. Fetch stored routing criteria from the route record.
@@ -774,9 +774,16 @@ struct MapView: NSViewRepresentable {
                             avoidFerries:   route.avoidFerries,
                             shortestRoute:  route.shortestRoute
                         )
-                        // 5. Save the new geometry back to the routes table.
-                        try await DatabaseManager.shared.updateRouteGeometryAndStats(
-                            itemId:           routeItemId,
+                        // 5. Apply snapped coordinates from the Valhalla response,
+                        //    then save the updated point list and new geometry.
+                        let snapped = result.snappedLocations
+                        for i in allPoints.indices where i < snapped.count {
+                            allPoints[i].latitude  = snapped[i].latitude
+                            allPoints[i].longitude = snapped[i].longitude
+                        }
+                        try await DatabaseManager.shared.updateRoutePoints(
+                            allPoints,
+                            routeItemId:      routeItemId,
                             geometry:         result.geometry,
                             distanceKm:       result.distanceKm,
                             durationSeconds:  result.durationSeconds,
@@ -860,7 +867,13 @@ struct MapView: NSViewRepresentable {
                             avoidFerries:   route.avoidFerries,
                             shortestRoute:  route.shortestRoute
                         )
-                        // 5. Persist the new point list and updated geometry.
+                        // 5. Apply snapped coordinates from the Valhalla response,
+                        //    then persist the updated point list and new geometry.
+                        let snapped = result.snappedLocations
+                        for i in points.indices where i < snapped.count {
+                            points[i].latitude  = snapped[i].latitude
+                            points[i].longitude = snapped[i].longitude
+                        }
                         try await DatabaseManager.shared.updateRoutePoints(
                             points,
                             routeItemId:     routeItemId,

@@ -513,7 +513,7 @@
             routePointCoords = allRoutePoints.map(function(p) { return p.coord; });
 
             shapingWaypoints.forEach(function(w) {
-                const shapingMarker = new maplibregl.Marker({ draggable: true, color: '#888888', scale: 0.5 })
+                const shapingMarker = new maplibregl.Marker({ draggable: true, color: '#888888', scale: 0.5, offset: [0, -7] })
                     .setLngLat([w.lng, w.lat])
                     .addTo(map);
                 shapingMarker.on('dragend', () => {

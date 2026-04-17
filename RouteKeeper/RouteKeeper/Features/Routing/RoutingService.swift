@@ -41,6 +41,11 @@ struct RouteResult {
     /// JSON-encoded array of elevation samples in metres, one every 30 m along
     /// the route. `nil` when Valhalla returns no elevation data.
     let elevationProfile: String?
+    /// Snapped coordinates returned by Valhalla in `trip.locations`, in the same
+    /// order as the input waypoints. Use these to update stored route point
+    /// positions so they reflect the road-snapped location rather than the raw
+    /// user-supplied coordinates.
+    let snappedLocations: [CLLocationCoordinate2D]
 }
 
 // MARK: - RoutingService
@@ -182,11 +187,15 @@ actor RoutingService {
            let jsonString = String(data: jsonData, encoding: .utf8) {
             elevationProfile = jsonString
         }
+        let snapped = vResponse.trip.locations.map {
+            CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon)
+        }
         return RouteResult(
             geometry:         Self.toGeoJSON(allCoords),
             distanceKm:       vResponse.trip.summary.length,
             durationSeconds:  Int(vResponse.trip.summary.time),
-            elevationProfile: elevationProfile
+            elevationProfile: elevationProfile,
+            snappedLocations: snapped
         )
     }
 
@@ -353,8 +362,14 @@ private struct ValhallaResponse: Decodable {
     let trip: Trip
 
     struct Trip: Decodable {
+        let locations: [Location]
         let legs: [Leg]
         let summary: Summary
+    }
+
+    struct Location: Decodable {
+        let lat: Double
+        let lon: Double
     }
 
     struct Summary: Decodable {

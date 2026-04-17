@@ -725,5 +725,16 @@ styled to match the existing route line colour, retrieved via
 source and layer are removed. No point insertion yet. All debug logging routes
 through the `postToSwift` `debugLog` bridge.
 
-**Next step: Increment 41 — insert the new shaping point on mouseup and send** +
-**the updated route to Valhalla for recalculation.**
+Increment 41 — Route drag point insertion. On mouseup after a route drag, the
+JavaScript handler fires a `postToSwift` message of type `insertShapingPoint`
+carrying `insertIndex`, `lng`, and `lat`. The Swift WKWebView message handler
+retrieves the current route, creates a new route point at the drop coordinates
+with `announces_arrival = false`, inserts it at `insertIndex` in the route's
+ordered point list, saves the updated route to the database, and re-requests the
+route from Valhalla. The Valhalla response redraws the route line and repositions
+markers via the existing route calculation flow, which also refreshes
+`routePointCoords`. Drag-created shaping points are intentionally not added to
+the waypoint library — they exist only as routing constraints within the route.
+All temporary debug logs have been removed; `window.onerror` is retained.
+
+**Next step: Increment 42 — TBD.**

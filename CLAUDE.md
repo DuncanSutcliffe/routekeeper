@@ -711,4 +711,19 @@ is passed to `MapView`, which appends `hideAllLabels()` to the
 suppress flag is also propagated through `mapStyleLoaded` restores. New file:
 `RouteKeeper/Features/Map/ShowLabelsButton.swift`.
 
-**Next step: Increment 41 — TBD.**
+Increment 40 — Route drag rubber band preview. Holding Option and clicking on
+the route line enters drag mode. The mousedown handler checks `altKey`, uses
+`map.queryRenderedFeatures` with an 8px bounding box to confirm a hit on the
+route line layer, then calls `findNearestSegment` to identify the two bracketing
+route points. `findNearestSegment` operates on `routePointCoords` — a
+module-level array of the actual user-defined route points populated by
+`showRoute` — rather than the dense Valhalla-interpolated coordinate array.
+During the drag, a rubber band is drawn as a dashed LineString from the preceding
+route point, through the cursor, to the following route point. The rubber band is
+styled to match the existing route line colour, retrieved via
+`map.getPaintProperty`. On mouseup, drag mode is cleared and the rubber band
+source and layer are removed. No point insertion yet. All debug logging routes
+through the `postToSwift` `debugLog` bridge.
+
+**Next step: Increment 41 — insert the new shaping point on mouseup and send** +
+**the updated route to Valhalla for recalculation.**

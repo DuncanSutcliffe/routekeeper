@@ -128,6 +128,7 @@
         var routeDragActive = false;
         var routeDragAnchorA = null;
         var routeDragAnchorB = null;
+        var routeDragInsertIndex = 0;
 
         // Ordered [lng, lat] pairs for the actual route points (start, via, shaping, end)
         // of the currently displayed single route.  Populated by showRoute(), cleared by clearRoute().
@@ -883,13 +884,12 @@
             var features = map.queryRenderedFeatures(bbox, { layers: ['route-layer'] });
             if (!features || features.length === 0) { return; }
             e.preventDefault();
-            postToSwift({ type: 'debugLog', message: 'Route hit at ' + JSON.stringify(e.lngLat) });
             if (!routePointCoords || routePointCoords.length < 2) { return; }
             var seg = findNearestSegment(routePointCoords, e.lngLat);
-            postToSwift({ type: 'debugLog', message: 'Segment found: ' + JSON.stringify(seg) });
-            routeDragAnchorA = seg.anchorA;
-            routeDragAnchorB = seg.anchorB;
-            routeDragActive  = true;
+            routeDragAnchorA    = seg.anchorA;
+            routeDragAnchorB    = seg.anchorB;
+            routeDragInsertIndex = seg.insertIndex;
+            routeDragActive     = true;
         });
 
         map.on('mousemove', function(e) {
@@ -929,7 +929,12 @@
             routeDragActive = false;
             if (map.getLayer('rubber-band-layer')) { map.removeLayer('rubber-band-layer'); }
             if (map.getSource('rubber-band-source')) { map.removeSource('rubber-band-source'); }
-            postToSwift({ type: 'debugLog', message: 'Drag complete at ' + JSON.stringify(e.lngLat) });
+            postToSwift({
+                type: 'insertShapingPoint',
+                insertIndex: routeDragInsertIndex,
+                lng: e.lngLat.lng,
+                lat: e.lngLat.lat
+            });
         });
 
         document.addEventListener('keydown', function(e) {

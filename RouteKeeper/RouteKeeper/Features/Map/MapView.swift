@@ -816,6 +816,96 @@ struct MapView: NSViewRepresentable {
                 return
             }
 
+            if type == "insertShapingPoint" {
+                guard let insertIndex = body["insertIndex"] as? Int,
+                      let lng         = body["lng"]         as? Double,
+                      let lat         = body["lat"]         as? Double,
+                      let display     = lastRouteDisplay else { return }
+                let routeItemId = display.itemId
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    do {
+                        // 1. Fetch the current ordered point list.
+                        var points = try await DatabaseManager.shared.fetchRoutePoints(
+                            routeItemId: routeItemId
+                        )
+                        // 2. Build the new shaping point and splice it in.
+                        let newPoint = RoutePoint(
+                            id:               nil,
+                            routeItemId:      routeItemId,
+                            sequenceNumber:   0,
+                            latitude:         lat,
+                            longitude:        lng,
+                            elevation:        nil,
+                            announcesArrival: false,
+                            name:             String(format: "%.4f, %.4f", lat, lng),
+                            waypointItemId:   nil
+                        )
+                        let safeIndex = max(1, min(insertIndex, points.count - 1))
+                        points.insert(newPoint, at: safeIndex)
+                        // 3. Fetch stored routing criteria.
+                        guard let route = try await DatabaseManager.shared.fetchRouteRecord(
+                            itemId: routeItemId
+                        ) else { return }
+                        // 4. Recalculate via Valhalla using the updated point list.
+                        let coords = points.map {
+                            CLLocationCoordinate2D(latitude: $0.latitude,
+                                                   longitude: $0.longitude)
+                        }
+                        let result = try await RoutingService.shared.calculateRoute(
+                            through:        coords,
+                            avoidMotorways: route.avoidMotorways,
+                            avoidTolls:     route.avoidTolls,
+                            avoidUnpaved:   route.avoidUnpaved,
+                            avoidFerries:   route.avoidFerries,
+                            shortestRoute:  route.shortestRoute
+                        )
+                        // 5. Persist the new point list and updated geometry.
+                        try await DatabaseManager.shared.updateRoutePoints(
+                            points,
+                            routeItemId:     routeItemId,
+                            geometry:        result.geometry,
+                            distanceKm:      result.distanceKm,
+                            durationSeconds: result.durationSeconds,
+                            elevationProfile: result.elevationProfile
+                        )
+                        // 6. Reload the saved points to pick up the fresh sequence numbers.
+                        let savedPoints = try await DatabaseManager.shared.fetchRoutePoints(
+                            routeItemId: routeItemId
+                        )
+                        // 7. Rebuild RouteDisplay and redraw without moving the viewport.
+                        let intermediates = savedPoints.count > 2
+                            ? Array(savedPoints.dropFirst().dropLast()) : []
+                        var announcingCount = 0
+                        let viaWaypoints = intermediates.map { pt -> ViaWaypoint in
+                            if pt.announcesArrival { announcingCount += 1 }
+                            return ViaWaypoint(
+                                latitude:         pt.latitude,
+                                longitude:        pt.longitude,
+                                index:            announcingCount,
+                                announcesArrival: pt.announcesArrival,
+                                sequenceNumber:   pt.sequenceNumber
+                            )
+                        }
+                        let newDisplay = RouteDisplay(
+                            itemId:   display.itemId,
+                            geojson:  result.geometry,
+                            viaWaypoints: viaWaypoints,
+                            colorHex: display.colorHex,
+                            name:     display.name,
+                            startSeq: savedPoints.first?.sequenceNumber ?? display.startSeq,
+                            endSeq:   savedPoints.last?.sequenceNumber  ?? display.endSeq
+                        )
+                        guard let wv = self.webView else { return }
+                        try await wv.evaluateJavaScript("suppressRecentre = true;")
+                        self.applyRouteDisplay(newDisplay, in: wv)
+                    } catch {
+                        print("insertShapingPoint recalculation failed: \(error)")
+                    }
+                }
+                return
+            }
+
             // Fires after every setMapStyle() call once the new style is fully
             // applied.  Re-dispatch the current display state because map.setStyle()
             // wipes all custom sources and layers.  suppressRecentre was set to true

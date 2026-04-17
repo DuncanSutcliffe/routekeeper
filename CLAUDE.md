@@ -658,26 +658,28 @@ the sheet accepts `title: String = "Add Waypoint"` and `NewRouteSheet` passes
   zoom levels with MapLibre custom elements. Native maplibregl.Marker
   instances are used instead for all four marker types in both
   showRoute() and showMultipleItems().
-Increment 38 detail: Schema migration v6 adds twelve nullable TEXT address columns to
-the `waypoints` table: `address_house_number`, `address_road`, `address_suburb`,
-`address_neighbourhood`, `address_city`, `address_municipality`, `address_county`,
-`address_state_district`, `address_state`, `address_postcode`, `address_country`,
-`address_country_code`. A new `AddressData` struct in `GeocodingService.swift`
-carries these twelve fields; `GeocodingResult` gains an optional `address: AddressData?`
-property populated from the expanded `NominatimAddress` decoder (which now decodes all
-twelve Nominatim fields plus `town`/`village` as `city` fallbacks, with explicit
-`CodingKeys`). `Waypoint` in `WaypointRecords.swift` gains the twelve corresponding
-optional String properties with `CodingKeys` and `encode(to:)` entries.
-`DatabaseManager.createWaypoint` and `updateWaypoint` gain an `address: AddressData? = nil`
-parameter whose values are written into all twelve columns. `LibraryViewModel.createWaypoint`
-and `updateWaypoint` propagate the parameter through. `NewWaypointSheet` captures
-`confirmedAddress` from `selectResult()` and from the reverse-geocode result when a
-coordinate is pre-filled from the map; clears it when the location chip is dismissed.
-`EditWaypointSheet` reconstructs `confirmedAddress` from the twelve stored `Waypoint`
-fields on load, and refreshes it from the Nominatim result when the user selects a new
-location. `WaypointSummary` gains six address search fields (`addressRoad`, `addressSuburb`,
-`addressCity`, `addressState`, `addressPostcode`, `addressCountry`); `fetchWaypointsByList`
-includes them in the SELECT and row mapping; `WaypointPickerSheet.filteredSections`
-extends the OR-match to cover all six new fields. No address UI is shown yet.
+Increment 38 detail: Waypoint address storage and editable address sheet. Schema
+migration v6 added fourteen nullable TEXT address columns to the `waypoints` table:
+`address_house_number`, `address_road`, `address_suburb`, `address_neighbourhood`,
+`address_city`, `address_town`, `address_village`, `address_municipality`,
+`address_county`, `address_state_district`, `address_state`, `address_postcode`,
+`address_country`, `address_country_code`. Nominatim geocoding results populate all
+available fields on waypoint creation and editing; city, town, and village are stored in
+separate columns with no collapsing logic; empty fields are stored as NULL. A new
+`AddressData` struct in `GeocodingService.swift` carries these fields; `GeocodingResult`
+gains an optional `address: AddressData?` property; `Waypoint` in `WaypointRecords.swift`
+gains the corresponding optional String properties. `DatabaseManager.createWaypoint` and
+`updateWaypoint` accept `address: AddressData? = nil`; a new `updateWaypointAddress`
+method updates only the address columns. A non-editable address summary line appears
+beneath the Name field in both `NewWaypointSheet` and `EditWaypointSheet`, concatenating
+non-nil fields in natural order with `", "` as separator, falling back to
+`"No address stored"` in secondary grey text. An `"Edit Address"` button styled with
+`.buttonStyle(.borderless)` and accent colour opens `AddressEditSheet`, which shows all
+address fields as individually labelled TextFields. Done saves all fields back to the
+database (empty fields stored as NULL); in `EditWaypointSheet` the write is immediate via
+`updateWaypointAddress`; in `NewWaypointSheet` the address is written as part of the
+normal creation flow. Cancel discards changes. `WaypointPickerSheet` search covers all
+address columns via the same diacritic-insensitive OR logic used for name, category,
+notes, and list membership. New file: `RouteKeeper/Features/Waypoints/AddressEditSheet.swift`.
 
-**Next step: Increment 39 — TBD.**
+**Next step: Increment 40 — TBD.**

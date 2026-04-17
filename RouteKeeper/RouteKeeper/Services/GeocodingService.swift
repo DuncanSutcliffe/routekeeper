@@ -195,9 +195,6 @@ private extension GeocodingResult {
     init?(nominatim raw: NominatimResult) {
         guard let lat = Double(raw.lat), let lon = Double(raw.lon) else { return nil }
 
-        // TEMPORARY DEBUG — remove before release
-        print("[Nominatim Address Debug] raw.address = \(String(describing: raw.address))")
-
         // Build the subtitle from the most specific available address fields.
         var parts: [String] = []
         if let place = raw.address?.city ?? raw.address?.town ?? raw.address?.village {

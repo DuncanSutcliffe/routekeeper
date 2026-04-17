@@ -184,8 +184,11 @@ struct NewRouteSheet: View {
         .sheet(isPresented: $showingStartPicker) {
             WaypointPickerSheet(
                 onSelect: { summary in
-                    startWaypoint = viewModel.availableWaypoints
-                        .first { $0.itemId == summary.itemId }
+                    Task { @MainActor in
+                        await viewModel.loadAvailableWaypoints()
+                        startWaypoint = viewModel.availableWaypoints
+                            .first { $0.itemId == summary.itemId }
+                    }
                 },
                 excludingId: endWaypoint?.itemId,
                 title: "Select Start Point"
@@ -194,8 +197,11 @@ struct NewRouteSheet: View {
         .sheet(isPresented: $showingEndPicker) {
             WaypointPickerSheet(
                 onSelect: { summary in
-                    endWaypoint = viewModel.availableWaypoints
-                        .first { $0.itemId == summary.itemId }
+                    Task { @MainActor in
+                        await viewModel.loadAvailableWaypoints()
+                        endWaypoint = viewModel.availableWaypoints
+                            .first { $0.itemId == summary.itemId }
+                    }
                 },
                 excludingId: startWaypoint?.itemId,
                 title: "Select End Point"

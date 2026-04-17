@@ -19,8 +19,15 @@ struct WaypointPickerSheet: View {
 
     @State private var sections: [WaypointListSection] = []
     @State private var searchText = ""
+    @State private var showingCreateWaypoint = false
+    @State private var scrollTargetId: Int64? = nil
+    /// Set when the user taps a row; read by onDisappear to fire onSelect.
+    @State private var pendingSelection: WaypointSummary? = nil
+    /// Dedicated view model for the embedded NewWaypointSheet.
+    @State private var createWaypointViewModel = LibraryViewModel()
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(APIKeysManager.self) private var apiKeysManager
 
     /// Sections after applying the exclusion filter and the search query.
     ///
@@ -93,7 +100,14 @@ struct WaypointPickerSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Full-width search field pinned below the navigation title.
+                // Leading-aligned sheet title.
+                Text(title)
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
+
+                // Full-width search field.
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
@@ -107,61 +121,122 @@ struct WaypointPickerSheet: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(Color(nsColor: .controlBackgroundColor))
 
                 Divider()
 
-                List {
-                    ForEach(filteredSections) { section in
-                        Section {
-                            ForEach(section.waypoints) { waypoint in
-                                Button {
-                                    onSelect(waypoint)
-                                    dismiss()
-                                } label: {
+                ScrollViewReader { proxy in
+                    List {
+                        ForEach(filteredSections) { section in
+                            Section {
+                                ForEach(section.waypoints) { waypoint in
                                     waypointRow(waypoint)
+                                        .id(waypoint.itemId)
+                                        .onTapGesture {
+                                            pendingSelection = waypoint
+                                            dismiss()
+                                        }
                                 }
-                                .buttonStyle(.plain)
-                            }
-                        } header: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(section.listName)
-                                if let folder = section.folderName {
-                                    Text(folder)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                            } header: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "map")
+                                            .foregroundStyle(.secondary)
+                                        Text(section.listName)
+                                    }
+                                    if let folder = section.folderName {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "folder.fill")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                            Text(folder)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                .overlay {
-                    if sections.isEmpty {
-                        Text("No waypoints saved yet.")
-                            .foregroundStyle(.secondary)
-                    } else if filteredSections.isEmpty {
-                        Text("No waypoints match \"\(searchText)\".")
-                            .foregroundStyle(.secondary)
+                    .overlay {
+                        if sections.isEmpty {
+                            Text("No waypoints saved yet.")
+                                .foregroundStyle(.secondary)
+                        } else if filteredSections.isEmpty {
+                            Text("No waypoints match \"\(searchText)\".")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .onChange(of: scrollTargetId) { _, id in
+                        guard let id else { return }
+                        withAnimation {
+                            proxy.scrollTo(id, anchor: .center)
+                        }
+                        scrollTargetId = nil
                     }
                 }
+
+                Divider()
+
+                Button {
+                    showingCreateWaypoint = true
+                } label: {
+                    Label("Create Waypoint", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(.accentColor)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 10)
             }
-            .navigationTitle(title)
+            .padding(.horizontal)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
             }
+            .sheet(isPresented: $showingCreateWaypoint, onDismiss: {
+                let oldIds = Set(sections.flatMap { $0.waypoints.map(\.itemId) })
+                Task { @MainActor in
+                    do {
+                        await Task.yield()
+                        let fresh = try await DatabaseManager.shared.fetchWaypointsByList()
+                        sections = fresh
+                        if let newId = fresh
+                            .flatMap({ $0.waypoints })
+                            .first(where: { !oldIds.contains($0.itemId) })?
+                            .itemId {
+                            try? await Task.sleep(for: .milliseconds(150))
+                            scrollTargetId = newId
+                        }
+                    } catch {}
+                }
+            }) {
+                NewWaypointSheet(
+                    viewModel: createWaypointViewModel,
+                    preselectedListID: nil
+                )
+                .environment(apiKeysManager)
+            }
         }
         .frame(minWidth: 360, minHeight: 300)
-        .task {
-            do {
-                await Task.yield()
-                sections = try await DatabaseManager.shared.fetchWaypointsByList()
-            } catch {
-                // sections stays empty; overlay message is shown.
+        .onDisappear {
+            if let wp = pendingSelection {
+                onSelect(wp)
             }
+        }
+        .task {
+            await loadSections()
+            await createWaypointViewModel.load()
+        }
+    }
+
+    private func loadSections() async {
+        do {
+            await Task.yield()
+            sections = try await DatabaseManager.shared.fetchWaypointsByList()
+        } catch {
+            // sections stays empty; overlay message is shown.
         }
     }
 

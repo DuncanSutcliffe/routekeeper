@@ -622,29 +622,31 @@ The Settings window minimum width was updated to 480pt to accommodate
 the key fields. The new UI file is
 `RouteKeeper/Features/Settings/APIKeysSettingsView.swift`.
 
-Increment 39 detail: `NewRouteSheet` now uses `WaypointPickerSheet` for both
-start and end point selection, replacing the previous flat `Picker` dropdowns.
-Each field displays the selected waypoint name or a grey placeholder prompt;
-tapping opens the picker sheet, which excludes the opposing selection via the
-existing `excludingId` parameter. `WaypointPickerSheet` was improved in four
-steps: (1) waypoints are grouped by library list, with the folder name shown as
-secondary text in each section header; waypoints belonging to multiple lists
-appear in each relevant section; a final "Unclassified" section catches
-waypoints with no list membership; grouping data comes from a new
-`fetchWaypointsByList()` method in `DatabaseManager` returning
-`[WaypointListSection]`; (2) each row now shows a filled colour dot, the
-category SF Symbol icon, the waypoint name, and the category name as secondary
-grey text beneath — consistent with the sidebar appearance; `WaypointSummary`
-was extended with `colorHex`, `categoryName`, `categoryIconName`, and `notes`
-fields (all defaulted so existing call sites are unaffected); (3) search is
-now case- and diacritic-insensitive using `.folding(options: [.caseInsensitive,
-.diacriticInsensitive])` and matches against waypoint name, category name,
-notes, and any list name the waypoint belongs to; a two-pass algorithm ensures
-that a waypoint matching via list name appears in all its sections; (4) the
-search bar is full-width at the top of the sheet below the navigation title,
-implemented as a plain `TextField` above the `List` (replacing `.searchable`);
-the sheet accepts `title: String = "Add Waypoint"` and `NewRouteSheet` passes
-`"Select Start Point"` and `"Select End Point"` at the respective call sites.
+Increment 39 detail: `WaypointPickerSheet` improvements and Create Waypoint
+entry point. The picker sheet is now grouped by library list; each section
+header shows the list name with a map icon and the folder name with a folder
+icon in smaller secondary text beneath it. Waypoints belonging to multiple
+lists appear in each relevant section. An Unclassified section catches
+waypoints with no list membership. Each row shows a filled colour dot, the
+category SF Symbol, the waypoint name, and the category name as secondary grey
+text. Search is diacritic-insensitive and case-insensitive, matching against
+name, category, notes, list membership, and all stored address fields; a
+two-pass algorithm ensures waypoints matching via list name appear in all their
+sections. The sheet title is leading-aligned with consistent horizontal
+padding. The sheet accepts a `title: String` parameter defaulting to `"Add
+Waypoint"`; `NewRouteSheet` passes `"Select Start Point"` and `"Select End
+Point"` at the respective call sites. A "Create Waypoint" button with a plus
+icon sits below a `Divider` at the bottom of the sheet, opening
+`NewWaypointSheet` as a nested sheet with a dedicated `LibraryViewModel`
+instance (populated via `load()` in `.task`) so list assignment works
+correctly; `APIKeysManager` is re-injected via `.environment()` into the nested
+sheet. On dismissal, the picker reloads and scrolls to the newly created
+waypoint. Row selection uses a `pendingSelection` `@State` variable written at
+tap time and read in `onDisappear` to avoid stale closure capture across nested
+sheet presentations. `NewRouteSheet` wraps each `onSelect` handler in a
+`Task { @MainActor in }` that calls `viewModel.loadAvailableWaypoints()` before
+resolving the selection by `itemId`, so newly created waypoints that were
+absent from the initial load are found correctly.
 
 **Known issues / deferred:**
 - Valhalla uses the public OSM community instance — rate-limited.

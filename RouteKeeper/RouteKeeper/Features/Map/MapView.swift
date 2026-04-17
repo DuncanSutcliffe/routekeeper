@@ -52,6 +52,35 @@ struct MapCoordinate: Equatable {
     let longitude: Double
 }
 
+// MARK: - LabelData
+
+/// Position and display info for a single map label.
+///
+/// Stored by ContentView when a list is displayed so labels can be
+/// restored without a full re-render when the user turns them back on.
+struct LabelData: Equatable {
+    let itemId: Int64
+    let lat: Double
+    let lng: Double
+    let name: String
+    let iconBase64: String?
+}
+
+// MARK: - LabelCommand
+
+/// A one-shot instruction to show or hide map labels.
+///
+/// Each instance carries a unique `id` so the Coordinator always executes
+/// it even when the same action is requested twice in a row.
+struct LabelCommand {
+    let id = UUID()
+    enum Action {
+        case hide
+        case show([LabelData])
+    }
+    let action: Action
+}
+
 // MARK: - ViaWaypoint
 
 /// A single intermediate waypoint passed to the map for display.
@@ -180,6 +209,10 @@ final class MapViewModel {
         multiDisplay = nil
     }
 
+    /// A one-shot label command applied by the Coordinator on the next
+    /// `updateNSView` pass. Set by ContentView when the label toggle changes.
+    var labelCommand: LabelCommand? = nil
+
     /// The active MapTiler style name — `"streets-v4"`, `"hybrid-v4"`, or `"topo-v4"`.
     ///
     /// Defaults to `"streets-v4"`. `ContentView.task` overwrites this with the
@@ -212,6 +245,11 @@ struct MapView: NSViewRepresentable {
     /// Called on the main thread when the user selects "New waypoint here" from the map
     /// context menu. Receives the WGS-84 latitude and longitude of the right-click point.
     let onAddWaypointAtCoordinate: ((Double, Double) -> Void)?
+    /// When `true`, `hideAllLabels()` is appended to the `showMultipleItems()` JS call
+    /// so labels are suppressed without a visible flash.
+    let suppressMultiLabels: Bool
+    /// A one-shot label command applied by the Coordinator on the next render pass.
+    let labelCommand: LabelCommand?
 
     // MARK: NSViewRepresentable
 
@@ -291,13 +329,27 @@ struct MapView: NSViewRepresentable {
             }
         }
 
+        // Track suppressMultiLabels for mapStyleLoaded restores.
+        coordinator.lastSuppressMultiLabels = suppressMultiLabels
+
         // Apply a multi-item display change if it has changed.
         if multiDisplay != coordinator.lastMultiDisplay {
             coordinator.lastMultiDisplay = multiDisplay
             if coordinator.mapIsReady {
-                coordinator.applyMultiDisplay(multiDisplay, in: nsView)
+                coordinator.applyMultiDisplay(
+                    multiDisplay, suppressLabels: suppressMultiLabels, in: nsView
+                )
             } else {
                 coordinator.pendingMultiDisplay = multiDisplay
+                coordinator.pendingSuppressMultiLabels = suppressMultiLabels
+            }
+        }
+
+        // Execute a one-shot label command if one has been issued.
+        if labelCommand?.id != coordinator.lastLabelCommandId {
+            coordinator.lastLabelCommandId = labelCommand?.id
+            if coordinator.mapIsReady, let cmd = labelCommand {
+                coordinator.applyLabelCommand(cmd, in: nsView)
             }
         }
 
@@ -435,6 +487,16 @@ struct MapView: NSViewRepresentable {
         /// preference changes and call `setScaleUnits()` in JS.
         var lastScaleUnit: String? = nil
 
+        /// UUID of the last-applied `LabelCommand`; used to detect re-fires.
+        var lastLabelCommandId: UUID? = nil
+
+        /// Suppress-labels flag from the last `updateNSView` pass; used when
+        /// restoring display state after a map style reload.
+        var lastSuppressMultiLabels: Bool = false
+
+        /// Suppress-labels flag queued before the map was ready, flushed on mapReady.
+        var pendingSuppressMultiLabels: Bool = false
+
         // MARK: JS calls
 
         /// Passes GeoJSON to the JS drawRoute() function, or queues it if the
@@ -485,17 +547,42 @@ struct MapView: NSViewRepresentable {
         /// Calls either `showMultipleItems()` or `clearMultipleItems()` in JS depending
         /// on whether `json` is non-nil.
         ///
-        /// The JSON string is escaped for embedding inside a JS string literal using
-        /// the same backslash-then-quote sequence used by `applyRouteDisplay`.
-        func applyMultiDisplay(_ json: String?, in webView: WKWebView) {
+        /// When `suppressLabels` is `true`, `hideAllLabels()` is appended to the same
+        /// JS string so both calls execute atomically with no visible label flash.
+        func applyMultiDisplay(_ json: String?, suppressLabels: Bool, in webView: WKWebView) {
             if let json {
                 let escaped = json
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
                     .replacingOccurrences(of: "\n", with: "")
-                webView.evaluateJavaScript("showMultipleItems(\"\(escaped)\");")
+                if suppressLabels {
+                    webView.evaluateJavaScript(
+                        "showMultipleItems(\"\(escaped)\"); hideAllLabels();"
+                    )
+                } else {
+                    webView.evaluateJavaScript("showMultipleItems(\"\(escaped)\");")
+                }
             } else {
                 webView.evaluateJavaScript("clearMultipleItems();")
+            }
+        }
+
+        /// Executes a one-shot label show or hide command in JavaScript.
+        func applyLabelCommand(_ cmd: LabelCommand, in webView: WKWebView) {
+            switch cmd.action {
+            case .hide:
+                webView.evaluateJavaScript("hideAllLabels();")
+            case .show(let labels):
+                for label in labels {
+                    let escapedName = label.name
+                        .replacingOccurrences(of: "\\", with: "\\\\")
+                        .replacingOccurrences(of: "\"", with: "\\\"")
+                    let iconArg = label.iconBase64.map { "\"\($0)\"" } ?? "null"
+                    webView.evaluateJavaScript(
+                        "showLabel(\(label.itemId), \(label.lng), \(label.lat)," +
+                        " \"\(escapedName)\", \(iconArg));"
+                    )
+                }
             }
         }
 
@@ -740,7 +827,7 @@ struct MapView: NSViewRepresentable {
                 applyRegisteredCategoryIcons(in: wv)
                 applyWaypointDisplay(lastWaypointDisplay, in: wv)
                 applyRouteDisplay(lastRouteDisplay, in: wv)
-                applyMultiDisplay(lastMultiDisplay, in: wv)
+                applyMultiDisplay(lastMultiDisplay, suppressLabels: lastSuppressMultiLabels, in: wv)
                 return
             }
 
@@ -778,8 +865,11 @@ struct MapView: NSViewRepresentable {
 
                 // Flush any multi-item display that arrived before the map was ready.
                 if let pending = pendingMultiDisplay {
-                    applyMultiDisplay(pending, in: wv)
+                    applyMultiDisplay(
+                        pending, suppressLabels: pendingSuppressMultiLabels, in: wv
+                    )
                     pendingMultiDisplay = nil
+                    pendingSuppressMultiLabels = false
                 }
             }
         }
@@ -792,7 +882,9 @@ struct MapView: NSViewRepresentable {
         waypointDisplay: nil, routeDisplay: nil, multiDisplay: nil,
         mapStyle: "streets-v4", mapScaleUnit: "metric",
         mapTilerAPIKey: "",
-        onAddWaypointAtCoordinate: nil
+        onAddWaypointAtCoordinate: nil,
+        suppressMultiLabels: false,
+        labelCommand: nil
     )
     .frame(width: 800, height: 600)
 }

@@ -111,6 +111,11 @@ struct ContentView: View {
     @State private var routeColorHex: String = "#1A73E8"
     /// Non-nil while the map-tap "New waypoint here" sheet is open.
     @State private var mapTapPresentation: MapTapPresentation? = nil
+    /// Persisted toggle: whether labels are shown when a list is displayed.
+    @AppStorage("showListItemLabels") private var showListItemLabels = true
+    /// Label data for the items in the currently displayed list, used to
+    /// restore labels when the user turns them back on.
+    @State private var currentListLabels: [LabelData] = []
 
     // MARK: Combined selection key
 
@@ -158,12 +163,20 @@ struct ContentView: View {
                             mapTapPresentation = MapTapPresentation(
                                 coordinate: MapCoordinate(latitude: lat, longitude: lng)
                             )
-                        }
+                        },
+                        suppressMultiLabels: selectedList != nil && selectedItems.isEmpty
+                                             && !showListItemLabels,
+                        labelCommand: mapViewModel.labelCommand
                     )
-                    MapStylePicker(currentStyle: Binding(
-                        get: { mapViewModel.currentMapStyle },
-                        set: { mapViewModel.currentMapStyle = $0 }
-                    ))
+                    VStack(alignment: .leading, spacing: 8) {
+                        MapStylePicker(currentStyle: Binding(
+                            get: { mapViewModel.currentMapStyle },
+                            set: { mapViewModel.currentMapStyle = $0 }
+                        ))
+                        if selectedList != nil && selectedItems.isEmpty {
+                            ShowLabelsButton(showLabels: $showListItemLabels)
+                        }
+                    }
                     .padding(.top, 12)
                     .padding(.leading, 10)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -207,6 +220,14 @@ struct ContentView: View {
                 prefilledCoordinate: tap.coordinate
             )
         }
+        .onChange(of: showListItemLabels) { _, newValue in
+            guard selectedList != nil && selectedItems.isEmpty else { return }
+            if newValue {
+                mapViewModel.labelCommand = LabelCommand(action: .show(currentListLabels))
+            } else {
+                mapViewModel.labelCommand = LabelCommand(action: .hide)
+            }
+        }
         .focusedValue(\.showRoutingProfilesSheet, $showingRoutingProfilesSheet)
     }
 
@@ -228,6 +249,7 @@ struct ContentView: View {
             routeDistanceKm      = nil
             routeDurationSeconds = nil
             routeElevationProfile = nil
+            currentListLabels = []
             mapViewModel.clearMultiDisplay()
 
             if items.count == 1, let item = items.first {
@@ -247,13 +269,16 @@ struct ContentView: View {
             mapViewModel.clearMultiDisplay()
             let listItems = await fetchItemsForList(list)
             if !listItems.isEmpty {
-                await handleMultiItemDisplay(listItems)
+                currentListLabels = await handleMultiItemDisplay(listItems)
+            } else {
+                currentListLabels = []
             }
         } else {
             // Nothing selected — clear everything.
             mapViewModel.clearWaypoint()
             mapViewModel.clearRoute()
             mapViewModel.clearMultiDisplay()
+            currentListLabels     = []
             routeDistanceKm       = nil
             routeDurationSeconds  = nil
             routeElevationProfile = nil
@@ -390,10 +415,12 @@ struct ContentView: View {
 
     /// Fetches geometry for each item in `items`, builds the JSON payload, and
     /// calls `mapViewModel.showMultipleItems()`.
-    private func handleMultiItemDisplay(_ items: [Item]) async {
-        let json = await buildMultiItemsJson(items)
-        guard !json.isEmpty else { return }
+    @discardableResult
+    private func handleMultiItemDisplay(_ items: [Item]) async -> [LabelData] {
+        let (json, labels) = await buildMultiItemsJson(items)
+        guard !json.isEmpty else { return [] }
         mapViewModel.showMultipleItems(json)
+        return labels
     }
 
     /// Returns the items belonging to `list`, using `fetchUnclassifiedItems()`
@@ -415,7 +442,7 @@ struct ContentView: View {
     ///
     /// Generates start/end flag icons once and embeds them in every route entry.
     /// Items whose geometry is missing (NULL in the DB) are silently skipped.
-    private func buildMultiItemsJson(_ items: [Item]) async -> String {
+    private func buildMultiItemsJson(_ items: [Item]) async -> (json: String, labels: [LabelData]) {
         // Fetch categories once so the per-waypoint icon name lookup is O(1).
         let allCategories = (try? await DatabaseManager.shared.fetchCategories()) ?? []
 
@@ -428,6 +455,7 @@ struct ContentView: View {
         )
 
         var entries: [MultiItemEntry] = []
+        var labels: [LabelData] = []
 
         for item in items {
             guard let itemId = item.id else { continue }
@@ -449,6 +477,11 @@ struct ContentView: View {
                         itemId: itemId, name: item.name,
                         iconImageName: iconImageName,
                         labelIconBase64: labelIconBase64
+                    ))
+                    labels.append(LabelData(
+                        itemId: itemId,
+                        lat: wp.latitude, lng: wp.longitude,
+                        name: item.name, iconBase64: labelIconBase64
                     ))
                 }
             case .route:
@@ -513,6 +546,13 @@ struct ContentView: View {
                     shapingWaypoints: shapingWps.isEmpty ? nil : shapingWps,
                     routeIconBase64:  routeIconBase64
                 ))
+                if let mid = lineStringMidpoint(geometry) {
+                    labels.append(LabelData(
+                        itemId: itemId,
+                        lat: mid.lat, lng: mid.lng,
+                        name: item.name, iconBase64: routeIconBase64
+                    ))
+                }
             case .track:
                 break
             }
@@ -520,9 +560,38 @@ struct ContentView: View {
 
         guard !entries.isEmpty,
               let data = try? JSONEncoder().encode(entries),
-              let json = String(data: data, encoding: .utf8) else { return "" }
-        return json
+              let json = String(data: data, encoding: .utf8) else { return ("", []) }
+        return (json, labels)
     }
+}
+
+/// Returns the geometric midpoint of a GeoJSON LineString, mirroring the
+/// `lineMidpoint()` helper in MapLibreMap.html.
+private func lineStringMidpoint(_ geojson: String) -> (lat: Double, lng: Double)? {
+    guard let data = geojson.data(using: .utf8),
+          let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let type = obj["type"] as? String, type == "LineString",
+          let coords = obj["coordinates"] as? [[Double]],
+          coords.count >= 2 else { return nil }
+    var totalDist = 0.0
+    for i in 1 ..< coords.count {
+        let dlng = coords[i][0] - coords[i-1][0]
+        let dlat = coords[i][1] - coords[i-1][1]
+        totalDist += sqrt(dlng * dlng + dlat * dlat)
+    }
+    let half = totalDist / 2
+    var running = 0.0
+    for i in 1 ..< coords.count {
+        let dlng = coords[i][0] - coords[i-1][0]
+        let dlat = coords[i][1] - coords[i-1][1]
+        let seg  = sqrt(dlng * dlng + dlat * dlat)
+        if running + seg >= half {
+            let t = seg > 0 ? (half - running) / seg : 0
+            return (lat: coords[i-1][1] + t * dlat, lng: coords[i-1][0] + t * dlng)
+        }
+        running += seg
+    }
+    return coords.last.map { (lat: $0[1], lng: $0[0]) }
 }
 
 #Preview {

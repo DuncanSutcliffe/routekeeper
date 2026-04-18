@@ -1270,6 +1270,190 @@ actor DatabaseManager {
         }
     }
 
+    // MARK: - GPX Import
+
+    /// Imports a parsed GPX result into the database, assigning all created items
+    /// to `listId`.
+    ///
+    /// - For each ``ParsedWaypoint``: inserts an `items` row, a `waypoints` row,
+    ///   and a membership row. Duplicate item names are suffixed with `(1)`, `(2)`, …
+    ///
+    /// - For each ``ParsedRoute``: inserts an `items` row, a `routes` row with
+    ///   `geometry = NULL` and `needs_recalculation = 1` (so Valhalla runs on first
+    ///   display), and `route_points` rows in sequence order. Waypoint records are
+    ///   also created for the first and last route points and added to the list.
+    ///
+    /// - Returns: A tuple of (routeCount, waypointCount, listName) for the
+    ///   confirmation message shown to the user.
+    @discardableResult
+    func importGPXResult(
+        _ result: GPXImportResult,
+        into listId: Int64
+    ) async throws -> (routeCount: Int, waypointCount: Int, listName: String) {
+        let q = try requireQueue()
+        return try await q.write { db in
+            guard let list = try RouteList.fetchOne(
+                db,
+                sql: "SELECT * FROM lists WHERE id = ?",
+                arguments: [listId]
+            ) else {
+                throw DatabaseManagerError.insertFailed("Target list not found.")
+            }
+            let listName = list.name
+            var waypointCount = 0
+            var routeCount    = 0
+
+            // Names of every <wpt> element in this file, used below to avoid
+            // creating a duplicate waypoint when a route's first or last point
+            // shares its name with an already-imported standalone waypoint.
+            let wptNames = Set(result.waypoints.map(\.name))
+
+            // Import standalone waypoints.
+            for wpt in result.waypoints {
+                let name = try Self.uniqueItemName(base: wpt.name, db: db)
+                try db.execute(
+                    sql: "INSERT INTO items (type, name) VALUES (?, ?)",
+                    arguments: ["waypoint", name]
+                )
+                guard let itemId = try Int64.fetchOne(
+                    db, sql: "SELECT last_insert_rowid()"
+                ) else { continue }
+                try db.execute(
+                    sql: "INSERT INTO waypoints " +
+                         "(item_id, name, latitude, longitude, elevation, color_hex) " +
+                         "VALUES (?, ?, ?, ?, ?, ?)",
+                    arguments: [itemId, name, wpt.lat, wpt.lon, wpt.ele, "#E8453C"]
+                )
+                try db.execute(
+                    sql: "INSERT INTO item_list_membership (item_id, list_id) VALUES (?, ?)",
+                    arguments: [itemId, listId]
+                )
+                waypointCount += 1
+            }
+
+            // Fetch the default routing profile once so every imported route uses
+            // the same costing criteria as a manually created route.
+            let defaultProfile = try RoutingProfile.fetchOne(
+                db,
+                sql: "SELECT * FROM routing_profiles WHERE is_default = 1"
+            )
+
+            // Import routes.
+            for rte in result.routes {
+                let routeName = try Self.uniqueItemName(base: rte.name, db: db)
+                try db.execute(
+                    sql: "INSERT INTO items (type, name) VALUES (?, ?)",
+                    arguments: ["route", routeName]
+                )
+                guard let routeItemId = try Int64.fetchOne(
+                    db, sql: "SELECT last_insert_rowid()"
+                ) else { continue }
+
+                // Insert route record with null geometry; needs_recalculation=1 ensures
+                // Valhalla runs the first time the route is selected for display.
+                // Apply the default routing profile's criteria if one is set.
+                try db.execute(
+                    sql: "INSERT INTO routes " +
+                         "(item_id, routing_profile, needs_recalculation, color_hex, " +
+                         "applied_profile_name, avoid_motorways, avoid_tolls, " +
+                         "avoid_unpaved, avoid_ferries, shortest_route) " +
+                         "VALUES (?, 'motorcycle', 1, '#1A73E8', ?, ?, ?, ?, ?, ?)",
+                    arguments: [
+                        routeItemId,
+                        defaultProfile?.name,
+                        defaultProfile?.avoidMotorways == true ? 1 : 0,
+                        defaultProfile?.avoidTolls     == true ? 1 : 0,
+                        defaultProfile?.avoidUnpaved   == true ? 1 : 0,
+                        defaultProfile?.avoidFerries   == true ? 1 : 0,
+                        defaultProfile?.shortestRoute  == true ? 1 : 0
+                    ]
+                )
+
+                let points    = rte.points
+                let lastIndex = points.count - 1
+
+                for (seq, pt) in points.enumerated() {
+                    let isFirst = seq == 0
+                    let isLast  = seq == lastIndex
+                    // Start and end points announce arrival; all intermediates are silent.
+                    let announces = (isFirst || isLast) ? 1 : 0
+
+                    // Create a library waypoint for the first and last route points,
+                    // unless the point's name matches a <wpt> element that was already
+                    // imported — in that case the standalone waypoint covers it.
+                    let coveredByWpt = pt.name.map { wptNames.contains($0) } ?? false
+                    var waypointItemId: Int64? = nil
+                    if (isFirst || isLast) && !coveredByWpt {
+                        let baseName  = pt.name ?? (isFirst ? routeName + " Start" : routeName + " End")
+                        let wpName    = try Self.uniqueItemName(base: baseName, db: db)
+                        try db.execute(
+                            sql: "INSERT INTO items (type, name) VALUES (?, ?)",
+                            arguments: ["waypoint", wpName]
+                        )
+                        if let wpId = try Int64.fetchOne(
+                            db, sql: "SELECT last_insert_rowid()"
+                        ) {
+                            try db.execute(
+                                sql: "INSERT INTO waypoints " +
+                                     "(item_id, name, latitude, longitude, elevation, color_hex) " +
+                                     "VALUES (?, ?, ?, ?, ?, ?)",
+                                arguments: [wpId, wpName, pt.lat, pt.lon, pt.ele, "#E8453C"]
+                            )
+                            try db.execute(
+                                sql: "INSERT INTO item_list_membership (item_id, list_id) VALUES (?, ?)",
+                                arguments: [wpId, listId]
+                            )
+                            waypointItemId = wpId
+                        }
+                    }
+
+                    let ptName = pt.name ?? String(format: "%.4f, %.4f", pt.lat, pt.lon)
+                    try db.execute(
+                        sql: "INSERT INTO route_points " +
+                             "(route_item_id, sequence_number, latitude, longitude, " +
+                             "elevation, announces_arrival, name, waypoint_item_id) " +
+                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        arguments: [
+                            routeItemId, seq, pt.lat, pt.lon,
+                            pt.ele, announces, ptName, waypointItemId
+                        ]
+                    )
+                }
+
+                try db.execute(
+                    sql: "INSERT INTO item_list_membership (item_id, list_id) VALUES (?, ?)",
+                    arguments: [routeItemId, listId]
+                )
+                routeCount += 1
+            }
+
+            return (routeCount: routeCount, waypointCount: waypointCount, listName: listName)
+        }
+    }
+
+    /// Returns a name that does not exist in the `items` table.
+    ///
+    /// If `base` is already taken, appends `(1)`, `(2)`, … until a free name is
+    /// found. Falls back to a UUID suffix after 999 attempts.
+    private static func uniqueItemName(base: String, db: Database) throws -> String {
+        let count = try Int.fetchOne(
+            db,
+            sql: "SELECT COUNT(*) FROM items WHERE name = ?",
+            arguments: [base]
+        ) ?? 0
+        if count == 0 { return base }
+        for suffix in 1...999 {
+            let candidate = "\(base) (\(suffix))"
+            let n = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM items WHERE name = ?",
+                arguments: [candidate]
+            ) ?? 0
+            if n == 0 { return candidate }
+        }
+        return "\(base) (\(UUID().uuidString.prefix(8)))"
+    }
+
     // MARK: - GPX Export
 
     /// Returns all item IDs that are members of `listId`.

@@ -236,6 +236,10 @@ struct LibrarySidebarView: View {
     @State private var routeWaypointTarget:   RouteIdentity?    = nil
     @State private var waypointEditTarget:    WaypointIdentity? = nil
 
+    // GPX import state — shared with list context menu.
+    @State private var showingImportGPXSheet       = false
+    @State private var importGPXPreselectedListId: Int64? = nil
+
     // Export state — shared with bottom panel and list/folder context menus.
     @State private var showingExportSheet     = false
     @State private var exportItemIds: [Int64] = []
@@ -271,6 +275,15 @@ struct LibrarySidebarView: View {
     var body: some View {
         coreView
             .modifier(modals)
+            .sheet(isPresented: $showingImportGPXSheet) {
+                GPXImportSheet(
+                    viewModel: viewModel,
+                    preselectedListId: importGPXPreselectedListId,
+                    onImported: { list in
+                        selectedList = list
+                    }
+                )
+            }
     }
 
     // MARK: - Core view
@@ -332,6 +345,13 @@ struct LibrarySidebarView: View {
                     : nil
             }
         ))
+        .focusedValue(\.showImportGPXSheet, Binding(
+            get: { showingImportGPXSheet },
+            set: { show in
+                if show { importGPXPreselectedListId = nil }
+                showingImportGPXSheet = show
+            }
+        ))
         .overlay {
             if viewModel.isLoading { ProgressView() }
         }
@@ -353,6 +373,11 @@ struct LibrarySidebarView: View {
             guard !newItems.isEmpty, selectedList != nil else { return }
             itemSelectionClearedList = true
             selectedList = nil
+        }
+        .onChange(of: viewModel.lastCreatedItem) { _, item in
+            guard let item else { return }
+            viewModel.lastCreatedItem = nil
+            selectedItems = [item]
         }
         .onChange(of: sortColumn)    { _, _ in
             Task { await viewModel.load(sortColumn: sortColumn, ascending: sortAscending) }
@@ -468,7 +493,9 @@ struct LibrarySidebarView: View {
                     notEmptyAlertMessage: $notEmptyAlertMessage,
                     showNotEmptyAlert: $showNotEmptyAlert,
                     listScheduledForDeletion: $listScheduledForDeletion,
-                    showDeleteListConfirm: $showDeleteListConfirm
+                    showDeleteListConfirm: $showDeleteListConfirm,
+                    importGPXPreselectedListId: $importGPXPreselectedListId,
+                    showingImportGPXSheet: $showingImportGPXSheet
                 )
                 .tag(list)
             }
@@ -504,6 +531,7 @@ struct LibrarySidebarView: View {
     }
 
     private func handleRouteWaypointSave(identity: RouteIdentity) {
+        NotificationCenter.default.post(name: .routeKeeperLibraryDidChange, object: nil)
         cycleSelection(for: identity.id)
     }
 

@@ -27,6 +27,8 @@ struct ListRowView: View {
     @Binding var showNotEmptyAlert: Bool
     @Binding var listScheduledForDeletion: RouteList?
     @Binding var showDeleteListConfirm: Bool
+    @Binding var importGPXPreselectedListId: Int64?
+    @Binding var showingImportGPXSheet: Bool
 
     var body: some View {
         Label {
@@ -69,6 +71,10 @@ struct ListRowView: View {
             Divider()
             Button("Edit List…") { editListTarget = list }
             Divider()
+            Button("Import GPX…") {
+                importGPXPreselectedListId = list.id
+                showingImportGPXSheet = true
+            }
             Button("Export GPX…") {
                 Task {
                     guard let listId = list.id else { return }

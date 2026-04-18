@@ -56,9 +56,32 @@ final class LibraryViewModel {
     /// menus can synchronously determine which target lists to show as disabled.
     private(set) var itemMemberships: [Int64: Set<Int64>] = [:]
 
+    /// Set to the newly created item after a successful `createWaypoint` or
+    /// `createRoute` call so the sidebar can auto-select it on the map.
+    /// Cleared by the sidebar after it has been consumed.
+    var lastCreatedItem: Item? = nil
+
     // Remembered so createFolder() can reload with the same sort the user last chose.
     private var currentSortColumn: String = "sort_order"
     private var currentSortAscending: Bool = true
+
+    // MARK: - Init
+
+    init() {
+        NotificationCenter.default.addObserver(
+            forName: .routeKeeperLibraryDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.reload()
+                if let list = self.currentList {
+                    await self.loadItems(for: list)
+                }
+            }
+        }
+    }
 
     // MARK: - Folder / list loading
 
@@ -195,7 +218,7 @@ final class LibraryViewModel {
         elevationProfile: String? = nil
     ) async {
         do {
-            try await DatabaseManager.shared.createRoute(
+            let itemId = try await DatabaseManager.shared.createRoute(
                 name: name,
                 geometry: geometry,
                 distanceKm: distanceKm,
@@ -212,6 +235,9 @@ final class LibraryViewModel {
                 colorHex: colorHex,
                 elevationProfile: elevationProfile
             )
+            var newItem = Item(type: .route, name: name)
+            newItem.id = itemId
+            lastCreatedItem = newItem
         } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
             creationError = "A route with that name already exists."
             return
@@ -238,7 +264,7 @@ final class LibraryViewModel {
         listIds: [Int64]
     ) async {
         do {
-            try await DatabaseManager.shared.createWaypoint(
+            let waypoint = try await DatabaseManager.shared.createWaypoint(
                 name: name,
                 latitude: latitude,
                 longitude: longitude,
@@ -249,6 +275,9 @@ final class LibraryViewModel {
                 address: address,
                 listIds: listIds
             )
+            var newItem = Item(type: .waypoint, name: name)
+            newItem.id = waypoint.itemId
+            lastCreatedItem = newItem
         } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
             creationError = "A waypoint with that name already exists."
             return

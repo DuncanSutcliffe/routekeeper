@@ -27,6 +27,10 @@ private struct ShowRoutingProfilesSheetKey: FocusedValueKey {
     typealias Value = Binding<Bool>
 }
 
+private struct ShowImportGPXSheetKey: FocusedValueKey {
+    typealias Value = Binding<Bool>
+}
+
 private struct MapViewModelKey: FocusedValueKey {
     typealias Value = MapViewModel
 }
@@ -67,6 +71,12 @@ extension FocusedValues {
         get { self[MapViewModelKey.self] }
         set { self[MapViewModelKey.self] = newValue }
     }
+
+    /// Binding to the sidebar's `showingImportGPXSheet` state (File menu path).
+    var showImportGPXSheet: Binding<Bool>? {
+        get { self[ShowImportGPXSheetKey.self] }
+        set { self[ShowImportGPXSheetKey.self] = newValue }
+    }
 }
 
 // MARK: - Commands
@@ -77,10 +87,18 @@ struct RouteKeeperCommands: Commands {
     @FocusedValue(\.showNewWaypointSheet)      private var showNewWaypointSheet:      Binding<Bool>?
     @FocusedValue(\.showNewRouteSheet)         private var showNewRouteSheet:         Binding<Bool>?
     @FocusedValue(\.showRoutingProfilesSheet)  private var showRoutingProfilesSheet:  Binding<Bool>?
+    @FocusedValue(\.showImportGPXSheet)        private var showImportGPXSheet:        Binding<Bool>?
     @FocusedValue(\.mapViewModel)              private var mapViewModel:              MapViewModel?
     @Environment(\.openWindow)                 private var openWindow
 
     var body: some Commands {
+        CommandGroup(after: .importExport) {
+            Button("Import GPX…") {
+                showImportGPXSheet?.wrappedValue = true
+            }
+            .disabled(showImportGPXSheet == nil)
+        }
+
         CommandGroup(replacing: .undoRedo) {
             Button("Undo") {
                 NotificationCenter.default.post(name: .routeKeeperPerformUndo, object: nil)

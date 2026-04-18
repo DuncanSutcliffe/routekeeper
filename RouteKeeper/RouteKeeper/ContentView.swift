@@ -335,9 +335,9 @@ struct ContentView: View {
         case .route:
             mapViewModel.clearWaypoint()
             var routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(itemId: itemId)
-            // If a library waypoint was moved since this route was last drawn,
-            // recalculate via Valhalla now so the display is immediately current.
-            if routeRecord?.needsRecalculation == true {
+            // Recalculate when flagged (e.g. waypoint moved) OR when geometry is
+            // absent (e.g. newly imported route with no cached Valhalla result).
+            if routeRecord?.needsRecalculation == true || routeRecord?.geometry == nil {
                 let points = (try? await DatabaseManager.shared.fetchRoutePoints(
                     routeItemId: itemId
                 )) ?? []
@@ -494,10 +494,10 @@ struct ContentView: View {
                 let allPoints = (try? await DatabaseManager.shared.fetchRoutePoints(
                     routeItemId: itemId
                 )) ?? []
-                // If a library waypoint was moved since the route was last calculated,
-                // recalculate via Valhalla now and save the fresh geometry.
+                // Recalculate when flagged or when geometry is absent (e.g. imported route).
                 var geometry = routeRecord.geometry
-                if routeRecord.needsRecalculation, allPoints.count >= 2 {
+                if (routeRecord.needsRecalculation || routeRecord.geometry == nil),
+                   allPoints.count >= 2 {
                     let coords = allPoints.map {
                         CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
                     }

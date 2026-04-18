@@ -41,7 +41,9 @@ enum UndoRecord {
 }
 
 extension Notification.Name {
-    static let routeKeeperPerformUndo = Notification.Name("routeKeeperPerformUndo")
+    static let routeKeeperPerformUndo      = Notification.Name("routeKeeperPerformUndo")
+    /// Posted after any library write operation so LibraryViewModel can reload.
+    static let routeKeeperLibraryDidChange = Notification.Name("routeKeeperLibraryDidChange")
 }
 
 // MARK: - WaypointDisplay

@@ -43,11 +43,13 @@ struct RoutePropertiesSheet: View {
 
     // MARK: - Original values (snapshot on appear for change detection)
 
-    @State private var originalAvoidMotorways = false
-    @State private var originalAvoidTolls     = false
-    @State private var originalAvoidUnpaved   = false
-    @State private var originalAvoidFerries   = false
-    @State private var originalShortestRoute  = false
+    @State private var originalRouteName       = ""
+    @State private var originalColorHex        = "#1A73E8"
+    @State private var originalAvoidMotorways  = false
+    @State private var originalAvoidTolls      = false
+    @State private var originalAvoidUnpaved    = false
+    @State private var originalAvoidFerries    = false
+    @State private var originalShortestRoute   = false
 
     // MARK: - Async / error state
 
@@ -55,6 +57,7 @@ struct RoutePropertiesSheet: View {
     @State private var isRecalculating = false
     @State private var showSaveError = false
     @State private var showRecalcFailAlert = false
+    @State private var showDiscardAlert = false
 
     // MARK: - Derived
 
@@ -64,6 +67,12 @@ struct RoutePropertiesSheet: View {
         avoidUnpaved   != originalAvoidUnpaved   ||
         avoidFerries   != originalAvoidFerries   ||
         shortestRoute  != originalShortestRoute
+    }
+
+    private var hasUnsavedChanges: Bool {
+        routeName.trimmingCharacters(in: .whitespaces) != originalRouteName ||
+        selectedColorHex != originalColorHex ||
+        routingCriteriaChanged
     }
 
     /// True when the user has manually changed a criterion away from the loaded profile's values.
@@ -122,9 +131,6 @@ struct RoutePropertiesSheet: View {
                         Text("Route Properties")
                             .font(.headline)
                         Spacer()
-                        Button("Done") { dismiss() }
-                            .keyboardShortcut(.defaultAction)
-                            .disabled(isSaving)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 16)
@@ -164,9 +170,15 @@ struct RoutePropertiesSheet: View {
 
                     HStack {
                         Spacer()
-                        Button("Cancel") { dismiss() }
-                            .keyboardShortcut(.cancelAction)
-                            .disabled(isSaving)
+                        Button("Cancel") {
+                            if hasUnsavedChanges {
+                                showDiscardAlert = true
+                            } else {
+                                dismiss()
+                            }
+                        }
+                        .keyboardShortcut(.cancelAction)
+                        .disabled(isSaving)
                         if isSaving {
                             ProgressView()
                                 .controlSize(.regular)
@@ -195,8 +207,13 @@ struct RoutePropertiesSheet: View {
                  "but the route has not been redrawn. You can try recalculating by " +
                  "editing the route again.")
         }
+        .confirmationDialog("Discard changes?", isPresented: $showDiscardAlert, titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { dismiss() }
+            Button("Keep Editing", role: .cancel) { }
+        }
         .onAppear {
-            routeName = initialName
+            routeName         = initialName
+            originalRouteName = initialName
             Task { await loadData() }
         }
     }
@@ -299,15 +316,16 @@ struct RoutePropertiesSheet: View {
 
             if let route {
                 // Populate criteria from the stored route values.
-                avoidMotorways   = route.avoidMotorways
-                avoidTolls       = route.avoidTolls
-                avoidUnpaved     = route.avoidUnpaved
-                avoidFerries     = route.avoidFerries
-                shortestRoute    = route.shortestRoute
+                avoidMotorways     = route.avoidMotorways
+                avoidTolls         = route.avoidTolls
+                avoidUnpaved       = route.avoidUnpaved
+                avoidFerries       = route.avoidFerries
+                shortestRoute      = route.shortestRoute
                 appliedProfileName = route.appliedProfileName
-                selectedColorHex = route.colorHex
+                selectedColorHex   = route.colorHex
 
                 // Snapshot originals for change detection.
+                originalColorHex       = route.colorHex
                 originalAvoidMotorways = route.avoidMotorways
                 originalAvoidTolls     = route.avoidTolls
                 originalAvoidUnpaved   = route.avoidUnpaved

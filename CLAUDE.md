@@ -264,7 +264,7 @@ RouteKeeper/
 
 ## Current Status
 
-Increments 1–44 complete. The application has a full working shell with:
+Increments 1–45 complete. The application has a full working shell with:
 library sidebar (folders, lists, drag-and-drop, inline rename/edit),
 waypoint creation and editing (coordinate pick, reverse geocode, category
 icons, address storage and editing, elevation capture), route creation
@@ -285,8 +285,15 @@ live Valhalla recalculation, rubber-band shaping point insertion via
 Option+drag on the route line, stack-based undo (Cmd+Z) for all drag
 operations, consistent library refresh via NotificationCenter
 (routeKeeperLibraryDidChange) with auto-selection of newly created
-waypoints and routes on the map, and a native Settings window (units,
-export format, API keys via Keychain).
+waypoints and routes on the map, multi-item delete and remove (context
+menu, Delete/⌘Delete keyboard shortcuts, Edit menu — all respect the
+full multi-selection with count-aware confirmation dialogs), multi-select
+drag and drop between lists (DraggableItem carries itemIds: [Int64];
+when a dragged row is part of the selection all selected IDs are
+included; single-item drag behaviour unchanged), shaping point marker
+offset fix in showMultipleItems matching the offset already applied in
+showRoute, and a native Settings window (units, export format, API keys
+via Keychain).
 
 **Known issues / deferred:**
 - Valhalla uses the public OSM community instance — rate-limited.
@@ -294,4 +301,4 @@ export format, API keys via Keychain).
 - Route direction arrows were attempted and fully reverted. To be
   revisited using an SDF image approach.
 
-**Next step: Increment 45 — TBD.**
+**Next step: Increment 46 — TBD.**

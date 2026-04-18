@@ -512,7 +512,7 @@ struct LibrarySidebarView: View {
     // MARK: - Named sheet-save handlers
 
     private func handleRoutePropertiesSave(identity: RouteIdentity) {
-        Task { await viewModel.reload() }
+        NotificationCenter.default.post(name: .routeKeeperLibraryDidChange, object: nil)
         cycleSelection(for: identity.id)
     }
 

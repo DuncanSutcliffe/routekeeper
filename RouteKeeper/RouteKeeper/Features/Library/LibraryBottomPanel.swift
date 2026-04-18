@@ -28,9 +28,9 @@ struct LibraryBottomPanel: View {
     @Binding var exportFilename: String
     @Binding var showingExportSheet: Bool
     @Binding var showRemoveItemConfirm: Bool
-    @Binding var itemScheduledForRemoval: Item?
+    @Binding var itemsScheduledForRemoval: [Item]
     @Binding var showDeleteItemConfirm: Bool
-    @Binding var itemScheduledForDeletion: Item?
+    @Binding var itemsScheduledForDeletion: [Item]
 
     @AppStorage("library.bottomPanelHeight") private var bottomPanelHeight: Double = 200
     @State private var isDragging = false
@@ -78,6 +78,21 @@ struct LibraryBottomPanel: View {
                     }
                 }
                 .listStyle(.sidebar)
+                .onKeyPress(phases: .down) { keyPress in
+                    guard !selectedItems.isEmpty else { return .ignored }
+                    let isCmd = keyPress.modifiers.contains(.command)
+                    if keyPress.key == .delete && isCmd {
+                        NotificationCenter.default.post(
+                            name: .routeKeeperDeleteSelected, object: nil)
+                        return .handled
+                    }
+                    if (keyPress.key == .delete || keyPress.key == .deleteForward) && !isCmd {
+                        NotificationCenter.default.post(
+                            name: .routeKeeperRemoveFromList, object: nil)
+                        return .handled
+                    }
+                    return .ignored
+                }
                 .overlay {
                     if viewModel.listItems.isEmpty {
                         Text("No items in this list").foregroundStyle(.tertiary)
@@ -106,7 +121,9 @@ struct LibraryBottomPanel: View {
             itemContextMenu(for: item)
         }
         .draggable(DraggableItem(
-            itemId: item.id ?? 0,
+            itemIds: selectedItems.contains(item)
+                ? selectedItems.compactMap(\.id)
+                : [item.id ?? 0],
             sourceListId: viewModel.currentList?.id ?? -1
         ))
         .overlay(
@@ -126,55 +143,37 @@ struct LibraryBottomPanel: View {
 
     @ViewBuilder
     private func itemContextMenu(for item: Item) -> some View {
-        let currentListId  = viewModel.currentList?.id ?? -1
-        let isUnclassified = currentListId == -1
-        let itemId         = item.id ?? -1
-        let alreadyIn      = viewModel.itemMemberships[itemId] ?? []
-        let realFolders    = viewModel.folderContents.filter { $0.folder.id != -1 }
+        let currentListId   = viewModel.currentList?.id ?? -1
+        let isUnclassified  = currentListId == -1
+        let itemId          = item.id ?? -1
+        let alreadyIn       = viewModel.itemMemberships[itemId] ?? []
+        let realFolders     = viewModel.folderContents.filter { $0.folder.id != -1 }
 
-        if item.type == .route {
-            Button("Edit Route…") {
-                routePropertiesTarget = RouteIdentity(id: itemId, name: item.name)
-            }
-            Button("Edit Route Waypoints…") {
-                routeWaypointTarget = RouteIdentity(id: itemId, name: item.name)
-            }
-            Divider()
-        } else if item.type == .waypoint {
-            Button("Edit Waypoint…") {
-                waypointEditTarget = WaypointIdentity(id: itemId, name: item.name)
-            }
-            Divider()
-        }
+        // If the right-clicked item is part of the current multi-selection, the
+        // remove/delete operations apply to every selected item; otherwise only to
+        // the item that was right-clicked.
+        let effectiveItems: [Item] = selectedItems.contains(item)
+            ? Array(selectedItems)
+            : [item]
+        let effectiveCount = effectiveItems.count
 
-        Menu("Move to…") {
-            ForEach(realFolders, id: \.folder.id) { folder, lists in
-                let targets = lists.filter { ($0.id ?? -1) != currentListId }
-                if !targets.isEmpty {
-                    Section(folder.name) {
-                        ForEach(targets) { list in
-                            Button(list.name) {
-                                Task {
-                                    if isUnclassified {
-                                        await viewModel.copyItem(itemId: itemId, toList: list)
-                                    } else {
-                                        await viewModel.moveItem(
-                                            itemId: itemId,
-                                            fromListId: currentListId,
-                                            toList: list
-                                        )
-                                    }
-                                }
-                            }
-                            .disabled(alreadyIn.contains(list.id ?? -1))
-                        }
-                    }
+        if effectiveCount == 1 {
+            if item.type == .route {
+                Button("Edit Route…") {
+                    routePropertiesTarget = RouteIdentity(id: itemId, name: item.name)
                 }
+                Button("Edit Route Waypoints…") {
+                    routeWaypointTarget = RouteIdentity(id: itemId, name: item.name)
+                }
+                Divider()
+            } else if item.type == .waypoint {
+                Button("Edit Waypoint…") {
+                    waypointEditTarget = WaypointIdentity(id: itemId, name: item.name)
+                }
+                Divider()
             }
-        }
 
-        if !isUnclassified {
-            Menu("Copy to…") {
+            Menu("Move to…") {
                 ForEach(realFolders, id: \.folder.id) { folder, lists in
                     let targets = lists.filter { ($0.id ?? -1) != currentListId }
                     if !targets.isEmpty {
@@ -182,7 +181,15 @@ struct LibraryBottomPanel: View {
                             ForEach(targets) { list in
                                 Button(list.name) {
                                     Task {
-                                        await viewModel.copyItem(itemId: itemId, toList: list)
+                                        if isUnclassified {
+                                            await viewModel.copyItem(itemId: itemId, toList: list)
+                                        } else {
+                                            await viewModel.moveItem(
+                                                itemId: itemId,
+                                                fromListId: currentListId,
+                                                toList: list
+                                            )
+                                        }
                                     }
                                 }
                                 .disabled(alreadyIn.contains(list.id ?? -1))
@@ -191,26 +198,44 @@ struct LibraryBottomPanel: View {
                     }
                 }
             }
+
+            if !isUnclassified {
+                Menu("Copy to…") {
+                    ForEach(realFolders, id: \.folder.id) { folder, lists in
+                        let targets = lists.filter { ($0.id ?? -1) != currentListId }
+                        if !targets.isEmpty {
+                            Section(folder.name) {
+                                ForEach(targets) { list in
+                                    Button(list.name) {
+                                        Task {
+                                            await viewModel.copyItem(itemId: itemId, toList: list)
+                                        }
+                                    }
+                                    .disabled(alreadyIn.contains(list.id ?? -1))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button("Export GPX…") {
+                guard item.id != nil else { return }
+                exportItemIds  = [itemId]
+                exportFilename = item.name
+                showingExportSheet = true
+            }
+
+            Divider()
         }
 
-        Divider()
-
-        Button("Export GPX…") {
-            guard item.id != nil else { return }
-            exportItemIds  = [itemId]
-            exportFilename = item.name
-            showingExportSheet = true
-        }
-
-        Divider()
+        // ── Remove / Delete (single or multi) ────────────────────────────────
 
         if !isUnclassified {
-            if alreadyIn.count <= 1 {
-                Button("Remove from this list…") {
-                    itemScheduledForRemoval = item
-                    showRemoveItemConfirm   = true
-                }
-            } else {
+            if effectiveCount == 1 && alreadyIn.count > 1 {
+                // Single item that remains in other lists — no confirmation needed.
                 Button("Remove from this list") {
                     Task {
                         selectedItems = selectedItems.filter { $0.id != itemId }
@@ -219,12 +244,23 @@ struct LibraryBottomPanel: View {
                         )
                     }
                 }
+            } else {
+                let removeLabel = effectiveCount > 1
+                    ? "Remove \(effectiveCount) Items from This List…"
+                    : "Remove from this list…"
+                Button(removeLabel) {
+                    itemsScheduledForRemoval = effectiveItems
+                    showRemoveItemConfirm    = true
+                }
             }
         }
 
-        Button("Delete…", role: .destructive) {
-            itemScheduledForDeletion = item
-            showDeleteItemConfirm    = true
+        let deleteLabel = effectiveCount > 1
+            ? "Delete \(effectiveCount) Items…"
+            : "Delete…"
+        Button(deleteLabel, role: .destructive) {
+            itemsScheduledForDeletion = effectiveItems
+            showDeleteItemConfirm     = true
         }
     }
 

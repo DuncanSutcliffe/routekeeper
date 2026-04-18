@@ -272,14 +272,20 @@ icons, address storage and editing, elevation capture), route creation
 profiles, colour picker, intermediate via and shaping points, elevation
 profile chart), GPX export (Standard, Garmin, Beeline formats), GPX
 import (waypoints and routes from .gpx/.xml files, Garmin shaping-point
-detection, duplicate-name deduplication, deferred Valhalla geometry,
-list picker with inline new-list creation, File menu and list context
-menu entry points), live MapLibre map (Streets/Satellite/Topo style
-switcher, scale bar, context menu "add waypoint here"), multi-select and
-list-selection map display with labels toggle, draggable route and
-waypoint markers with live Valhalla recalculation, rubber-band shaping
-point insertion via Option+drag on the route line, stack-based undo
-(Cmd+Z) for all drag operations, and a native Settings window (units,
+detection via gpxx:RoutePointExtension subclass hex string,
+duplicate-name deduplication with (1)/(2) suffix, shared-name
+deduplication between <wpt> elements and route endpoints, deferred
+Valhalla geometry with default routing profile association, list picker
+with inline new-list creation, File menu and list context menu entry
+points, post-import library refresh and auto-selection of target list),
+live MapLibre map (Streets/Satellite/Topo style switcher, scale bar,
+context menu "add waypoint here"), multi-select and list-selection map
+display with labels toggle, draggable route and waypoint markers with
+live Valhalla recalculation, rubber-band shaping point insertion via
+Option+drag on the route line, stack-based undo (Cmd+Z) for all drag
+operations, consistent library refresh via NotificationCenter
+(routeKeeperLibraryDidChange) with auto-selection of newly created
+waypoints and routes on the map, and a native Settings window (units,
 export format, API keys via Keychain).
 
 **Known issues / deferred:**

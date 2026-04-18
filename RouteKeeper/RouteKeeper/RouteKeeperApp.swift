@@ -35,6 +35,14 @@ private struct MapViewModelKey: FocusedValueKey {
     typealias Value = MapViewModel
 }
 
+private struct LibraryCanRemoveKey: FocusedValueKey {
+    typealias Value = Bool
+}
+
+private struct LibraryCanDeleteKey: FocusedValueKey {
+    typealias Value = Bool
+}
+
 extension FocusedValues {
     /// Binding to the sidebar's `showingNewFolderSheet` state.
     var showNewFolderSheet: Binding<Bool>? {
@@ -77,6 +85,18 @@ extension FocusedValues {
         get { self[ShowImportGPXSheetKey.self] }
         set { self[ShowImportGPXSheetKey.self] = newValue }
     }
+
+    /// `true` when at least one library item is selected and a real list (not Unclassified) is shown.
+    var libraryCanRemove: Bool? {
+        get { self[LibraryCanRemoveKey.self] }
+        set { self[LibraryCanRemoveKey.self] = newValue }
+    }
+
+    /// `true` when at least one library item is selected.
+    var libraryCanDelete: Bool? {
+        get { self[LibraryCanDeleteKey.self] }
+        set { self[LibraryCanDeleteKey.self] = newValue }
+    }
 }
 
 // MARK: - Commands
@@ -89,6 +109,8 @@ struct RouteKeeperCommands: Commands {
     @FocusedValue(\.showRoutingProfilesSheet)  private var showRoutingProfilesSheet:  Binding<Bool>?
     @FocusedValue(\.showImportGPXSheet)        private var showImportGPXSheet:        Binding<Bool>?
     @FocusedValue(\.mapViewModel)              private var mapViewModel:              MapViewModel?
+    @FocusedValue(\.libraryCanRemove)          private var libraryCanRemove:          Bool?
+    @FocusedValue(\.libraryCanDelete)          private var libraryCanDelete:          Bool?
     @Environment(\.openWindow)                 private var openWindow
 
     var body: some Commands {
@@ -105,6 +127,20 @@ struct RouteKeeperCommands: Commands {
             }
             .keyboardShortcut("z", modifiers: .command)
             .disabled(mapViewModel?.undoStack.isEmpty ?? true)
+        }
+
+        CommandGroup(after: .undoRedo) {
+            Divider()
+            Button("Remove from List") {
+                NotificationCenter.default.post(name: .routeKeeperRemoveFromList, object: nil)
+            }
+            .disabled(!(libraryCanRemove ?? false))
+
+            Button("Delete") {
+                NotificationCenter.default.post(name: .routeKeeperDeleteSelected, object: nil)
+            }
+            .keyboardShortcut(.delete, modifiers: .command)
+            .disabled(!(libraryCanDelete ?? false))
         }
 
         CommandGroup(after: .newItem) {

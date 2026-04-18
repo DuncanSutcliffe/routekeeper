@@ -44,6 +44,10 @@ extension Notification.Name {
     static let routeKeeperPerformUndo      = Notification.Name("routeKeeperPerformUndo")
     /// Posted after any library write operation so LibraryViewModel can reload.
     static let routeKeeperLibraryDidChange = Notification.Name("routeKeeperLibraryDidChange")
+    /// Posted by the Edit menu and keyboard shortcut to remove selected items from the current list.
+    static let routeKeeperRemoveFromList   = Notification.Name("routeKeeperRemoveFromList")
+    /// Posted by the Edit menu and keyboard shortcut to permanently delete selected items.
+    static let routeKeeperDeleteSelected   = Notification.Name("routeKeeperDeleteSelected")
 }
 
 // MARK: - WaypointDisplay

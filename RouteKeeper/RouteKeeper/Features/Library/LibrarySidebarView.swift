@@ -31,7 +31,7 @@ extension UTType {
 
 /// Data transferred when a library item is dragged between lists.
 struct DraggableItem: Codable, Transferable {
-    let itemId: Int64
+    let itemIds: [Int64]
     let sourceListId: Int64
 
     static var transferRepresentation: some TransferRepresentation {
@@ -77,16 +77,18 @@ struct ListDropDelegate: DropDelegate {
                   let dragged = try? JSONDecoder().decode(DraggableItem.self, from: data)
             else { return }
             Task { @MainActor in
-                if dragged.sourceListId == -1 {
-                    await viewModel.copyItem(itemId: dragged.itemId, toList: targetList)
-                } else if commandDown {
-                    await viewModel.moveItem(
-                        itemId: dragged.itemId,
-                        fromListId: dragged.sourceListId,
-                        toList: targetList
-                    )
-                } else {
-                    await viewModel.copyItem(itemId: dragged.itemId, toList: targetList)
+                for itemId in dragged.itemIds {
+                    if dragged.sourceListId == -1 {
+                        await viewModel.copyItem(itemId: itemId, toList: targetList)
+                    } else if commandDown {
+                        await viewModel.moveItem(
+                            itemId: itemId,
+                            fromListId: dragged.sourceListId,
+                            toList: targetList
+                        )
+                    } else {
+                        await viewModel.copyItem(itemId: itemId, toList: targetList)
+                    }
                 }
             }
         }
@@ -248,10 +250,10 @@ struct LibrarySidebarView: View {
     @State private var exportErrorMessage     = ""
 
     // Delete / removal confirmation state
-    @State private var showRemoveItemConfirm         = false
-    @State private var itemScheduledForRemoval: Item?      = nil
-    @State private var showDeleteItemConfirm          = false
-    @State private var itemScheduledForDeletion: Item?     = nil
+    @State private var showRemoveItemConfirm              = false
+    @State private var itemsScheduledForRemoval: [Item]   = []
+    @State private var showDeleteItemConfirm              = false
+    @State private var itemsScheduledForDeletion: [Item]  = []
 
     @State private var showNotEmptyAlert              = false
     @State private var notEmptyAlertTitle             = ""
@@ -321,9 +323,9 @@ struct LibrarySidebarView: View {
                 exportFilename: $exportFilename,
                 showingExportSheet: $showingExportSheet,
                 showRemoveItemConfirm: $showRemoveItemConfirm,
-                itemScheduledForRemoval: $itemScheduledForRemoval,
+                itemsScheduledForRemoval: $itemsScheduledForRemoval,
                 showDeleteItemConfirm: $showDeleteItemConfirm,
-                itemScheduledForDeletion: $itemScheduledForDeletion
+                itemsScheduledForDeletion: $itemsScheduledForDeletion
             )
         }
         .navigationTitle("Library")
@@ -352,44 +354,28 @@ struct LibrarySidebarView: View {
                 showingImportGPXSheet = show
             }
         ))
+        .focusedValue(\.libraryCanRemove,
+            !selectedItems.isEmpty && (viewModel.currentList?.id ?? -1) != -1)
+        .focusedValue(\.libraryCanDelete, !selectedItems.isEmpty)
         .overlay {
             if viewModel.isLoading { ProgressView() }
         }
-        .onChange(of: selectedList) { _, newList in
-            if itemSelectionClearedList {
-                itemSelectionClearedList = false
-                return
-            }
-            selectedItems = []
-            Task {
-                if let list = newList {
-                    await viewModel.loadItems(for: list)
-                } else {
-                    viewModel.clearItems()
-                }
-            }
-        }
-        .onChange(of: selectedItems) { _, newItems in
-            guard !newItems.isEmpty, selectedList != nil else { return }
-            itemSelectionClearedList = true
-            selectedList = nil
-        }
-        .onChange(of: viewModel.lastCreatedItem) { _, item in
-            guard let item else { return }
-            viewModel.lastCreatedItem = nil
-            selectedItems = [item]
-        }
-        .onChange(of: sortColumn)    { _, _ in
-            Task { await viewModel.load(sortColumn: sortColumn, ascending: sortAscending) }
-        }
-        .onChange(of: sortAscending) { _, _ in
-            Task { await viewModel.load(sortColumn: sortColumn, ascending: sortAscending) }
-        }
-        .onAppear {
-            if let list = selectedList {
-                Task { await viewModel.loadItems(for: list) }
-            }
-        }
+        .modifier(sidebarHandlers)
+    }
+
+    private var sidebarHandlers: LibrarySidebarHandlers {
+        LibrarySidebarHandlers(
+            viewModel: viewModel,
+            selectedList: $selectedList,
+            selectedItems: $selectedItems,
+            itemSelectionClearedList: $itemSelectionClearedList,
+            sortColumn: $sortColumn,
+            sortAscending: $sortAscending,
+            itemsScheduledForRemoval: $itemsScheduledForRemoval,
+            showRemoveItemConfirm: $showRemoveItemConfirm,
+            itemsScheduledForDeletion: $itemsScheduledForDeletion,
+            showDeleteItemConfirm: $showDeleteItemConfirm
+        )
     }
 
     // MARK: - Control strip
@@ -608,9 +594,9 @@ struct LibrarySidebarView: View {
             showExportError: $showExportError,
             exportErrorMessage: exportErrorMessage,
             showRemoveItemConfirm: $showRemoveItemConfirm,
-            itemScheduledForRemoval: $itemScheduledForRemoval,
+            itemsScheduledForRemoval: $itemsScheduledForRemoval,
             showDeleteItemConfirm: $showDeleteItemConfirm,
-            itemScheduledForDeletion: $itemScheduledForDeletion,
+            itemsScheduledForDeletion: $itemsScheduledForDeletion,
             showNotEmptyAlert: $showNotEmptyAlert,
             notEmptyAlertTitle: notEmptyAlertTitle,
             notEmptyAlertMessage: notEmptyAlertMessage,
@@ -704,6 +690,84 @@ struct LibrarySidebarView: View {
     }
 }
 
+// MARK: - Event handler modifier
+
+/// Applies all onChange, onReceive, and onAppear modifiers to the sidebar's core view.
+///
+/// Extracted from `LibrarySidebarView.coreView` so the type-checker evaluates the
+/// event-handler chain independently from the base view and focused-value chain.
+private struct LibrarySidebarHandlers: ViewModifier {
+
+    let viewModel: LibraryViewModel
+    @Binding var selectedList: RouteList?
+    @Binding var selectedItems: Set<Item>
+    @Binding var itemSelectionClearedList: Bool
+    @Binding var sortColumn: String
+    @Binding var sortAscending: Bool
+    @Binding var itemsScheduledForRemoval: [Item]
+    @Binding var showRemoveItemConfirm: Bool
+    @Binding var itemsScheduledForDeletion: [Item]
+    @Binding var showDeleteItemConfirm: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(
+                NotificationCenter.default.publisher(for: .routeKeeperRemoveFromList)
+            ) { _ in
+                let items: Set<Item>   = selectedItems
+                let list: RouteList?   = viewModel.currentList
+                let listId: Int64?     = list?.id
+                guard !items.isEmpty, let lid = listId, lid != -1 else { return }
+                itemsScheduledForRemoval = Array(items)
+                showRemoveItemConfirm    = true
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(for: .routeKeeperDeleteSelected)
+            ) { _ in
+                let items: Set<Item> = selectedItems
+                guard !items.isEmpty else { return }
+                itemsScheduledForDeletion = Array(items)
+                showDeleteItemConfirm     = true
+            }
+            .onChange(of: selectedList) { _, newList in
+                if itemSelectionClearedList {
+                    itemSelectionClearedList = false
+                    return
+                }
+                selectedItems = []
+                Task {
+                    if let list = newList {
+                        await viewModel.loadItems(for: list)
+                    } else {
+                        viewModel.clearItems()
+                    }
+                }
+            }
+            .onChange(of: selectedItems) { _, newItems in
+                guard !newItems.isEmpty, selectedList != nil else { return }
+                itemSelectionClearedList = true
+                selectedList = nil
+            }
+            .onChange(of: viewModel.lastCreatedItem) { _, item in
+                guard let item else { return }
+                viewModel.lastCreatedItem = nil
+                selectedItems = [item]
+            }
+            .onChange(of: sortColumn) { _, _ in
+                Task { await viewModel.load(sortColumn: sortColumn, ascending: sortAscending) }
+            }
+            .onChange(of: sortAscending) { _, _ in
+                Task { await viewModel.load(sortColumn: sortColumn, ascending: sortAscending) }
+            }
+            .onAppear {
+                let list: RouteList? = selectedList
+                if let list {
+                    Task { await viewModel.loadItems(for: list) }
+                }
+            }
+    }
+}
+
 // MARK: - Modal view modifier
 
 /// Applies all sheet, confirmation-dialog, and alert modifiers to the sidebar.
@@ -728,9 +792,9 @@ private struct LibrarySidebarModals: ViewModifier {
     @Binding var showExportError: Bool
     let exportErrorMessage: String
     @Binding var showRemoveItemConfirm: Bool
-    @Binding var itemScheduledForRemoval: Item?
+    @Binding var itemsScheduledForRemoval: [Item]
     @Binding var showDeleteItemConfirm: Bool
-    @Binding var itemScheduledForDeletion: Item?
+    @Binding var itemsScheduledForDeletion: [Item]
     @Binding var showNotEmptyAlert: Bool
     let notEmptyAlertTitle: String
     let notEmptyAlertMessage: String
@@ -762,9 +826,9 @@ private struct LibrarySidebarModals: ViewModifier {
         showExportError: Binding<Bool>,
         exportErrorMessage: String,
         showRemoveItemConfirm: Binding<Bool>,
-        itemScheduledForRemoval: Binding<Item?>,
+        itemsScheduledForRemoval: Binding<[Item]>,
         showDeleteItemConfirm: Binding<Bool>,
-        itemScheduledForDeletion: Binding<Item?>,
+        itemsScheduledForDeletion: Binding<[Item]>,
         showNotEmptyAlert: Binding<Bool>,
         notEmptyAlertTitle: String,
         notEmptyAlertMessage: String,
@@ -793,9 +857,9 @@ private struct LibrarySidebarModals: ViewModifier {
         self._showExportError = showExportError
         self.exportErrorMessage = exportErrorMessage
         self._showRemoveItemConfirm = showRemoveItemConfirm
-        self._itemScheduledForRemoval = itemScheduledForRemoval
+        self._itemsScheduledForRemoval = itemsScheduledForRemoval
         self._showDeleteItemConfirm = showDeleteItemConfirm
-        self._itemScheduledForDeletion = itemScheduledForDeletion
+        self._itemsScheduledForDeletion = itemsScheduledForDeletion
         self._showNotEmptyAlert = showNotEmptyAlert
         self.notEmptyAlertTitle = notEmptyAlertTitle
         self.notEmptyAlertMessage = notEmptyAlertMessage
@@ -845,38 +909,54 @@ private struct LibrarySidebarModals: ViewModifier {
             .sheet(isPresented: $showingExportSheet) { exportSheetContent() }
             // ── Confirmation dialogs ─────────────────────────────────────
             .confirmationDialog(
-                "Remove from this list?",
+                itemsScheduledForRemoval.count > 1
+                    ? "Remove \(itemsScheduledForRemoval.count) items from this list?"
+                    : "Remove from this list?",
                 isPresented: $showRemoveItemConfirm,
                 titleVisibility: .visible
             ) {
                 Button("Remove", role: .destructive) {
-                    guard let item = itemScheduledForRemoval,
-                          let itemId = item.id,
-                          let listId = viewModel.currentList?.id
-                    else { return }
-                    selectedItems = selectedItems.filter { $0.id != itemId }
-                    Task { await viewModel.removeItemFromList(itemId: itemId, listId: listId) }
+                    let items  = itemsScheduledForRemoval
+                    let listId = viewModel.currentList?.id
+                    selectedItems = selectedItems.filter { s in !items.contains { $0.id == s.id } }
+                    Task {
+                        for item in items {
+                            guard let itemId = item.id, let lid = listId else { continue }
+                            await viewModel.removeItemFromList(itemId: itemId, listId: lid)
+                        }
+                    }
                 }
                 Button("Cancel", role: .cancel) { }
             } message: {
-                if let item = itemScheduledForRemoval {
+                if itemsScheduledForRemoval.count > 1 {
+                    Text("\(itemsScheduledForRemoval.count) items will be removed from this list.")
+                } else if let item = itemsScheduledForRemoval.first {
                     Text("\(item.name) will be removed from this list and moved to Unclassified.")
                 }
             }
             .confirmationDialog(
-                "Delete item?",
+                itemsScheduledForDeletion.count > 1
+                    ? "Delete \(itemsScheduledForDeletion.count) items?"
+                    : "Delete item?",
                 isPresented: $showDeleteItemConfirm,
                 titleVisibility: .visible
             ) {
                 Button("Delete", role: .destructive) {
-                    guard let item = itemScheduledForDeletion,
-                          let itemId = item.id else { return }
-                    selectedItems = selectedItems.filter { $0.id != itemId }
-                    Task { await viewModel.deleteItem(itemId: itemId) }
+                    let items = itemsScheduledForDeletion
+                    selectedItems = selectedItems.filter { s in !items.contains { $0.id == s.id } }
+                    Task {
+                        for item in items {
+                            guard let itemId = item.id else { continue }
+                            await viewModel.deleteItem(itemId: itemId)
+                        }
+                    }
                 }
                 Button("Cancel", role: .cancel) { }
             } message: {
-                if let item = itemScheduledForDeletion {
+                if itemsScheduledForDeletion.count > 1 {
+                    Text("\(itemsScheduledForDeletion.count) items will be permanently deleted " +
+                         "and cannot be recovered.")
+                } else if let item = itemsScheduledForDeletion.first {
                     Text("\(item.name) will be permanently deleted and cannot be recovered.")
                 }
             }

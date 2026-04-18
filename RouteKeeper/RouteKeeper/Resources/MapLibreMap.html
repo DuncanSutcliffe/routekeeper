@@ -836,7 +836,7 @@
             for (var si = 0; si < shapingGroups.length; si++) {
                 var sg = shapingGroups[si];
                 for (var sfi = 0; sfi < sg.features.length; sfi++) {
-                    var shapingMarker = new maplibregl.Marker({ color: '#888888', scale: 0.5 })
+                    var shapingMarker = new maplibregl.Marker({ color: '#888888', scale: 0.5, offset: [0, -7] })
                         .setLngLat(sg.features[sfi].geometry.coordinates)
                         .addTo(map);
                     multiRouteMarkers.push(shapingMarker);

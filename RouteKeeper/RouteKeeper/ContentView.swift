@@ -166,7 +166,8 @@ struct ContentView: View {
                         },
                         suppressMultiLabels: selectedList != nil && selectedItems.isEmpty
                                              && !showListItemLabels,
-                        labelCommand: mapViewModel.labelCommand
+                        labelCommand: mapViewModel.labelCommand,
+                        mapViewModel: mapViewModel
                     )
                     VStack(alignment: .leading, spacing: 8) {
                         MapStylePicker(currentStyle: Binding(
@@ -229,6 +230,7 @@ struct ContentView: View {
             }
         }
         .focusedValue(\.showRoutingProfilesSheet, $showingRoutingProfilesSheet)
+        .focusedValue(\.mapViewModel, mapViewModel)
     }
 
     // MARK: - Selection handling

@@ -27,6 +27,10 @@ private struct ShowRoutingProfilesSheetKey: FocusedValueKey {
     typealias Value = Binding<Bool>
 }
 
+private struct MapViewModelKey: FocusedValueKey {
+    typealias Value = MapViewModel
+}
+
 extension FocusedValues {
     /// Binding to the sidebar's `showingNewFolderSheet` state.
     var showNewFolderSheet: Binding<Bool>? {
@@ -57,6 +61,12 @@ extension FocusedValues {
         get { self[ShowRoutingProfilesSheetKey.self] }
         set { self[ShowRoutingProfilesSheetKey.self] = newValue }
     }
+
+    /// The `MapViewModel` instance owned by `ContentView`, used to inspect the undo stack.
+    var mapViewModel: MapViewModel? {
+        get { self[MapViewModelKey.self] }
+        set { self[MapViewModelKey.self] = newValue }
+    }
 }
 
 // MARK: - Commands
@@ -67,9 +77,18 @@ struct RouteKeeperCommands: Commands {
     @FocusedValue(\.showNewWaypointSheet)      private var showNewWaypointSheet:      Binding<Bool>?
     @FocusedValue(\.showNewRouteSheet)         private var showNewRouteSheet:         Binding<Bool>?
     @FocusedValue(\.showRoutingProfilesSheet)  private var showRoutingProfilesSheet:  Binding<Bool>?
+    @FocusedValue(\.mapViewModel)              private var mapViewModel:              MapViewModel?
     @Environment(\.openWindow)                 private var openWindow
 
     var body: some Commands {
+        CommandGroup(replacing: .undoRedo) {
+            Button("Undo") {
+                NotificationCenter.default.post(name: .routeKeeperPerformUndo, object: nil)
+            }
+            .keyboardShortcut("z", modifiers: .command)
+            .disabled(mapViewModel?.undoStack.isEmpty ?? true)
+        }
+
         CommandGroup(after: .newItem) {
             Button("New Route") {
                 showNewRouteSheet?.wrappedValue = true

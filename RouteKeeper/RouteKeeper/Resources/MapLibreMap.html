@@ -130,6 +130,9 @@
         var routeDragAnchorB = null;
         var routeDragInsertIndex = 0;
 
+        // Tracks whether the Option (Alt) key is currently held.
+        var altKeyHeld = false;
+
         // Ordered [lng, lat] pairs for the actual route points (start, via, shaping, end)
         // of the currently displayed single route.  Populated by showRoute(), cleared by clearRoute().
         var routePointCoords = [];
@@ -451,14 +454,22 @@
             const startMarker = new maplibregl.Marker({ draggable: true, color: lineColour })
                 .setLngLat(startCoord)
                 .addTo(map);
+            let startDragAlt = false, startDragOrigin = null;
+            startMarker.on('dragstart', () => {
+                startDragAlt = altKeyHeld;
+                startDragOrigin = startMarker.getLngLat();
+            });
             startMarker.on('dragend', () => {
+                if (!startDragAlt) { startMarker.setLngLat(startDragOrigin); return; }
                 const pos = startMarker.getLngLat();
                 postToSwift({
                     type: 'waypointDragged',
                     routeItemId: itemId,
                     sequenceNumber: startSeq,
                     latitude: pos.lat,
-                    longitude: pos.lng
+                    longitude: pos.lng,
+                    previousLat: startDragOrigin.lat,
+                    previousLng: startDragOrigin.lng
                 });
             });
             routeMarkers.push(startMarker);
@@ -467,14 +478,22 @@
             const endMarker = new maplibregl.Marker({ draggable: true, color: lineColour })
                 .setLngLat(endCoord)
                 .addTo(map);
+            let endDragAlt = false, endDragOrigin = null;
+            endMarker.on('dragstart', () => {
+                endDragAlt = altKeyHeld;
+                endDragOrigin = endMarker.getLngLat();
+            });
             endMarker.on('dragend', () => {
+                if (!endDragAlt) { endMarker.setLngLat(endDragOrigin); return; }
                 const pos = endMarker.getLngLat();
                 postToSwift({
                     type: 'waypointDragged',
                     routeItemId: itemId,
                     sequenceNumber: endSeq,
                     latitude: pos.lat,
-                    longitude: pos.lng
+                    longitude: pos.lng,
+                    previousLat: endDragOrigin.lat,
+                    previousLng: endDragOrigin.lng
                 });
             });
             routeMarkers.push(endMarker);
@@ -486,14 +505,22 @@
                 const viaMarker = new maplibregl.Marker({ draggable: true, color: lineColour, scale: 0.7 })
                     .setLngLat([w.lng, w.lat])
                     .addTo(map);
+                let viaDragAlt = false, viaDragOrigin = null;
+                viaMarker.on('dragstart', () => {
+                    viaDragAlt = altKeyHeld;
+                    viaDragOrigin = viaMarker.getLngLat();
+                });
                 viaMarker.on('dragend', () => {
+                    if (!viaDragAlt) { viaMarker.setLngLat(viaDragOrigin); return; }
                     const pos = viaMarker.getLngLat();
                     postToSwift({
                         type: 'waypointDragged',
                         routeItemId: itemId,
                         sequenceNumber: w.seq,
                         latitude: pos.lat,
-                        longitude: pos.lng
+                        longitude: pos.lng,
+                        previousLat: viaDragOrigin.lat,
+                        previousLng: viaDragOrigin.lng
                     });
                 });
                 routeMarkers.push(viaMarker);
@@ -516,14 +543,22 @@
                 const shapingMarker = new maplibregl.Marker({ draggable: true, color: '#888888', scale: 0.5, offset: [0, -7] })
                     .setLngLat([w.lng, w.lat])
                     .addTo(map);
+                let shapingDragAlt = false, shapingDragOrigin = null;
+                shapingMarker.on('dragstart', () => {
+                    shapingDragAlt = altKeyHeld;
+                    shapingDragOrigin = shapingMarker.getLngLat();
+                });
                 shapingMarker.on('dragend', () => {
+                    if (!shapingDragAlt) { shapingMarker.setLngLat(shapingDragOrigin); return; }
                     const pos = shapingMarker.getLngLat();
                     postToSwift({
                         type: 'waypointDragged',
                         routeItemId: itemId,
                         sequenceNumber: w.seq,
                         latitude: pos.lat,
-                        longitude: pos.lng
+                        longitude: pos.lng,
+                        previousLat: shapingDragOrigin.lat,
+                        previousLng: shapingDragOrigin.lng
                     });
                 });
                 routeMarkers.push(shapingMarker);
@@ -592,13 +627,21 @@
                 .setLngLat([lng, lat])
                 .addTo(map);
 
+            let waypointDragAlt = false, waypointDragOrigin = null;
+            waypointMarker.on('dragstart', () => {
+                waypointDragAlt = altKeyHeld;
+                waypointDragOrigin = waypointMarker.getLngLat();
+            });
             waypointMarker.on('dragend', () => {
+                if (!waypointDragAlt) { waypointMarker.setLngLat(waypointDragOrigin); return; }
                 const pos = waypointMarker.getLngLat();
                 postToSwift({
                     type: 'waypointMoved',
                     itemId: itemId,
                     latitude: pos.lat,
-                    longitude: pos.lng
+                    longitude: pos.lng,
+                    previousLat: waypointDragOrigin.lat,
+                    previousLng: waypointDragOrigin.lng
                 });
             });
 
@@ -938,7 +981,11 @@
         });
 
         document.addEventListener('keydown', function(e) {
+            if (e.key === 'Alt') { altKeyHeld = true; }
             if (e.key === 'Escape') { dismissContextMenu(); }
+        });
+        document.addEventListener('keyup', function(e) {
+            if (e.key === 'Alt') { altKeyHeld = false; }
         });
 
         /// Removes all markers, layers and sources added by showMultipleItems(), then clears labels.

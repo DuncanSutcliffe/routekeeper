@@ -737,4 +737,20 @@ markers via the existing route calculation flow, which also refreshes
 the waypoint library — they exist only as routing constraints within the route.
 All temporary debug logs have been removed; `window.onerror` is retained.
 
-**Next step: Increment 42 — TBD.**
+Increment 42 — Shaping point marker placement fixes. Two related fixes applied.
+First, after a successful Valhalla recalculation, the snapped coordinates from
+the `locations` array in the Valhalla response are written back to each route
+point before saving and rendering, ensuring markers are placed exactly where
+Valhalla routed through rather than at the raw input coordinates.
+`RoutingService.RouteResult` gains a `snappedLocations: [CLLocationCoordinate2D]`
+field; `ValhallaResponse.Trip` gains a `locations` field decoded from the response
+JSON. The snapping loop is applied in both the `waypointDragged` and
+`insertShapingPoint` handlers in `MapView.swift`, using `var allPoints` to allow
+mutation. `updateRoutePoints` is used in place of `updateRouteGeometryAndStats` so
+snapped positions are persisted in a single transaction. Second, shaping point
+markers constructed with `scale: 0.5` now include an explicit `offset: [0, -7]`
+to compensate for MapLibre's default pin offset not scaling proportionally with
+the marker — fixing zoom-dependent drift where the marker tip appeared
+increasingly far from the road at lower zoom levels.
+
+**Next step: Increment 43 — TBD.**

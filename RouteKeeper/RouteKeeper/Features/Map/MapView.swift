@@ -27,6 +27,23 @@ import WebKit
 import Observation
 import CoreLocation
 
+// MARK: - UndoRecord
+
+/// A single reversible map-drag operation, stored on the undo stack.
+enum UndoRecord {
+    /// A route point or library waypoint was moved to a new position.
+    /// `sequenceNumber == -1` indicates a library waypoint; `routeItemId` holds the
+    /// waypoint's `item_id` in that case. For route points, both fields are as named.
+    case movedPoint(routeItemId: Int64, sequenceNumber: Int,
+                    previousLat: Double, previousLng: Double)
+    /// A new shaping point was inserted into a route at the given sequence number.
+    case insertedPoint(routeItemId: Int64, sequenceNumber: Int)
+}
+
+extension Notification.Name {
+    static let routeKeeperPerformUndo = Notification.Name("routeKeeperPerformUndo")
+}
+
 // MARK: - WaypointDisplay
 
 /// The data needed to render a single waypoint pin on the map.
@@ -213,6 +230,20 @@ final class MapViewModel {
     /// `updateNSView` pass. Set by ContentView when the label toggle changes.
     var labelCommand: LabelCommand? = nil
 
+    // MARK: Undo stack
+
+    private(set) var undoStack: [UndoRecord] = []
+    let undoStackMaxDepth = 1
+
+    func pushUndo(_ record: UndoRecord) {
+        undoStack.append(record)
+        if undoStack.count > undoStackMaxDepth { undoStack.removeFirst() }
+    }
+
+    func popUndo() -> UndoRecord? {
+        undoStack.popLast()
+    }
+
     /// The active MapTiler style name — `"streets-v4"`, `"hybrid-v4"`, or `"topo-v4"`.
     ///
     /// Defaults to `"streets-v4"`. `ContentView.task` overwrites this with the
@@ -250,6 +281,9 @@ struct MapView: NSViewRepresentable {
     let suppressMultiLabels: Bool
     /// A one-shot label command applied by the Coordinator on the next render pass.
     let labelCommand: LabelCommand?
+    /// Reference to the owning MapViewModel; set on the Coordinator each pass so
+    /// drag handlers can push undo records and the undo action can pop them.
+    let mapViewModel: MapViewModel
 
     // MARK: NSViewRepresentable
 
@@ -383,6 +417,7 @@ struct MapView: NSViewRepresentable {
         // Keep the callback current so the Coordinator always calls back into
         // the latest ContentView closure, even after SwiftUI re-renders.
         coordinator.onAddWaypointAtCoordinate = onAddWaypointAtCoordinate
+        coordinator.mapViewModel = mapViewModel
     }
 
     // MARK: Private helpers
@@ -418,6 +453,10 @@ struct MapView: NSViewRepresentable {
         // MARK: Notification observation
 
         private var categoriesChangedObserver: (any NSObjectProtocol)?
+        private var performUndoObserver: (any NSObjectProtocol)?
+
+        /// Weak reference to the owning MapViewModel; refreshed each updateNSView pass.
+        weak var mapViewModel: MapViewModel?
 
         override init() {
             super.init()
@@ -431,10 +470,20 @@ struct MapView: NSViewRepresentable {
                 guard let self, let wv = self.webView, self.mapIsReady else { return }
                 self.applyRegisteredCategoryIcons(in: wv)
             }
+            performUndoObserver = NotificationCenter.default.addObserver(
+                forName: .routeKeeperPerformUndo,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.executeUndo()
+            }
         }
 
         deinit {
             if let observer = categoriesChangedObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = performUndoObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }
@@ -665,6 +714,182 @@ struct MapView: NSViewRepresentable {
             }
         }
 
+        // MARK: Undo execution
+
+        /// Pops the top undo record and executes the reverse operation.
+        func executeUndo() {
+            guard let record = mapViewModel?.popUndo(),
+                  let wv = webView else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    switch record {
+
+                    case .movedPoint(let routeItemId, let sequenceNumber,
+                                     let previousLat, let previousLng):
+                        if sequenceNumber == -1 {
+                            // Library waypoint: restore previous position in DB and redraw.
+                            try await DatabaseManager.shared.updateWaypointPosition(
+                                itemId: routeItemId,
+                                latitude: previousLat,
+                                longitude: previousLng
+                            )
+                            if let existing = lastWaypointDisplay,
+                               existing.itemId == routeItemId {
+                                let restored = WaypointDisplay(
+                                    itemId:        routeItemId,
+                                    latitude:      previousLat,
+                                    longitude:     previousLng,
+                                    colorHex:      existing.colorHex,
+                                    name:          existing.name,
+                                    iconImageName: existing.iconImageName
+                                )
+                                lastWaypointDisplay = restored
+                                applyWaypointDisplay(restored, in: wv)
+                            }
+                        } else {
+                            // Route point: restore previous position, recalculate, redraw.
+                            guard let display = lastRouteDisplay else { return }
+                            try await DatabaseManager.shared.updateRoutePointPosition(
+                                routeItemId:    routeItemId,
+                                sequenceNumber: sequenceNumber,
+                                latitude:       previousLat,
+                                longitude:      previousLng
+                            )
+                            try await recalculateAndRedraw(
+                                routeItemId: routeItemId,
+                                display:     display,
+                                in:          wv
+                            )
+                        }
+
+                    case .insertedPoint(let routeItemId, let sequenceNumber):
+                        guard let display = lastRouteDisplay else { return }
+                        var allPoints = try await DatabaseManager.shared.fetchRoutePoints(
+                            routeItemId: routeItemId
+                        )
+                        allPoints.removeAll { $0.sequenceNumber == sequenceNumber }
+                        guard allPoints.count >= 2 else { return }
+                        guard let route = try await DatabaseManager.shared.fetchRouteRecord(
+                            itemId: routeItemId
+                        ) else { return }
+                        let coords = allPoints.map {
+                            CLLocationCoordinate2D(latitude: $0.latitude,
+                                                   longitude: $0.longitude)
+                        }
+                        let result = try await RoutingService.shared.calculateRoute(
+                            through:        coords,
+                            avoidMotorways: route.avoidMotorways,
+                            avoidTolls:     route.avoidTolls,
+                            avoidUnpaved:   route.avoidUnpaved,
+                            avoidFerries:   route.avoidFerries,
+                            shortestRoute:  route.shortestRoute
+                        )
+                        let snapped = result.snappedLocations
+                        for i in allPoints.indices where i < snapped.count {
+                            allPoints[i].latitude  = snapped[i].latitude
+                            allPoints[i].longitude = snapped[i].longitude
+                        }
+                        try await DatabaseManager.shared.updateRoutePoints(
+                            allPoints,
+                            routeItemId:      routeItemId,
+                            geometry:         result.geometry,
+                            distanceKm:       result.distanceKm,
+                            durationSeconds:  result.durationSeconds,
+                            elevationProfile: result.elevationProfile
+                        )
+                        let savedPoints = try await DatabaseManager.shared.fetchRoutePoints(
+                            routeItemId: routeItemId
+                        )
+                        let newDisplay = buildRouteDisplay(from: savedPoints,
+                                                           result: result,
+                                                           existing: display)
+                        try await wv.evaluateJavaScript("suppressRecentre = true;")
+                        applyRouteDisplay(newDisplay, in: wv)
+                    }
+                } catch {
+                    print("executeUndo failed: \(error)")
+                }
+            }
+        }
+
+        /// Recalculates a route via Valhalla using its current route_points, applies
+        /// snapped coordinates, persists the updated point list, and redraws the map.
+        private func recalculateAndRedraw(
+            routeItemId: Int64,
+            display: RouteDisplay,
+            in wv: WKWebView
+        ) async throws {
+            var allPoints = try await DatabaseManager.shared.fetchRoutePoints(
+                routeItemId: routeItemId
+            )
+            guard let route = try await DatabaseManager.shared.fetchRouteRecord(
+                itemId: routeItemId
+            ) else { return }
+            let coords = allPoints.map {
+                CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+            }
+            let result = try await RoutingService.shared.calculateRoute(
+                through:        coords,
+                avoidMotorways: route.avoidMotorways,
+                avoidTolls:     route.avoidTolls,
+                avoidUnpaved:   route.avoidUnpaved,
+                avoidFerries:   route.avoidFerries,
+                shortestRoute:  route.shortestRoute
+            )
+            let snapped = result.snappedLocations
+            for i in allPoints.indices where i < snapped.count {
+                allPoints[i].latitude  = snapped[i].latitude
+                allPoints[i].longitude = snapped[i].longitude
+            }
+            try await DatabaseManager.shared.updateRoutePoints(
+                allPoints,
+                routeItemId:      routeItemId,
+                geometry:         result.geometry,
+                distanceKm:       result.distanceKm,
+                durationSeconds:  result.durationSeconds,
+                elevationProfile: result.elevationProfile
+            )
+            let savedPoints = try await DatabaseManager.shared.fetchRoutePoints(
+                routeItemId: routeItemId
+            )
+            let newDisplay = buildRouteDisplay(from: savedPoints, result: result,
+                                               existing: display)
+            try await wv.evaluateJavaScript("suppressRecentre = true;")
+            applyRouteDisplay(newDisplay, in: wv)
+        }
+
+        /// Builds a RouteDisplay from a freshly-fetched ordered point list and a
+        /// Valhalla result, preserving presentation metadata from an existing display.
+        private func buildRouteDisplay(
+            from savedPoints: [RoutePoint],
+            result: RouteResult,
+            existing display: RouteDisplay
+        ) -> RouteDisplay {
+            let intermediates = savedPoints.count > 2
+                ? Array(savedPoints.dropFirst().dropLast()) : []
+            var announcingCount = 0
+            let viaWaypoints = intermediates.map { pt -> ViaWaypoint in
+                if pt.announcesArrival { announcingCount += 1 }
+                return ViaWaypoint(
+                    latitude:         pt.latitude,
+                    longitude:        pt.longitude,
+                    index:            announcingCount,
+                    announcesArrival: pt.announcesArrival,
+                    sequenceNumber:   pt.sequenceNumber
+                )
+            }
+            return RouteDisplay(
+                itemId:       display.itemId,
+                geojson:      result.geometry,
+                viaWaypoints: viaWaypoints,
+                colorHex:     display.colorHex,
+                name:         display.name,
+                startSeq:     savedPoints.first?.sequenceNumber ?? display.startSeq,
+                endSeq:       savedPoints.last?.sequenceNumber  ?? display.endSeq
+            )
+        }
+
         // MARK: WKScriptMessageHandler
 
         func userContentController(
@@ -685,9 +910,11 @@ struct MapView: NSViewRepresentable {
             }
 
             if type == "waypointMoved" {
-                guard let itemIdInt = body["itemId"]   as? Int,
-                      let latitude  = body["latitude"]  as? Double,
-                      let longitude = body["longitude"] as? Double else { return }
+                guard let itemIdInt   = body["itemId"]      as? Int,
+                      let latitude    = body["latitude"]    as? Double,
+                      let longitude   = body["longitude"]   as? Double,
+                      let previousLat = body["previousLat"] as? Double,
+                      let previousLng = body["previousLng"] as? Double else { return }
                 let itemId = Int64(itemIdInt)
                 Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -698,6 +925,12 @@ struct MapView: NSViewRepresentable {
                             latitude:  latitude,
                             longitude: longitude
                         )
+                        mapViewModel?.pushUndo(.movedPoint(
+                            routeItemId:  itemId,
+                            sequenceNumber: -1,
+                            previousLat:  previousLat,
+                            previousLng:  previousLng
+                        ))
                         // 2. Find any routes whose route_points reference this waypoint.
                         let routes = try await DatabaseManager.shared
                             .fetchRoutesContainingWaypoint(itemId: itemId)
@@ -740,7 +973,9 @@ struct MapView: NSViewRepresentable {
                 guard let routeItemIdInt = body["routeItemId"]    as? Int,
                       let sequenceNumber = body["sequenceNumber"] as? Int,
                       let latitude       = body["latitude"]       as? Double,
-                      let longitude      = body["longitude"]      as? Double else { return }
+                      let longitude      = body["longitude"]      as? Double,
+                      let previousLat    = body["previousLat"]    as? Double,
+                      let previousLng    = body["previousLng"]    as? Double else { return }
                 let routeItemId = Int64(routeItemIdInt)
                 guard let display = lastRouteDisplay else { return }
                 Task { @MainActor [weak self] in
@@ -813,6 +1048,12 @@ struct MapView: NSViewRepresentable {
                             startSeq:     allPoints.first?.sequenceNumber ?? display.startSeq,
                             endSeq:       allPoints.last?.sequenceNumber  ?? display.endSeq
                         )
+                        mapViewModel?.pushUndo(.movedPoint(
+                            routeItemId:    routeItemId,
+                            sequenceNumber: sequenceNumber,
+                            previousLat:    previousLat,
+                            previousLng:    previousLng
+                        ))
                         guard let wv = self.webView else { return }
                         try await wv.evaluateJavaScript("suppressRecentre = true;")
                         self.applyRouteDisplay(newDisplay, in: wv)
@@ -909,6 +1150,12 @@ struct MapView: NSViewRepresentable {
                             startSeq: savedPoints.first?.sequenceNumber ?? display.startSeq,
                             endSeq:   savedPoints.last?.sequenceNumber  ?? display.endSeq
                         )
+                        if safeIndex < savedPoints.count {
+                            mapViewModel?.pushUndo(.insertedPoint(
+                                routeItemId:    routeItemId,
+                                sequenceNumber: savedPoints[safeIndex].sequenceNumber
+                            ))
+                        }
                         guard let wv = self.webView else { return }
                         try await wv.evaluateJavaScript("suppressRecentre = true;")
                         self.applyRouteDisplay(newDisplay, in: wv)
@@ -987,7 +1234,8 @@ struct MapView: NSViewRepresentable {
         mapTilerAPIKey: "",
         onAddWaypointAtCoordinate: nil,
         suppressMultiLabels: false,
-        labelCommand: nil
+        labelCommand: nil,
+        mapViewModel: MapViewModel()
     )
     .frame(width: 800, height: 600)
 }

@@ -266,7 +266,7 @@ RouteKeeper/
 
 ## Current Status
 
-Increments 1–45 complete. The application has a full working shell with:
+Increments 1–47 complete. The application has a full working shell with:
 library sidebar (folders, lists, drag-and-drop, inline rename/edit),
 waypoint creation and editing (coordinate pick, reverse geocode, category
 icons, address storage and editing, elevation capture), route creation
@@ -295,31 +295,46 @@ when a dragged row is part of the selection all selected IDs are
 included; single-item drag behaviour unchanged), shaping point marker
 offset fix in showMultipleItems matching the offset already applied in
 showRoute, a native Settings window (units, export format, API keys
-via Keychain), and route properties sheet fixes (redundant Done button
+via Keychain), route properties sheet fixes (redundant Done button
 removed; Cancel shows an unsaved-changes confirmation dialog — 'Discard
 changes?' with 'Discard' and 'Keep Editing' — when any local state
 differs from its initial snapshot, and dismisses immediately otherwise;
 onSave triggers a full library reload so name and colour changes are
 immediately visible in the sidebar and bottom panel; if the edited route
 is currently selected the map is also refreshed to reflect the changes),
-and GPX track import and display (DB migration v7 adds color/line_style
-to tracks and timestamp to track_points; GPXImporter extended to parse
-<trk>/<trkseg>/<trkpt> elements with timestamp capture, flattening
-segments into a single ordered point sequence; importGPXResult imports
-tracks and returns a 4-tuple including trackCount; success message
-reports routes/tracks/waypoints grammatically; selecting a track in the
-sidebar fetches its points and renders them as a styled line via
-showTrack()/hideTrack() in MapLibre; TrackPropertiesSheet for editing
-name, 8-colour palette, and line style — dotted/short_dash/long_dash/solid;
-context menu "Track Properties…" and double-click open the sheet;
-TrackDisplay drives the Coordinator/updateNSView pattern matching
-WaypointDisplay/RouteDisplay; tracks/showTrack/hideTrack survive map
-style reloads via mapStyleLoaded re-apply).
+and GPX track import and display (DB migration v7 adds color defaulting
+to #3E515A and line_style defaulting to solid to tracks, and timestamp
+as nullable ISO 8601 string to track_points; GPXImporter extended to
+parse <trk> elements, flattening all <trkseg> children into a single
+ordered point sequence; import coordinator handles tracks alongside
+routes and waypoints with the same duplicate-name deduplication logic;
+importGPXResult returns a 4-tuple including trackCount; success message
+reports routes/tracks/waypoints grammatically; Track and TrackPoint model
+structs define a lineStyleDashArray computed property resolving four
+presets (dotted → [1,3], short_dash → [4,3], long_dash → [8,4],
+solid → nil) and a static eight-colour track palette as darker shades
+of the route palette; tracks appear in the sidebar with the SF Symbol
+point.bottomleft.forward.to.point.topright.scurvepath.fill and a colour
+dot; track display uses a MapLibre line layer with optional dasharray,
+start/end standard maplibregl.Marker teardrop markers in the track
+colour, and a name label anchored at the geometric midpoint using the
+existing lineMidpoint helper; TrackPropertiesSheet provides name, colour,
+and line style editing with the same Cancel/Save pattern as
+RoutePropertiesSheet; context menu "Track Properties…" and double-click
+open the sheet; TrackDisplay drives the Coordinator/updateNSView pattern
+matching WaypointDisplay/RouteDisplay; track display, labels, and
+start/end markers are applied in both single-select and multi-select
+paths; track labels are cleared correctly on selection change including
+track-to-track transitions; tracks/showTrack/hideTrack survive map style
+reloads via mapStyleLoaded re-apply; the route and waypoint blue colour
+has been standardised to #1A73E8 throughout).
 
 **Known issues / deferred:**
 - Valhalla uses the public OSM community instance — rate-limited.
   To be replaced before release.
 - Route direction arrows were attempted and fully reverted. To be
   revisited using an SDF image approach.
+- Intermittent rendering artefact on first track selection — not
+  reliably reproducible, deferred.
 
 **Next step: Increment 48 — TBD.**

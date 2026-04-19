@@ -117,11 +117,19 @@ struct ContentView: View {
     @State private var routeColorHex: String = "#1A73E8"
     /// Non-nil while the map-tap "New waypoint here" sheet is open.
     @State private var mapTapPresentation: MapTapPresentation? = nil
-    /// Persisted toggle: whether labels are shown when a list is displayed.
-    @AppStorage("showListItemLabels") private var showListItemLabels = true
-    /// Label data for the items in the currently displayed list, used to
-    /// restore labels when the user turns them back on.
-    @State private var currentListLabels: [LabelData] = []
+    /// Per-type label visibility, persisted across launches.
+    @AppStorage("showRouteLabels")    private var showRouteLabels    = true
+    @AppStorage("showTrackLabels")    private var showTrackLabels    = true
+    @AppStorage("showWaypointLabels") private var showWaypointLabels = true
+    /// Label data split by item type, used to restore labels when a toggle is turned on.
+    @State private var currentListRouteLabels:    [LabelData] = []
+    @State private var currentListTrackLabels:    [LabelData] = []
+    @State private var currentListWaypointLabels: [LabelData] = []
+    /// Whether the current list contains at least one item of each type.
+    /// Drives the enabled state of the per-type label toggles.
+    @State private var listHasRoutes:    Bool = false
+    @State private var listHasTracks:    Bool = false
+    @State private var listHasWaypoints: Bool = false
 
     // MARK: Combined selection key
 
@@ -171,7 +179,7 @@ struct ContentView: View {
                             )
                         },
                         suppressMultiLabels: selectedList != nil && selectedItems.isEmpty
-                                             && !showListItemLabels,
+                                             && (!showRouteLabels || !showTrackLabels || !showWaypointLabels),
                         labelCommand: mapViewModel.labelCommand,
                         trackDisplay: mapViewModel.trackDisplay,
                         mapViewModel: mapViewModel
@@ -182,7 +190,14 @@ struct ContentView: View {
                             set: { mapViewModel.currentMapStyle = $0 }
                         ))
                         if selectedList != nil && selectedItems.isEmpty {
-                            ShowLabelsButton(showLabels: $showListItemLabels)
+                            ShowLabelsPanel(
+                                showRouteLabels:    $showRouteLabels,
+                                showTrackLabels:    $showTrackLabels,
+                                showWaypointLabels: $showWaypointLabels,
+                                hasRoutes:          listHasRoutes,
+                                hasTracks:          listHasTracks,
+                                hasWaypoints:       listHasWaypoints
+                            )
                         }
                     }
                     .padding(.top, 12)
@@ -228,12 +243,28 @@ struct ContentView: View {
                 prefilledCoordinate: tap.coordinate
             )
         }
-        .onChange(of: showListItemLabels) { _, newValue in
+        .onChange(of: showRouteLabels) { _, newValue in
             guard selectedList != nil && selectedItems.isEmpty else { return }
             if newValue {
-                mapViewModel.labelCommand = LabelCommand(action: .show(currentListLabels))
+                mapViewModel.labelCommand = LabelCommand(action: .show(currentListRouteLabels))
             } else {
-                mapViewModel.labelCommand = LabelCommand(action: .hide)
+                mapViewModel.labelCommand = LabelCommand(action: .hideSpecific(currentListRouteLabels))
+            }
+        }
+        .onChange(of: showTrackLabels) { _, newValue in
+            guard selectedList != nil && selectedItems.isEmpty else { return }
+            if newValue {
+                mapViewModel.labelCommand = LabelCommand(action: .show(currentListTrackLabels))
+            } else {
+                mapViewModel.labelCommand = LabelCommand(action: .hideSpecific(currentListTrackLabels))
+            }
+        }
+        .onChange(of: showWaypointLabels) { _, newValue in
+            guard selectedList != nil && selectedItems.isEmpty else { return }
+            if newValue {
+                mapViewModel.labelCommand = LabelCommand(action: .show(currentListWaypointLabels))
+            } else {
+                mapViewModel.labelCommand = LabelCommand(action: .hideSpecific(currentListWaypointLabels))
             }
         }
         .focusedValue(\.showRoutingProfilesSheet, $showingRoutingProfilesSheet)
@@ -258,7 +289,12 @@ struct ContentView: View {
             routeDistanceKm      = nil
             routeDurationSeconds = nil
             routeElevationProfile = nil
-            currentListLabels = []
+            currentListRouteLabels    = []
+            currentListTrackLabels    = []
+            currentListWaypointLabels = []
+            listHasRoutes    = false
+            listHasTracks    = false
+            listHasWaypoints = false
             mapViewModel.clearMultiDisplay()
 
             if items.count == 1, let item = items.first {
@@ -279,10 +315,28 @@ struct ContentView: View {
             mapViewModel.clearTrack()
             mapViewModel.clearMultiDisplay()
             let listItems = await fetchItemsForList(list)
+            listHasRoutes    = listItems.contains { $0.type == .route }
+            listHasTracks    = listItems.contains { $0.type == .track }
+            listHasWaypoints = listItems.contains { $0.type == .waypoint }
             if !listItems.isEmpty {
-                currentListLabels = await handleMultiItemDisplay(listItems)
+                let (rLabels, tLabels, wLabels) = await handleMultiItemDisplay(listItems)
+                currentListRouteLabels    = rLabels
+                currentListTrackLabels    = tLabels
+                currentListWaypointLabels = wLabels
+                // When any toggle is off, showMultipleItems was followed by hideAllLabels.
+                // Restore labels for the types whose toggle is still on.
+                let anyOff = !showRouteLabels || !showTrackLabels || !showWaypointLabels
+                if anyOff {
+                    var toShow: [LabelData] = []
+                    if showRouteLabels    { toShow += rLabels }
+                    if showTrackLabels    { toShow += tLabels }
+                    if showWaypointLabels { toShow += wLabels }
+                    mapViewModel.labelCommand = LabelCommand(action: .show(toShow))
+                }
             } else {
-                currentListLabels = []
+                currentListRouteLabels    = []
+                currentListTrackLabels    = []
+                currentListWaypointLabels = []
             }
         } else {
             // Nothing selected — clear everything.
@@ -290,7 +344,12 @@ struct ContentView: View {
             mapViewModel.clearRoute()
             mapViewModel.clearTrack()
             mapViewModel.clearMultiDisplay()
-            currentListLabels     = []
+            currentListRouteLabels    = []
+            currentListTrackLabels    = []
+            currentListWaypointLabels = []
+            listHasRoutes    = false
+            listHasTracks    = false
+            listHasWaypoints = false
             routeDistanceKm       = nil
             routeDurationSeconds  = nil
             routeElevationProfile = nil
@@ -447,11 +506,13 @@ struct ContentView: View {
     /// Fetches geometry for each item in `items`, builds the JSON payload, and
     /// calls `mapViewModel.showMultipleItems()`.
     @discardableResult
-    private func handleMultiItemDisplay(_ items: [Item]) async -> [LabelData] {
-        let (json, labels) = await buildMultiItemsJson(items)
-        guard !json.isEmpty else { return [] }
+    private func handleMultiItemDisplay(_ items: [Item]) async -> (
+        routeLabels: [LabelData], trackLabels: [LabelData], waypointLabels: [LabelData]
+    ) {
+        let (json, routeLabels, trackLabels, waypointLabels) = await buildMultiItemsJson(items)
+        guard !json.isEmpty else { return ([], [], []) }
         mapViewModel.showMultipleItems(json)
-        return labels
+        return (routeLabels, trackLabels, waypointLabels)
     }
 
     /// Returns the items belonging to `list`, using `fetchUnclassifiedItems()`
@@ -473,7 +534,12 @@ struct ContentView: View {
     ///
     /// Generates start/end flag icons once and embeds them in every route entry.
     /// Items whose geometry is missing (NULL in the DB) are silently skipped.
-    private func buildMultiItemsJson(_ items: [Item]) async -> (json: String, labels: [LabelData]) {
+    private func buildMultiItemsJson(_ items: [Item]) async -> (
+        json: String,
+        routeLabels: [LabelData],
+        trackLabels: [LabelData],
+        waypointLabels: [LabelData]
+    ) {
         // Fetch categories once so the per-waypoint icon name lookup is O(1).
         let allCategories = (try? await DatabaseManager.shared.fetchCategories()) ?? []
 
@@ -486,7 +552,9 @@ struct ContentView: View {
         )
 
         var entries: [MultiItemEntry] = []
-        var labels: [LabelData] = []
+        var routeLabels:    [LabelData] = []
+        var trackLabels:    [LabelData] = []
+        var waypointLabels: [LabelData] = []
 
         for item in items {
             guard let itemId = item.id else { continue }
@@ -509,7 +577,7 @@ struct ContentView: View {
                         iconImageName: iconImageName,
                         labelIconBase64: labelIconBase64
                     ))
-                    labels.append(LabelData(
+                    waypointLabels.append(LabelData(
                         itemId: itemId,
                         lat: wp.latitude, lng: wp.longitude,
                         name: item.name, iconBase64: labelIconBase64
@@ -578,7 +646,7 @@ struct ContentView: View {
                     routeIconBase64:  routeIconBase64
                 ))
                 if let mid = lineStringMidpoint(geometry) {
-                    labels.append(LabelData(
+                    routeLabels.append(LabelData(
                         itemId: itemId,
                         lat: mid.lat, lng: mid.lng,
                         name: item.name, iconBase64: routeIconBase64
@@ -600,25 +668,57 @@ struct ContentView: View {
                         name: item.name,
                         lineStyle: twp.track.lineStyle
                     ))
+                    let lineStringJson = "{\"type\":\"LineString\",\"coordinates\":[\(coords)]}"
+                    if let mid = lineStringMidpoint(lineStringJson) {
+                        trackLabels.append(LabelData(
+                            itemId: itemId,
+                            lat: mid.lat, lng: mid.lng,
+                            name: item.name, iconBase64: nil
+                        ))
+                    }
                 }
             }
         }
 
         guard !entries.isEmpty,
               let data = try? JSONEncoder().encode(entries),
-              let json = String(data: data, encoding: .utf8) else { return ("", []) }
-        return (json, labels)
+              let json = String(data: data, encoding: .utf8) else { return ("", [], [], []) }
+        return (json, routeLabels, trackLabels, waypointLabels)
     }
 }
 
-/// Returns the geometric midpoint of a GeoJSON LineString, mirroring the
+/// Returns the geometric midpoint of a GeoJSON geometry, mirroring the
 /// `lineMidpoint()` helper in MapLibreMap.html.
+///
+/// Handles three container types:
+/// - `"LineString"` — coordinates array at the top level
+/// - `"Feature"` — LineString inside `geometry`
+/// - `"FeatureCollection"` — first LineString feature's `geometry`
 private func lineStringMidpoint(_ geojson: String) -> (lat: Double, lng: Double)? {
     guard let data = geojson.data(using: .utf8),
-          let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let type = obj["type"] as? String, type == "LineString",
-          let coords = obj["coordinates"] as? [[Double]],
-          coords.count >= 2 else { return nil }
+          let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return nil }
+
+    let coords: [[Double]]?
+    switch obj["type"] as? String {
+    case "LineString":
+        coords = obj["coordinates"] as? [[Double]]
+    case "Feature":
+        let geom = obj["geometry"] as? [String: Any]
+        coords = (geom?["type"] as? String) == "LineString"
+            ? geom?["coordinates"] as? [[Double]] : nil
+    case "FeatureCollection":
+        let features = obj["features"] as? [[String: Any]] ?? []
+        let firstLine = features.first {
+            ($0["geometry"] as? [String: Any])?["type"] as? String == "LineString"
+        }
+        let geom = firstLine?["geometry"] as? [String: Any]
+        coords = geom?["coordinates"] as? [[Double]]
+    default:
+        coords = nil
+    }
+
+    guard let coords, coords.count >= 2 else { return nil }
     var totalDist = 0.0
     for i in 1 ..< coords.count {
         let dlng = coords[i][0] - coords[i-1][0]

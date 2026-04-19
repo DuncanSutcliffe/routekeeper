@@ -100,6 +100,9 @@ struct LabelCommand {
     enum Action {
         case hide
         case show([LabelData])
+        /// Hides only the labels for the given items by calling `hideLabel(itemId)`
+        /// for each, leaving all other visible labels untouched.
+        case hideSpecific([LabelData])
     }
     let action: Action
 }
@@ -678,6 +681,10 @@ struct MapView: NSViewRepresentable {
             switch cmd.action {
             case .hide:
                 webView.evaluateJavaScript("hideAllLabels();")
+            case .hideSpecific(let labels):
+                for label in labels {
+                    webView.evaluateJavaScript("hideLabel(\(label.itemId));")
+                }
             case .show(let labels):
                 for label in labels {
                     let escapedName = label.name

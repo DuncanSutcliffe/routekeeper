@@ -266,7 +266,7 @@ RouteKeeper/
 
 ## Current Status
 
-Increments 1–47 complete. The application has a full working shell with:
+Increments 1–48 complete. The application has a full working shell with:
 library sidebar (folders, lists, drag-and-drop, inline rename/edit),
 waypoint creation and editing (coordinate pick, reverse geocode, category
 icons, address storage and editing, elevation capture), route creation
@@ -337,4 +337,20 @@ has been standardised to #1A73E8 throughout).
 - Intermittent rendering artefact on first track selection — not
   reliably reproducible, deferred.
 
-**Next step: Increment 48 — TBD.**
+Increment 48 — Per-type labels toggles. The single showListItemLabels toggle has
+been replaced with three separate @AppStorage booleans: showRouteLabels,
+showTrackLabels, and showWaypointLabels, all defaulting to true. The floating
+labels panel shows three labelled toggle rows — Routes, Tracks, Waypoints — each
+as an HStack with the label on the left, a Spacer, and a right-aligned switch
+using .toggleStyle(.switch) with .labelsHidden(). The panel has a fixed width of
+approximately 170 points to prevent it expanding to fill available space. Each
+toggle is enabled only when the currently selected list contains at least one item
+of that type; the enabled state is derived from the item data already loaded at
+list selection time without additional database queries. Toggling any switch off
+calls hideAllLabels() then restores labels for all types whose toggle remains on;
+toggling on restores showLabel calls for all currently displayed items of that
+type. All three types — routes, tracks, and waypoints — are handled consistently
+across the initial list render path, the toggle-on restore path, and the
+toggle-off hide path.
+
+**Next step: Increment 49 — TBD.**

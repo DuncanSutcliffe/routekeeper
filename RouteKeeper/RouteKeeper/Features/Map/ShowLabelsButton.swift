@@ -18,6 +18,9 @@ struct ShowLabelsPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            Text("Show labels")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack {
                 Text("Routes")
                 Spacer()

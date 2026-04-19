@@ -551,6 +551,14 @@ struct ContentView: View {
             canvasPx: 36
         )
 
+        // Render the track label icon once — shared by all track entries.
+        let trackIconBase64 = categoryIconBase64Compact(
+            "point.bottomleft.forward.to.point.topright.scurvepath.fill",
+            color: .white,
+            ptSize: 18,
+            canvasPx: 36
+        )
+
         var entries: [MultiItemEntry] = []
         var routeLabels:    [LabelData] = []
         var trackLabels:    [LabelData] = []
@@ -673,7 +681,7 @@ struct ContentView: View {
                         trackLabels.append(LabelData(
                             itemId: itemId,
                             lat: mid.lat, lng: mid.lng,
-                            name: item.name, iconBase64: nil
+                            name: item.name, iconBase64: trackIconBase64
                         ))
                     }
                 }

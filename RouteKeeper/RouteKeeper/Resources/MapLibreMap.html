@@ -204,15 +204,15 @@
                 className: 'item-label'
             })
             .setLngLat([lng, lat]);
+            var safe = name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             if (iconBase64) {
-                var safe = name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                popup.setHTML('<div style="display:flex;align-items:center;gap:6px;">' +
+                popup.setHTML('<div title="' + safe + '" style="display:flex;align-items:center;gap:6px;overflow:hidden;">' +
                     '<img src="data:image/png;base64,' + iconBase64 + '" ' +
                     'style="width:20px;height:20px;flex-shrink:0;opacity:0.9;" />' +
-                    '<span>' + safe + '</span>' +
+                    '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;">' + safe + '</span>' +
                     '</div>');
             } else {
-                popup.setText(name);
+                popup.setHTML('<span title="' + safe + '" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;">' + safe + '</span>');
             }
             popup.addTo(map);
             labelPopups[String(itemId)] = popup;

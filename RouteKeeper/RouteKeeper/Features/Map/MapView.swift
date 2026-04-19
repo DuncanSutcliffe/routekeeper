@@ -429,6 +429,8 @@ struct MapView: NSViewRepresentable {
             coordinator.lastLabelCommandId = labelCommand?.id
             if coordinator.mapIsReady, let cmd = labelCommand {
                 coordinator.applyLabelCommand(cmd, in: nsView)
+            } else if let cmd = labelCommand {
+                coordinator.pendingLabelCommand = cmd
             }
         }
 
@@ -593,6 +595,9 @@ struct MapView: NSViewRepresentable {
 
         /// UUID of the last-applied `LabelCommand`; used to detect re-fires.
         var lastLabelCommandId: UUID? = nil
+
+        /// Label command queued before the map was ready. Flushed on mapReady.
+        var pendingLabelCommand: LabelCommand? = nil
 
         /// Suppress-labels flag from the last `updateNSView` pass; used when
         /// restoring display state after a map style reload.
@@ -808,11 +813,14 @@ struct MapView: NSViewRepresentable {
                 .replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "\"", with: "\\\"")
             webView.evaluateJavaScript("showTrack(\"\(escaped)\");")
-            // Place label at the geometric midpoint of the track (Fix 1).
             let mid = trackMidpoint(display.points)
+            let trackIconArg = categoryIconBase64Compact(
+                "point.bottomleft.forward.to.point.topright.scurvepath.fill",
+                color: .white, ptSize: 18, canvasPx: 36
+            ).map { "\"\($0)\"" } ?? "null"
             webView.evaluateJavaScript(
                 "showLabel(\(display.itemId), \(mid.lon), \(mid.lat)," +
-                " \"\(escapedName)\", null);"
+                " \"\(escapedName)\", \(trackIconArg));"
             )
             shownTrackItemId = display.itemId
         }
@@ -1330,6 +1338,12 @@ struct MapView: NSViewRepresentable {
                 if let pending = pendingTrackDisplay {
                     applyTrackDisplay(pending, in: wv)
                     pendingTrackDisplay = nil
+                }
+
+                // Flush any label command that arrived before the map was ready.
+                if let pending = pendingLabelCommand {
+                    applyLabelCommand(pending, in: wv)
+                    pendingLabelCommand = nil
                 }
             }
         }

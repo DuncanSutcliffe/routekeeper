@@ -213,6 +213,8 @@ RouteKeeper/
 │   │   │   ├── APIKeysSettingsView.swift
 │   │   │   ├── ExportSettingsView.swift
 │   │   │   └── GeneralSettingsView.swift
+│   │   ├── Tracks/
+│   │   │   └── TrackPropertiesSheet.swift
 │   │   └── Waypoints/
 │   │       ├── AddressEditSheet.swift
 │   │       └── EditWaypointSheet.swift
@@ -292,8 +294,27 @@ drag and drop between lists (DraggableItem carries itemIds: [Int64];
 when a dragged row is part of the selection all selected IDs are
 included; single-item drag behaviour unchanged), shaping point marker
 offset fix in showMultipleItems matching the offset already applied in
-showRoute, and a native Settings window (units, export format, API keys
-via Keychain).
+showRoute, a native Settings window (units, export format, API keys
+via Keychain), and route properties sheet fixes (redundant Done button
+removed; Cancel shows an unsaved-changes confirmation dialog — 'Discard
+changes?' with 'Discard' and 'Keep Editing' — when any local state
+differs from its initial snapshot, and dismisses immediately otherwise;
+onSave triggers a full library reload so name and colour changes are
+immediately visible in the sidebar and bottom panel; if the edited route
+is currently selected the map is also refreshed to reflect the changes),
+and GPX track import and display (DB migration v7 adds color/line_style
+to tracks and timestamp to track_points; GPXImporter extended to parse
+<trk>/<trkseg>/<trkpt> elements with timestamp capture, flattening
+segments into a single ordered point sequence; importGPXResult imports
+tracks and returns a 4-tuple including trackCount; success message
+reports routes/tracks/waypoints grammatically; selecting a track in the
+sidebar fetches its points and renders them as a styled line via
+showTrack()/hideTrack() in MapLibre; TrackPropertiesSheet for editing
+name, 8-colour palette, and line style — dotted/short_dash/long_dash/solid;
+context menu "Track Properties…" and double-click open the sheet;
+TrackDisplay drives the Coordinator/updateNSView pattern matching
+WaypointDisplay/RouteDisplay; tracks/showTrack/hideTrack survive map
+style reloads via mapStyleLoaded re-apply).
 
 **Known issues / deferred:**
 - Valhalla uses the public OSM community instance — rate-limited.
@@ -301,4 +322,4 @@ via Keychain).
 - Route direction arrows were attempted and fully reverted. To be
   revisited using an SDF image approach.
 
-**Next step: Increment 46 — TBD.**
+**Next step: Increment 48 — TBD.**

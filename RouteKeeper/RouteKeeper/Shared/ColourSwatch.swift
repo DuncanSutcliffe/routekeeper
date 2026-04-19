@@ -13,13 +13,10 @@ import SwiftUI
 /// Preset colours shown in waypoint creation and editing sheets.
 let waypointPresetColours: [String] = [
     "#E8453C", "#E8873C", "#E8D83C", "#4CAF50",
-    "#2196F3", "#9C27B0", "#795548", "#607D8B",
+    "#1A73E8", "#9C27B0", "#795548", "#607D8B",
 ]
 
 /// Preset colours shown in route creation and editing sheets.
-///
-/// Uses `#1A73E8` as the default selection in place of the waypoint
-/// palette's `#2196F3`.
 let routePresetColours: [String] = [
     "#E8453C", "#E8873C", "#E8D83C", "#4CAF50",
     "#1A73E8", "#9C27B0", "#795548", "#607D8B",

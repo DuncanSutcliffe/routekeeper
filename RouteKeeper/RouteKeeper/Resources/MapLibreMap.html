@@ -124,6 +124,11 @@
         // displayed single route.  Cleared by clearRoute().
         var routeMarkers = [];
 
+        // Holds the start and end maplibregl.Marker instances for the currently
+        // displayed single track.  Cleared by hideTrack().
+        var trackStartMarker = null;
+        var trackEndMarker   = null;
+
         // State for the rubber-band drag-to-insert interaction.
         var routeDragActive = false;
         var routeDragAnchorA = null;
@@ -702,6 +707,7 @@
             var viaGroups         = []; // { sourceId, circleId, labelId, features, colour }
             var shapingGroups     = []; // { sourceId, layerId, features, colour }
             var waypointGroups    = []; // { wpId, lng, lat, colour, iconImageName, name, labelIconBase64 }
+            var trackGroups       = []; // { sourceId, layerId, coords, colour, lineStyle, itemId }
 
             for (var i = 0; i < items.length; i++) {
                 var item = items[i];
@@ -785,6 +791,19 @@
                             colour:   routeColour
                         });
                     }
+                } else if (item.type === "track" && item.geojson && item.itemId !== undefined) {
+                    var trackFeature = JSON.parse(item.geojson);
+                    var trackCoords  = trackFeature.geometry ? trackFeature.geometry.coordinates : [];
+                    boundsCoords = boundsCoords.concat(trackCoords);
+                    trackGroups.push({
+                        sourceId:  'multi-track-source-' + item.itemId,
+                        layerId:   'multi-track-layer-'  + item.itemId,
+                        coords:    trackCoords,
+                        colour:    item.color || '#3E515A',
+                        lineStyle: item.lineStyle || 'solid',
+                        itemId:    item.itemId,
+                        name:      item.name || ''
+                    });
                 }
             }
 
@@ -841,6 +860,47 @@
                         .addTo(map);
                     multiRouteMarkers.push(shapingMarker);
                 }
+            }
+
+            // ── Track lines with start/end markers and labels ────────────────────────
+            for (var ti = 0; ti < trackGroups.length; ti++) {
+                var tg = trackGroups[ti];
+                if (tg.coords.length < 2) { continue; }
+
+                var trackDashArray;
+                switch (tg.lineStyle) {
+                    case 'dotted':     trackDashArray = [1, 3]; break;
+                    case 'short_dash': trackDashArray = [4, 3]; break;
+                    case 'long_dash':  trackDashArray = [8, 4]; break;
+                    default:           trackDashArray = null;
+                }
+                var trackPaint = { 'line-color': tg.colour, 'line-width': 3, 'line-opacity': 0.9 };
+                if (trackDashArray) { trackPaint['line-dasharray'] = trackDashArray; }
+
+                map.addSource(tg.sourceId, {
+                    type: 'geojson',
+                    data: { type: 'Feature', geometry: { type: 'LineString', coordinates: tg.coords } }
+                });
+                multiViaSources.push(tg.sourceId);
+                map.addLayer({
+                    id: tg.layerId, type: 'line', source: tg.sourceId,
+                    layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: trackPaint
+                });
+                multiViaLayerIds.push(tg.layerId);
+
+                var tStartMarker = new maplibregl.Marker({ color: tg.colour })
+                    .setLngLat(tg.coords[0])
+                    .addTo(map);
+                multiRouteMarkers.push(tStartMarker);
+
+                var tEndMarker = new maplibregl.Marker({ color: tg.colour })
+                    .setLngLat(tg.coords[tg.coords.length - 1])
+                    .addTo(map);
+                multiRouteMarkers.push(tEndMarker);
+
+                var tLabelCoord = lineMidpoint(tg.coords);
+                showLabel(tg.itemId, tLabelCoord[0], tLabelCoord[1], tg.name, null);
             }
 
             // ── Per-waypoint markers (native Marker, keyed by itemId) ─────────────
@@ -1012,6 +1072,70 @@
             if (map.getLayer("multi-routes-layer"))   map.removeLayer("multi-routes-layer");
             if (map.getSource("multi-routes-source")) map.removeSource("multi-routes-source");
             hideAllLabels();
+        }
+
+        /// Renders a single GPS track as a styled line.
+        ///
+        /// trackData — object with: points [{lat, lng}], color (CSS hex), lineStyle
+        /// ("dotted" | "short_dash" | "long_dash" | "solid"), itemId, name.
+        /// Replaces any previously shown track.
+        function showTrack(trackJson) {
+            hideTrack();
+            var trackData = (typeof trackJson === "string") ? JSON.parse(trackJson) : trackJson;
+            if (!trackData || !trackData.points || trackData.points.length < 2) { return; }
+
+            var coords = trackData.points.map(function(p) { return [p.lng, p.lat]; });
+            var geojson = {
+                type: 'Feature',
+                geometry: { type: 'LineString', coordinates: coords }
+            };
+
+            map.addSource('track-source', { type: 'geojson', data: geojson });
+
+            var dashArray;
+            switch (trackData.lineStyle) {
+                case 'dotted':     dashArray = [1, 3]; break;
+                case 'short_dash': dashArray = [4, 3]; break;
+                case 'long_dash':  dashArray = [8, 4]; break;
+                default:           dashArray = null;
+            }
+
+            var paint = {
+                'line-color': trackData.color || '#3E515A',
+                'line-width': 3,
+                'line-opacity': 0.9
+            };
+            if (dashArray) { paint['line-dasharray'] = dashArray; }
+
+            map.addLayer({
+                id: 'track-layer',
+                type: 'line',
+                source: 'track-source',
+                layout: { 'line-join': 'round', 'line-cap': 'round' },
+                paint: paint
+            });
+
+            var trackColor = trackData.color || '#3E515A';
+            trackStartMarker = new maplibregl.Marker({ color: trackColor })
+                .setLngLat(coords[0])
+                .addTo(map);
+            trackEndMarker = new maplibregl.Marker({ color: trackColor })
+                .setLngLat(coords[coords.length - 1])
+                .addTo(map);
+
+            // Fit map to track bounds.
+            var bounds = coords.reduce(function(b, c) {
+                return b.extend(c);
+            }, new maplibregl.LngLatBounds(coords[0], coords[0]));
+            map.fitBounds(bounds, { padding: 60, maxZoom: 15 });
+        }
+
+        /// Removes the track line and start/end markers added by showTrack().
+        function hideTrack() {
+            if (trackEndMarker)   { trackEndMarker.remove();   trackEndMarker   = null; }
+            if (trackStartMarker) { trackStartMarker.remove(); trackStartMarker = null; }
+            if (map.getLayer('track-layer'))   { map.removeLayer('track-layer'); }
+            if (map.getSource('track-source')) { map.removeSource('track-source'); }
         }
 </script>
 </body>

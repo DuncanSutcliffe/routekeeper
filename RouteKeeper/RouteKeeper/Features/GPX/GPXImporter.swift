@@ -3,8 +3,7 @@
 //  RouteKeeper
 //
 //  Parses a GPX file using Foundation's XMLParser and returns a structured
-//  GPXImportResult containing arrays of parsed waypoints and routes.
-//  Tracks (<trk>) are ignored entirely.
+//  GPXImportResult containing arrays of parsed waypoints, routes, and tracks.
 //
 
 import Foundation
@@ -36,10 +35,29 @@ struct ParsedRoute {
     let points: [ParsedRoutePoint]
 }
 
+/// A single point parsed from a <trkpt> element inside a <trkseg>.
+struct ParsedTrackPoint {
+    let lat: Double
+    let lon: Double
+    let ele: Double?
+    /// ISO 8601 timestamp from the <time> child element, or `nil` if absent.
+    let timestamp: String?
+}
+
+/// A track parsed from a <trk> element.
+///
+/// All <trkseg> children are flattened into a single ordered point sequence
+/// with contiguous sequence numbers across segment boundaries.
+struct ParsedTrack {
+    let name: String
+    let points: [ParsedTrackPoint]
+}
+
 /// The structured output of a successful GPX parse.
 struct GPXImportResult {
     let waypoints: [ParsedWaypoint]
     let routes: [ParsedRoute]
+    let tracks: [ParsedTrack]
 }
 
 // MARK: - Error
@@ -81,10 +99,14 @@ enum GPXImporter {
         if let error = delegate.parseError {
             throw GPXImportError.unparseable(error.localizedDescription)
         }
-        if delegate.waypoints.isEmpty && delegate.routes.isEmpty {
+        if delegate.waypoints.isEmpty && delegate.routes.isEmpty && delegate.tracks.isEmpty {
             throw GPXImportError.noContent
         }
-        return GPXImportResult(waypoints: delegate.waypoints, routes: delegate.routes)
+        return GPXImportResult(
+            waypoints: delegate.waypoints,
+            routes:    delegate.routes,
+            tracks:    delegate.tracks
+        )
     }
 }
 
@@ -99,6 +121,7 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
 
     private(set) var waypoints: [ParsedWaypoint] = []
     private(set) var routes:    [ParsedRoute]    = []
+    private(set) var tracks:    [ParsedTrack]    = []
     private(set) var parseError: Error?          = nil
 
     // Element nesting stack — the last entry is always the currently open element.
@@ -106,16 +129,21 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
     // Character accumulator for the element currently being closed.
     private var currentText = ""
 
-    // Pending values reset at the start of each <wpt> or <rtept>.
+    // Pending values reset at the start of each <wpt>, <rtept>, or <trkpt>.
     private var pendingLat:       Double? = nil
     private var pendingLon:       Double? = nil
     private var pendingName:      String? = nil
     private var pendingEle:       Double? = nil
     private var pendingIsShaping: Bool   = false
+    private var pendingTimestamp: String? = nil
 
     // Route accumulator reset at the start of each <rte>.
     private var currentRouteName:   String?             = nil
     private var currentRoutePoints: [ParsedRoutePoint] = []
+
+    // Track accumulator reset at the start of each <trk>.
+    private var currentTrackName:   String?              = nil
+    private var currentTrackPoints: [ParsedTrackPoint]  = []
 
     // MARK: didStartElement
 
@@ -136,9 +164,18 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
             pendingName      = nil
             pendingEle       = nil
             pendingIsShaping = false
+            pendingTimestamp = nil
+        case "trkpt":
+            pendingLat       = attributeDict["lat"].flatMap(Double.init)
+            pendingLon       = attributeDict["lon"].flatMap(Double.init)
+            pendingEle       = nil
+            pendingTimestamp = nil
         case "rte":
             currentRouteName   = nil
             currentRoutePoints = []
+        case "trk":
+            currentTrackName   = nil
+            currentTrackPoints = []
         default:
             break
         }
@@ -166,16 +203,22 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
         switch elementName {
 
         case "name":
-            // Capture <name> only when it is a direct child of <wpt>, <rtept>, or <rte>.
             if parent == "wpt" || parent == "rtept" {
                 pendingName = text.isEmpty ? nil : text
             } else if parent == "rte" {
                 currentRouteName = text.isEmpty ? nil : text
+            } else if parent == "trk" {
+                currentTrackName = text.isEmpty ? nil : text
             }
 
         case "ele":
-            if parent == "wpt" || parent == "rtept" {
+            if parent == "wpt" || parent == "rtept" || parent == "trkpt" {
                 pendingEle = Double(text)
+            }
+
+        case "time":
+            if parent == "trkpt" {
+                pendingTimestamp = text.isEmpty ? nil : text
             }
 
         case "gpxx:Subclass":
@@ -195,11 +238,24 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
                 ele: pendingEle, isShaping: pendingIsShaping
             ))
 
+        case "trkpt":
+            guard let lat = pendingLat, let lon = pendingLon else { break }
+            currentTrackPoints.append(ParsedTrackPoint(
+                lat: lat, lon: lon, ele: pendingEle, timestamp: pendingTimestamp
+            ))
+
         case "rte":
             guard !currentRoutePoints.isEmpty else { break }
             routes.append(ParsedRoute(
                 name: currentRouteName ?? "Imported Route",
                 points: currentRoutePoints
+            ))
+
+        case "trk":
+            guard !currentTrackPoints.isEmpty else { break }
+            tracks.append(ParsedTrack(
+                name: currentTrackName ?? "Imported Track",
+                points: currentTrackPoints
             ))
 
         default:

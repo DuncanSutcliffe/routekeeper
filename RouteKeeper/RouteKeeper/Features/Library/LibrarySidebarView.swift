@@ -152,6 +152,11 @@ struct WaypointIdentity: Identifiable {
     let name: String
 }
 
+struct TrackIdentity: Identifiable {
+    let id: Int64
+    let name: String
+}
+
 /// Carries state for opening a new-item creation sheet.
 struct NewItemPresentation: Identifiable {
     let id = UUID()
@@ -234,9 +239,10 @@ struct LibrarySidebarView: View {
     @State private var newWaypointPresentation: NewItemPresentation? = nil
     @State private var newRoutePresentation:    NewItemPresentation? = nil
 
-    @State private var routePropertiesTarget: RouteIdentity?    = nil
-    @State private var routeWaypointTarget:   RouteIdentity?    = nil
-    @State private var waypointEditTarget:    WaypointIdentity? = nil
+    @State private var routePropertiesTarget:  RouteIdentity?    = nil
+    @State private var routeWaypointTarget:    RouteIdentity?    = nil
+    @State private var waypointEditTarget:     WaypointIdentity? = nil
+    @State private var trackPropertiesTarget:  TrackIdentity?    = nil
 
     // GPX import state — shared with list context menu.
     @State private var showingImportGPXSheet       = false
@@ -319,6 +325,7 @@ struct LibrarySidebarView: View {
                 routePropertiesTarget: $routePropertiesTarget,
                 routeWaypointTarget: $routeWaypointTarget,
                 waypointEditTarget: $waypointEditTarget,
+                trackPropertiesTarget: $trackPropertiesTarget,
                 exportItemIds: $exportItemIds,
                 exportFilename: $exportFilename,
                 showingExportSheet: $showingExportSheet,
@@ -526,6 +533,11 @@ struct LibrarySidebarView: View {
         cycleSelection(for: identity.id)
     }
 
+    private func handleTrackPropertiesSave(identity: TrackIdentity) {
+        NotificationCenter.default.post(name: .routeKeeperLibraryDidChange, object: nil)
+        cycleSelection(for: identity.id)
+    }
+
     // MARK: - Named sheet content builders
 
     /// Builds the RoutePropertiesSheet for a given identity.
@@ -557,6 +569,16 @@ struct LibrarySidebarView: View {
         ) {
             handleWaypointEditSave(identity: identity)
         }
+    }
+
+    /// Builds the TrackPropertiesSheet for a given identity.
+    @ViewBuilder
+    private func trackPropertiesSheetView(identity: TrackIdentity) -> some View {
+        TrackPropertiesSheet(
+            trackItemId: identity.id,
+            initialName: identity.name,
+            onSave: { handleTrackPropertiesSave(identity: identity) }
+        )
     }
 
     /// Builds the ExportFormatSheet.
@@ -609,6 +631,8 @@ struct LibrarySidebarView: View {
             routePropertiesSheetContent: routePropertiesSheetView,
             routeWaypointSheetContent: routeWaypointSheetView,
             waypointEditSheetContent: waypointEditSheetView,
+            trackPropertiesTarget: $trackPropertiesTarget,
+            trackPropertiesSheetContent: trackPropertiesSheetView,
             exportSheetContent: exportSheetView
         )
     }
@@ -805,10 +829,13 @@ private struct LibrarySidebarModals: ViewModifier {
     @Binding var showDeleteFolderConfirm: Bool
     @Binding var folderScheduledForDeletion: ListFolder?
 
+    @Binding var trackPropertiesTarget: TrackIdentity?
+
     // Injected sheet-content builders (avoids re-capturing closures here)
     let routePropertiesSheetContent: (RouteIdentity) -> AnyView
     let routeWaypointSheetContent:   (RouteIdentity) -> AnyView
     let waypointEditSheetContent:    (WaypointIdentity) -> AnyView
+    let trackPropertiesSheetContent: (TrackIdentity) -> AnyView
     let exportSheetContent:          () -> AnyView
 
     init(
@@ -841,6 +868,8 @@ private struct LibrarySidebarModals: ViewModifier {
         routePropertiesSheetContent: @escaping (RouteIdentity) -> some View,
         routeWaypointSheetContent:   @escaping (RouteIdentity) -> some View,
         waypointEditSheetContent:    @escaping (WaypointIdentity) -> some View,
+        trackPropertiesTarget: Binding<TrackIdentity?>,
+        trackPropertiesSheetContent: @escaping (TrackIdentity) -> some View,
         exportSheetContent:          @escaping () -> some View
     ) {
         self.viewModel = viewModel
@@ -872,6 +901,8 @@ private struct LibrarySidebarModals: ViewModifier {
         self.routePropertiesSheetContent = { AnyView(routePropertiesSheetContent($0)) }
         self.routeWaypointSheetContent   = { AnyView(routeWaypointSheetContent($0)) }
         self.waypointEditSheetContent    = { AnyView(waypointEditSheetContent($0)) }
+        self._trackPropertiesTarget      = trackPropertiesTarget
+        self.trackPropertiesSheetContent = { AnyView(trackPropertiesSheetContent($0)) }
         self.exportSheetContent          = { AnyView(exportSheetContent()) }
     }
 
@@ -903,6 +934,7 @@ private struct LibrarySidebarModals: ViewModifier {
             .sheet(item: $routePropertiesTarget) { routePropertiesSheetContent($0) }
             .sheet(item: $routeWaypointTarget)   { routeWaypointSheetContent($0) }
             .sheet(item: $waypointEditTarget)    { waypointEditSheetContent($0) }
+            .sheet(item: $trackPropertiesTarget) { trackPropertiesSheetContent($0) }
             .sheet(item: $editListTarget) { list in
                 NewListSheet(viewModel: viewModel, preselectedFolderID: nil, editingList: list)
             }

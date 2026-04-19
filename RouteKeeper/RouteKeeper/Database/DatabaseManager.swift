@@ -174,6 +174,20 @@ actor DatabaseManager {
             }
         }
 
+        // v7 — adds colour and line-style to tracks; adds ISO 8601 timestamp
+        //      to track_points for GPX import/export.
+        migrator.registerMigration("v7") { db in
+            try db.execute(
+                sql: "ALTER TABLE tracks ADD COLUMN color TEXT NOT NULL DEFAULT '#3E515A'"
+            )
+            try db.execute(
+                sql: "ALTER TABLE tracks ADD COLUMN line_style TEXT NOT NULL DEFAULT 'solid'"
+            )
+            try db.execute(
+                sql: "ALTER TABLE track_points ADD COLUMN timestamp TEXT"
+            )
+        }
+
         try await migrator.migrate(dbQueue)
         _dbQueue = dbQueue
     }
@@ -968,13 +982,14 @@ actor DatabaseManager {
                        items.type,
                        items.name,
                        items.description,
-                       COALESCE(w.color_hex, items.colour) AS colour,
+                       COALESCE(w.color_hex, t.color, items.colour) AS colour,
                        c.icon_name AS category_icon,
                        items.created_at,
                        items.modified_at
                 FROM items
                 LEFT JOIN waypoints  w ON items.id = w.item_id
                 LEFT JOIN categories c ON w.category_id = c.id
+                LEFT JOIN tracks     t ON items.id = t.item_id
                 WHERE items.id NOT IN (SELECT item_id FROM item_list_membership)
                 ORDER BY items.name
                 """)
@@ -1029,7 +1044,7 @@ actor DatabaseManager {
                        items.type,
                        items.name,
                        items.description,
-                       COALESCE(w.color_hex, items.colour) AS colour,
+                       COALESCE(w.color_hex, t.color, items.colour) AS colour,
                        c.icon_name AS category_icon,
                        items.created_at,
                        items.modified_at
@@ -1038,6 +1053,7 @@ actor DatabaseManager {
                   ON items.id = item_list_membership.item_id
                 LEFT JOIN waypoints  w ON items.id = w.item_id
                 LEFT JOIN categories c ON w.category_id = c.id
+                LEFT JOIN tracks     t ON items.id = t.item_id
                 WHERE item_list_membership.list_id = ?
                 ORDER BY items.name
                 """, arguments: [listId])
@@ -1285,11 +1301,69 @@ actor DatabaseManager {
     ///
     /// - Returns: A tuple of (routeCount, waypointCount, listName) for the
     ///   confirmation message shown to the user.
+    // MARK: - Track operations
+
+    /// Returns the `Track` record for the given item id, or `nil` if none exists.
+    func fetchTrack(itemId: Int64) async throws -> Track? {
+        let q = try requireQueue()
+        return try await q.read { db in
+            try Track.fetchOne(
+                db,
+                sql: "SELECT * FROM tracks WHERE item_id = ?",
+                arguments: [itemId]
+            )
+        }
+    }
+
+    /// Returns the track and its ordered points, or `nil` if no track row exists.
+    func fetchTrackWithPoints(itemId: Int64) async throws -> TrackWithPoints? {
+        let q = try requireQueue()
+        return try await q.read { db in
+            guard let track = try Track.fetchOne(
+                db,
+                sql: "SELECT * FROM tracks WHERE item_id = ?",
+                arguments: [itemId]
+            ) else { return nil }
+            let points = try TrackPoint.fetchAll(
+                db,
+                sql: """
+                    SELECT * FROM track_points
+                    WHERE track_item_id = ?
+                    ORDER BY sequence_number ASC
+                    """,
+                arguments: [itemId]
+            )
+            return TrackWithPoints(track: track, points: points)
+        }
+    }
+
+    /// Updates the track's name (in `items`), colour, and line style.
+    func updateTrackProperties(
+        itemId: Int64,
+        name: String,
+        color: String,
+        lineStyle: String
+    ) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "UPDATE items SET name = ? WHERE id = ?",
+                arguments: [name, itemId]
+            )
+            try db.execute(
+                sql: "UPDATE tracks SET color = ?, line_style = ? WHERE item_id = ?",
+                arguments: [color, lineStyle, itemId]
+            )
+        }
+    }
+
+    // MARK: - GPX Import
+
     @discardableResult
     func importGPXResult(
         _ result: GPXImportResult,
         into listId: Int64
-    ) async throws -> (routeCount: Int, waypointCount: Int, listName: String) {
+    ) async throws -> (routeCount: Int, waypointCount: Int, trackCount: Int, listName: String) {
         let q = try requireQueue()
         return try await q.write { db in
             guard let list = try RouteList.fetchOne(
@@ -1299,9 +1373,10 @@ actor DatabaseManager {
             ) else {
                 throw DatabaseManagerError.insertFailed("Target list not found.")
             }
-            let listName = list.name
+            let listName  = list.name
             var waypointCount = 0
             var routeCount    = 0
+            var trackCount    = 0
 
             // Names of every <wpt> element in this file, used below to avoid
             // creating a duplicate waypoint when a route's first or last point
@@ -1427,7 +1502,47 @@ actor DatabaseManager {
                 routeCount += 1
             }
 
-            return (routeCount: routeCount, waypointCount: waypointCount, listName: listName)
+            // Import tracks.
+            for trk in result.tracks {
+                let trackName = try Self.uniqueItemName(base: trk.name, db: db)
+                try db.execute(
+                    sql: "INSERT INTO items (type, name) VALUES (?, ?)",
+                    arguments: ["track", trackName]
+                )
+                guard let trackItemId = try Int64.fetchOne(
+                    db, sql: "SELECT last_insert_rowid()"
+                ) else { continue }
+
+                try db.execute(
+                    sql: "INSERT INTO tracks (item_id, color, line_style) VALUES (?, ?, ?)",
+                    arguments: [trackItemId, "#3E515A", "solid"]
+                )
+
+                for (seq, pt) in trk.points.enumerated() {
+                    try db.execute(
+                        sql: """
+                            INSERT INTO track_points
+                                (track_item_id, sequence_number, latitude, longitude,
+                                 elevation, timestamp)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                        arguments: [trackItemId, seq, pt.lat, pt.lon, pt.ele, pt.timestamp]
+                    )
+                }
+
+                try db.execute(
+                    sql: "INSERT INTO item_list_membership (item_id, list_id) VALUES (?, ?)",
+                    arguments: [trackItemId, listId]
+                )
+                trackCount += 1
+            }
+
+            return (
+                routeCount:    routeCount,
+                waypointCount: waypointCount,
+                trackCount:    trackCount,
+                listName:      listName
+            )
         }
     }
 
@@ -1570,7 +1685,8 @@ actor DatabaseManager {
                     let ptRows = try Row.fetchAll(
                         db,
                         sql: """
-                            SELECT latitude, longitude, elevation, recorded_at
+                            SELECT latitude, longitude, elevation,
+                                   COALESCE(timestamp, recorded_at) AS ts
                             FROM track_points
                             WHERE track_item_id = ?
                             ORDER BY sequence_number
@@ -1582,7 +1698,7 @@ actor DatabaseManager {
                             latitude: pt["latitude"],
                             longitude: pt["longitude"],
                             elevation: pt["elevation"],
-                            timestamp: pt["recorded_at"]
+                            timestamp: pt["ts"]
                         )
                     }
                     let track = ExportTrack(

@@ -29,7 +29,7 @@ enum ItemType: String, Codable {
         switch self {
         case .route:    return "arrow.triangle.turn.up.right.diamond"
         case .waypoint: return "mappin"
-        case .track:    return "scribble"
+        case .track:    return "point.bottomleft.forward.to.point.topright.scurvepath.fill"
         }
     }
 }
@@ -188,23 +188,63 @@ struct RoutePoint: Codable, FetchableRecord, PersistableRecord {
 /// Track-specific data, linked 1-to-1 with an `Item` via `item_id`.
 ///
 /// Individual recorded points are stored in `track_points`.
-struct Track: Codable, FetchableRecord, PersistableRecord {
+struct Track: Codable, FetchableRecord, PersistableRecord, Identifiable {
     static let databaseTableName = "tracks"
 
+    var id: Int64 { itemId }
     /// Foreign key to `items.id`; also the primary key of this table.
     var itemId: Int64
     var geojson: String?
     var distanceMetres: Double?
     var durationSeconds: Int?
     var recordedAt: String?
+    /// CSS hex colour for the track line, e.g. `"#3E515A"`.
+    var color: String
+    /// Line rendering style — one of `"dotted"`, `"short_dash"`, `"long_dash"`, `"solid"`.
+    var lineStyle: String
+
+    init(itemId: Int64, color: String = "#3E515A", lineStyle: String = "solid") {
+        self.itemId    = itemId
+        self.color     = color
+        self.lineStyle = lineStyle
+    }
+
+    /// MapLibre `line-dasharray` values for the stored line style.
+    /// `nil` when `lineStyle == "solid"` (no dasharray property applied).
+    var lineStyleDashArray: [Double]? {
+        switch lineStyle {
+        case "dotted":     return [1, 3]
+        case "short_dash": return [4, 3]
+        case "long_dash":  return [8, 4]
+        default:           return nil
+        }
+    }
+
+    /// The eight preset colours offered in TrackPropertiesSheet.
+    static let presetColours: [String] = [
+        "#972D27", "#975827", "#978C27", "#317234",
+        "#114B97", "#651972", "#4F372F", "#3E515A",
+    ]
 
     enum CodingKeys: String, CodingKey {
         case itemId = "item_id"
         case geojson
-        case distanceMetres = "distance_metres"
+        case distanceMetres  = "distance_metres"
         case durationSeconds = "duration_seconds"
-        case recordedAt = "recorded_at"
+        case recordedAt      = "recorded_at"
+        case color
+        case lineStyle       = "line_style"
     }
+}
+
+// MARK: - TrackWithPoints
+
+/// A track record paired with its ordered point array.
+///
+/// Used for map display and GPX export.
+struct TrackWithPoints {
+    let track: Track
+    let points: [TrackPoint]
 }
 
 // MARK: - TrackPoint
@@ -220,15 +260,18 @@ struct TrackPoint: Codable, FetchableRecord, PersistableRecord {
     var longitude: Double
     var elevation: Double?
     var recordedAt: String?
+    /// ISO 8601 timestamp from the GPX `<time>` element, or `nil` if absent.
+    var timestamp: String?
     /// Speed in metres per second at the time this point was recorded.
     var speedMs: Double?
 
     enum CodingKeys: String, CodingKey {
         case id
-        case trackItemId = "track_item_id"
+        case trackItemId    = "track_item_id"
         case sequenceNumber = "sequence_number"
         case latitude, longitude, elevation
-        case recordedAt = "recorded_at"
-        case speedMs = "speed_ms"
+        case recordedAt     = "recorded_at"
+        case timestamp
+        case speedMs        = "speed_ms"
     }
 }

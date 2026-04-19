@@ -145,6 +145,27 @@ struct RouteDisplay: Equatable {
     let endSeq: Int
 }
 
+// MARK: - TrackDisplay
+
+/// Everything the map needs to render an imported GPS track: ordered coordinates,
+/// colour, and line style.
+struct TrackDisplay: Equatable {
+    let itemId: Int64
+    /// Ordered (lat, lon) pairs forming the track line.
+    let points: [(lat: Double, lon: Double)]
+    /// CSS hex colour string, e.g. `"#3E515A"`.
+    let colorHex: String
+    /// One of `"dotted"`, `"short_dash"`, `"long_dash"`, or `"solid"`.
+    let lineStyle: String
+    let name: String
+
+    static func == (lhs: TrackDisplay, rhs: TrackDisplay) -> Bool {
+        lhs.itemId == rhs.itemId
+            && lhs.colorHex == rhs.colorHex
+            && lhs.lineStyle == rhs.lineStyle
+    }
+}
+
 // MARK: - MapViewModel
 
 /// Drives the map's displayed state.
@@ -232,6 +253,19 @@ final class MapViewModel {
         multiDisplay = nil
     }
 
+    /// Non-nil when an imported track should be displayed on the map.
+    var trackDisplay: TrackDisplay? = nil
+
+    /// Displays a GPS track on the map.
+    func showTrack(_ display: TrackDisplay) {
+        trackDisplay = display
+    }
+
+    /// Removes the track line from the map.
+    func clearTrack() {
+        trackDisplay = nil
+    }
+
     /// A one-shot label command applied by the Coordinator on the next
     /// `updateNSView` pass. Set by ContentView when the label toggle changes.
     var labelCommand: LabelCommand? = nil
@@ -287,6 +321,8 @@ struct MapView: NSViewRepresentable {
     let suppressMultiLabels: Bool
     /// A one-shot label command applied by the Coordinator on the next render pass.
     let labelCommand: LabelCommand?
+    /// Non-nil when a GPS track should be rendered on the map.
+    let trackDisplay: TrackDisplay?
     /// Reference to the owning MapViewModel; set on the Coordinator each pass so
     /// drag handlers can push undo records and the undo action can pop them.
     let mapViewModel: MapViewModel
@@ -417,6 +453,16 @@ struct MapView: NSViewRepresentable {
             coordinator.lastScaleUnit = mapScaleUnit
             if coordinator.mapIsReady && !isFirstUpdate {
                 nsView.evaluateJavaScript("setScaleUnits(\"\(mapScaleUnit)\");")
+            }
+        }
+
+        // Apply a track display change if it has changed.
+        if trackDisplay != coordinator.lastTrackDisplay {
+            coordinator.lastTrackDisplay = trackDisplay
+            if coordinator.mapIsReady {
+                coordinator.applyTrackDisplay(trackDisplay, in: nsView)
+            } else {
+                coordinator.pendingTrackDisplay = trackDisplay
             }
         }
 
@@ -551,6 +597,11 @@ struct MapView: NSViewRepresentable {
 
         /// Suppress-labels flag queued before the map was ready, flushed on mapReady.
         var pendingSuppressMultiLabels: Bool = false
+
+        var lastTrackDisplay: TrackDisplay? = nil
+        var pendingTrackDisplay: TrackDisplay? = nil
+        /// itemId of the track whose label is currently shown; used to hide it when the track is cleared.
+        var shownTrackItemId: Int64? = nil
 
         // MARK: JS calls
 
@@ -718,6 +769,45 @@ struct MapView: NSViewRepresentable {
             } else {
                 webView.evaluateJavaScript("clearRoute();")
             }
+        }
+
+        /// Calls either `showTrack()` or `hideTrack()` in JS depending on whether
+        /// `display` is non-nil.
+        func applyTrackDisplay(_ display: TrackDisplay?, in webView: WKWebView) {
+            guard let display else {
+                webView.evaluateJavaScript("hideTrack();")
+                if let id = shownTrackItemId {
+                    webView.evaluateJavaScript("hideLabel(\(id));")
+                    shownTrackItemId = nil
+                }
+                return
+            }
+            // Hide the previous track's label before showing a new one (Fix 3).
+            if let prevId = shownTrackItemId, prevId != display.itemId {
+                webView.evaluateJavaScript("hideLabel(\(prevId));")
+            }
+            let pointsJSON = display.points.map {
+                "{\"lat\":\($0.lat),\"lng\":\($0.lon)}"
+            }.joined(separator: ",")
+            let escapedName = display.name
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            let trackData = "{\"itemId\":\(display.itemId)," +
+                "\"color\":\"\(display.colorHex)\"," +
+                "\"lineStyle\":\"\(display.lineStyle)\"," +
+                "\"name\":\"\(escapedName)\"," +
+                "\"points\":[\(pointsJSON)]}"
+            let escaped = trackData
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            webView.evaluateJavaScript("showTrack(\"\(escaped)\");")
+            // Place label at the geometric midpoint of the track (Fix 1).
+            let mid = trackMidpoint(display.points)
+            webView.evaluateJavaScript(
+                "showLabel(\(display.itemId), \(mid.lon), \(mid.lat)," +
+                " \"\(escapedName)\", null);"
+            )
+            shownTrackItemId = display.itemId
         }
 
         // MARK: Undo execution
@@ -1184,6 +1274,7 @@ struct MapView: NSViewRepresentable {
                 applyWaypointDisplay(lastWaypointDisplay, in: wv)
                 applyRouteDisplay(lastRouteDisplay, in: wv)
                 applyMultiDisplay(lastMultiDisplay, suppressLabels: lastSuppressMultiLabels, in: wv)
+                applyTrackDisplay(lastTrackDisplay, in: wv)
                 return
             }
 
@@ -1227,6 +1318,12 @@ struct MapView: NSViewRepresentable {
                     pendingMultiDisplay = nil
                     pendingSuppressMultiLabels = false
                 }
+
+                // Flush any track display that arrived before the map was ready.
+                if let pending = pendingTrackDisplay {
+                    applyTrackDisplay(pending, in: wv)
+                    pendingTrackDisplay = nil
+                }
             }
         }
     }
@@ -1241,9 +1338,37 @@ struct MapView: NSViewRepresentable {
         onAddWaypointAtCoordinate: nil,
         suppressMultiLabels: false,
         labelCommand: nil,
+        trackDisplay: nil,
         mapViewModel: MapViewModel()
     )
     .frame(width: 800, height: 600)
+}
+
+// MARK: - Track midpoint
+
+/// Returns the coordinate at 50% of the cumulative Euclidean length of a track point array.
+/// Mirrors the `lineMidpoint()` function in MapLibreMap.html.
+private func trackMidpoint(_ pts: [(lat: Double, lon: Double)]) -> (lat: Double, lon: Double) {
+    guard pts.count >= 2 else { return pts.first ?? (lat: 0, lon: 0) }
+    var total = 0.0
+    for i in 1 ..< pts.count {
+        let dlng = pts[i].lon - pts[i-1].lon
+        let dlat = pts[i].lat - pts[i-1].lat
+        total += sqrt(dlng * dlng + dlat * dlat)
+    }
+    let half = total / 2
+    var running = 0.0
+    for i in 1 ..< pts.count {
+        let dlng = pts[i].lon - pts[i-1].lon
+        let dlat = pts[i].lat - pts[i-1].lat
+        let seg = sqrt(dlng * dlng + dlat * dlat)
+        if running + seg >= half {
+            let t = seg > 0 ? (half - running) / seg : 0
+            return (lat: pts[i-1].lat + t * dlat, lon: pts[i-1].lon + t * dlng)
+        }
+        running += seg
+    }
+    return pts.last!
 }
 
 // MARK: - SF Symbol → base64 PNG

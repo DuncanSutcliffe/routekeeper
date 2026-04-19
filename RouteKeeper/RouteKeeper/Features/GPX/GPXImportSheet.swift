@@ -145,6 +145,17 @@ struct GPXImportSheet: View {
         }
     }
 
+    // MARK: - Helpers
+
+    private func importSummary(routes: Int, waypoints: Int, tracks: Int, list: String) -> String {
+        var parts: [String] = []
+        if routes > 0    { parts.append(routes    == 1 ? "1 route"    : "\(routes) routes") }
+        if tracks > 0    { parts.append(tracks    == 1 ? "1 track"    : "\(tracks) tracks") }
+        if waypoints > 0 { parts.append(waypoints == 1 ? "1 waypoint" : "\(waypoints) waypoints") }
+        let summary = parts.isEmpty ? "Nothing" : parts.joined(separator: ", ")
+        return "Imported \(summary) into \(list)."
+    }
+
     // MARK: - File picker
 
     private func browseForFile() {
@@ -172,10 +183,9 @@ struct GPXImportSheet: View {
         Task {
             do {
                 let result = try GPXImporter.parse(url: url)
-                let (rc, wc, listName) = try await DatabaseManager.shared
+                let (rc, wc, tc, listName) = try await DatabaseManager.shared
                     .importGPXResult(result, into: listId)
-                importMessage = "Imported \(rc) route(s) and \(wc) " +
-                    "waypoint(s) into \(listName)."
+                importMessage = importSummary(routes: rc, waypoints: wc, tracks: tc, list: listName)
                 await viewModel.reload()
                 // Select the imported list in the sidebar so the user sees the
                 // new content immediately after the sheet dismisses.

@@ -24,6 +24,7 @@ struct LibraryBottomPanel: View {
     @Binding var routePropertiesTarget: RouteIdentity?
     @Binding var routeWaypointTarget: RouteIdentity?
     @Binding var waypointEditTarget: WaypointIdentity?
+    @Binding var trackPropertiesTarget: TrackIdentity?
     @Binding var exportItemIds: [Int64]
     @Binding var exportFilename: String
     @Binding var showingExportSheet: Bool
@@ -134,6 +135,8 @@ struct LibraryBottomPanel: View {
                     routePropertiesTarget = RouteIdentity(id: itemId, name: item.name)
                 } else if item.type == .waypoint {
                     waypointEditTarget = WaypointIdentity(id: itemId, name: item.name)
+                } else if item.type == .track {
+                    trackPropertiesTarget = TrackIdentity(id: itemId, name: item.name)
                 }
             }
         )
@@ -169,6 +172,11 @@ struct LibraryBottomPanel: View {
             } else if item.type == .waypoint {
                 Button("Edit Waypoint…") {
                     waypointEditTarget = WaypointIdentity(id: itemId, name: item.name)
+                }
+                Divider()
+            } else if item.type == .track {
+                Button("Track Properties…") {
+                    trackPropertiesTarget = TrackIdentity(id: itemId, name: item.name)
                 }
                 Divider()
             }

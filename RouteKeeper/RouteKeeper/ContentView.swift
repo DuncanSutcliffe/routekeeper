@@ -33,6 +33,7 @@ private struct MultiItemEntry: Encodable {
     enum EntryType: String, Encodable {
         case waypoint
         case route
+        case track
     }
 
     let type: EntryType
@@ -60,11 +61,15 @@ private struct MultiItemEntry: Encodable {
     /// waypoint name label popup. `nil` when the waypoint has no category or
     /// the item is not a waypoint.
     var labelIconBase64: String?
+    /// Line-style key for track entries: `"dotted"`, `"short_dash"`, `"long_dash"`, or `"solid"`.
+    /// `nil` for non-track entries.
+    var lineStyle: String?
 
     // Custom encoding so nil fields are omitted, keeping the JSON compact.
     enum CodingKeys: String, CodingKey {
         case type, lat, lng, color, geojson, itemId, name
         case viaWaypoints, shapingWaypoints, iconImageName, routeIconBase64, labelIconBase64
+        case lineStyle
     }
 
     func encode(to encoder: Encoder) throws {
@@ -81,6 +86,7 @@ private struct MultiItemEntry: Encodable {
         try c.encodeIfPresent(iconImageName,    forKey: .iconImageName)
         try c.encodeIfPresent(routeIconBase64,  forKey: .routeIconBase64)
         try c.encodeIfPresent(labelIconBase64,  forKey: .labelIconBase64)
+        try c.encodeIfPresent(lineStyle,        forKey: .lineStyle)
     }
 }
 
@@ -167,6 +173,7 @@ struct ContentView: View {
                         suppressMultiLabels: selectedList != nil && selectedItems.isEmpty
                                              && !showListItemLabels,
                         labelCommand: mapViewModel.labelCommand,
+                        trackDisplay: mapViewModel.trackDisplay,
                         mapViewModel: mapViewModel
                     )
                     VStack(alignment: .leading, spacing: 8) {
@@ -259,6 +266,7 @@ struct ContentView: View {
             } else {
                 mapViewModel.clearWaypoint()
                 mapViewModel.clearRoute()
+                mapViewModel.clearTrack()
                 await handleMultiItemDisplay(items)
             }
         } else if let list {
@@ -268,6 +276,7 @@ struct ContentView: View {
             routeElevationProfile = nil
             mapViewModel.clearWaypoint()
             mapViewModel.clearRoute()
+            mapViewModel.clearTrack()
             mapViewModel.clearMultiDisplay()
             let listItems = await fetchItemsForList(list)
             if !listItems.isEmpty {
@@ -279,6 +288,7 @@ struct ContentView: View {
             // Nothing selected — clear everything.
             mapViewModel.clearWaypoint()
             mapViewModel.clearRoute()
+            mapViewModel.clearTrack()
             mapViewModel.clearMultiDisplay()
             currentListLabels     = []
             routeDistanceKm       = nil
@@ -303,6 +313,7 @@ struct ContentView: View {
         switch item.type {
         case .waypoint:
             mapViewModel.clearRoute()
+            mapViewModel.clearTrack()
             routeDistanceKm       = nil
             routeDurationSeconds  = nil
             routeElevationProfile = nil
@@ -334,6 +345,7 @@ struct ContentView: View {
             }
         case .route:
             mapViewModel.clearWaypoint()
+            mapViewModel.clearTrack()
             var routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(itemId: itemId)
             // Recalculate when flagged (e.g. waypoint moved) OR when geometry is
             // absent (e.g. newly imported route with no cached Valhalla result).
@@ -410,6 +422,23 @@ struct ContentView: View {
             routeDistanceKm       = nil
             routeDurationSeconds  = nil
             routeElevationProfile = nil
+            do {
+                if let twp = try await DatabaseManager.shared.fetchTrackWithPoints(itemId: itemId) {
+                    let pts = twp.points.map { (lat: $0.latitude, lon: $0.longitude) }
+                    mapViewModel.showTrack(TrackDisplay(
+                        itemId:   itemId,
+                        points:   pts,
+                        colorHex: twp.track.color,
+                        lineStyle: twp.track.lineStyle,
+                        name:     item.name
+                    ))
+                } else {
+                    mapViewModel.clearTrack()
+                }
+            } catch {
+                print("fetchTrackWithPoints failed: \(error)")
+                mapViewModel.clearTrack()
+            }
         }
     }
 
@@ -556,7 +585,22 @@ struct ContentView: View {
                     ))
                 }
             case .track:
-                break
+                if let twp = try? await DatabaseManager.shared.fetchTrackWithPoints(
+                    itemId: itemId
+                ), twp.points.count >= 2 {
+                    let coords = twp.points.map { "[\($0.longitude),\($0.latitude)]" }
+                        .joined(separator: ",")
+                    let geojson = "{\"type\":\"Feature\",\"geometry\":" +
+                        "{\"type\":\"LineString\",\"coordinates\":[\(coords)]}}"
+                    entries.append(MultiItemEntry(
+                        type: .track,
+                        color: twp.track.color,
+                        geojson: geojson,
+                        itemId: itemId,
+                        name: item.name,
+                        lineStyle: twp.track.lineStyle
+                    ))
+                }
             }
         }
 

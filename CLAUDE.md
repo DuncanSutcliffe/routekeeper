@@ -266,7 +266,7 @@ RouteKeeper/
 
 ## Current Status
 
-Increments 1–48 complete. The application has a full working shell with:
+Increments 1–49 complete. The application has a full working shell with:
 library sidebar (folders, lists, drag-and-drop, inline rename/edit),
 waypoint creation and editing (coordinate pick, reverse geocode, category
 icons, address storage and editing, elevation capture), route creation
@@ -353,4 +353,18 @@ type. All three types — routes, tracks, and waypoints — are handled consiste
 across the initial list render path, the toggle-on restore path, and the
 toggle-off hide path.
 
-**Next step: Increment 49 — TBD.**
+Increment 49 — Label improvements and track label icon. Label truncation now uses
+CSS text-overflow: ellipsis, overflow: hidden, and white-space: nowrap so names
+exceeding the maximum label width are cut off cleanly with an ellipsis rather than
+abruptly mid-character; a title attribute on the popup content element shows the
+full name on hover. The floating labels panel gained a Text("Show labels") heading
+styled with .font(.caption) and .foregroundStyle(.secondary). A bug was fixed where
+label toggle preferences were not respected on the first list selection after app
+launch — the initial list display path now reads the three @AppStorage booleans
+consistently with all subsequent selections. Track labels now include a white
+rendering of the track SF Symbol
+point.bottomleft.forward.to.point.topright.scurvepath.fill passed as the
+iconBase64 parameter to showLabel, matching the pattern already used for route and
+waypoint label icons.
+
+**Next step: Increment 50 — TBD.**

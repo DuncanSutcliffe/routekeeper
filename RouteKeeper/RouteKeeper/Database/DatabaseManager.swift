@@ -1275,6 +1275,40 @@ actor DatabaseManager {
         try await saveSetting(key: "map_style", value: style)
     }
 
+    /// Returns the persisted sidebar selection state from `app_settings`.
+    ///
+    /// Returns `(nil, [])` when no state has been saved or the stored values are absent.
+    func fetchSessionState() async -> (listId: Int64?, itemIds: [Int64]) {
+        let listIdStr  = (try? await fetchSetting(key: "selected_list_id"))  ?? ""
+        let itemIdsStr = (try? await fetchSetting(key: "selected_item_ids")) ?? "[]"
+        let listId: Int64? = listIdStr.isEmpty ? nil : Int64(listIdStr)
+        let itemIds: [Int64]
+        if let data = itemIdsStr.data(using: .utf8),
+           let arr = try? JSONDecoder().decode([Int64].self, from: data) {
+            itemIds = arr
+        } else {
+            itemIds = []
+        }
+        return (listId, itemIds)
+    }
+
+    /// Persists the sidebar selection state to `app_settings`.
+    ///
+    /// Pass `nil` for `listId` to record that no list is selected.
+    /// An empty `itemIds` array is stored as `"[]"` so reads always decode cleanly.
+    func saveSessionState(listId: Int64?, itemIds: [Int64]) async {
+        let listIdValue = listId.map { String($0) } ?? ""
+        let itemIdsValue: String
+        if let data = try? JSONEncoder().encode(itemIds),
+           let str = String(data: data, encoding: .utf8) {
+            itemIdsValue = str
+        } else {
+            itemIdsValue = "[]"
+        }
+        try? await saveSetting(key: "selected_list_id", value: listIdValue)
+        try? await saveSetting(key: "selected_item_ids", value: itemIdsValue)
+    }
+
     /// Writes `value` for `key` into `app_settings`, inserting or replacing any existing row.
     func saveSetting(key: String, value: String) async throws {
         let q = try requireQueue()

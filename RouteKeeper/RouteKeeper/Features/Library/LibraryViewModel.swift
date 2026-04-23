@@ -61,6 +61,17 @@ final class LibraryViewModel {
     /// Cleared by the sidebar after it has been consumed.
     var lastCreatedItem: Item? = nil
 
+    /// Item IDs written by `restoreSessionState()` at launch before the list is
+    /// selected. Consumed and cleared inside `loadItems(for:)` once the list
+    /// contents are known, so the validation happens against the actual loaded rows.
+    var pendingRestoreItemIds: [Int64] = []
+
+    /// Set by `loadItems(for:)` after validating `pendingRestoreItemIds` against
+    /// the freshly loaded `listItems`. LibrarySidebarHandlers observes this and
+    /// applies it to `selectedItems`, then clears it — matching the `lastCreatedItem`
+    /// pattern.
+    var pendingRestoredItems: Set<Item>? = nil
+
     // Remembered so createFolder() can reload with the same sort the user last chose.
     private var currentSortColumn: String = "sort_order"
     private var currentSortAscending: Bool = true
@@ -361,7 +372,20 @@ final class LibraryViewModel {
                 }
             }
             itemMemberships = memberships
+
+            // Apply launch-time item restore if IDs were stashed before list selection.
+            if !pendingRestoreItemIds.isEmpty {
+                let savedSet = Set(pendingRestoreItemIds)
+                pendingRestoreItemIds = []
+                let valid = Set(items.filter { item in
+                    item.id.map { savedSet.contains($0) } ?? false
+                })
+                if !valid.isEmpty {
+                    pendingRestoredItems = valid
+                }
+            }
         } catch {
+            pendingRestoreItemIds = []
             listItems = []
             itemMemberships = [:]
         }

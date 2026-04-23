@@ -147,6 +147,22 @@ struct ContentView: View {
         )
     }
 
+    /// Combines the current list context and selected item IDs for session-state persistence.
+    ///
+    /// Uses `libraryViewModel.currentList?.id` rather than `selectedList?.id` so the
+    /// list identity is preserved even when item selection clears `selectedList`.
+    private struct SessionSaveKey: Equatable {
+        var currentListId: Int64?
+        var selectedItemIds: Set<Int64>
+    }
+
+    private var sessionSaveKey: SessionSaveKey {
+        SessionSaveKey(
+            currentListId: libraryViewModel.currentList?.id,
+            selectedItemIds: Set(selectedItems.compactMap(\.id))
+        )
+    }
+
     var body: some View {
         NavigationSplitView {
             LibrarySidebarView(
@@ -227,6 +243,7 @@ struct ContentView: View {
             await PreferencesManager.shared.load()
             mapViewModel.currentMapStyle = await DatabaseManager.shared.loadMapStyle()
             await libraryViewModel.load()
+            await restoreSessionState()
         }
         // Re-fires whenever selectedItems or selectedList changes. Handles all
         // map display cases: single item, multi-item, list view, and cleared.
@@ -265,6 +282,14 @@ struct ContentView: View {
                 mapViewModel.labelCommand = LabelCommand(action: .show(currentListWaypointLabels))
             } else {
                 mapViewModel.labelCommand = LabelCommand(action: .hideSpecific(currentListWaypointLabels))
+            }
+        }
+        .onChange(of: sessionSaveKey) { _, newKey in
+            Task {
+                await DatabaseManager.shared.saveSessionState(
+                    listId: newKey.currentListId,
+                    itemIds: Array(newKey.selectedItemIds)
+                )
             }
         }
         .focusedValue(\.showRoutingProfilesSheet, $showingRoutingProfilesSheet)
@@ -354,6 +379,40 @@ struct ContentView: View {
             routeDurationSeconds  = nil
             routeElevationProfile = nil
         }
+    }
+
+    // MARK: - Session state restoration
+
+    /// Restores the sidebar list and item selection from the previous session.
+    ///
+    /// Called once after the initial library load. Silently no-ops if the saved list
+    /// no longer exists, or if no state was previously persisted.
+    private func restoreSessionState() async {
+        let (savedListId, savedItemIds) = await DatabaseManager.shared.fetchSessionState()
+        guard let savedListId else { return }
+
+        // Locate the saved list in the already-loaded folder contents.
+        let restoredList: RouteList?
+        if savedListId == -1 {
+            restoredList = .unclassified
+        } else {
+            restoredList = libraryViewModel.folderContents
+                .flatMap { $0.lists }
+                .first { $0.id == savedListId }
+        }
+        guard let restoredList else { return }
+
+        // Stash item IDs so loadItems (triggered by the onChange below) can validate
+        // and apply them after the list contents are fully loaded — not before.
+        if !savedItemIds.isEmpty {
+            libraryViewModel.pendingRestoreItemIds = savedItemIds
+        }
+
+        // Selecting the list triggers onChange(selectedList) → async loadItems Task.
+        // loadItems validates pendingRestoreItemIds against the real row set, then
+        // sets pendingRestoredItems. LibrarySidebarHandlers' onChange applies it to
+        // selectedItems, matching the same path used for lastCreatedItem.
+        selectedList = restoredList
     }
 
     // MARK: - Single-item selection (existing per-type behaviour)

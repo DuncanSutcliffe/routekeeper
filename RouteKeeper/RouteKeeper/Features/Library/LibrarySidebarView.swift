@@ -777,6 +777,11 @@ private struct LibrarySidebarHandlers: ViewModifier {
                 viewModel.lastCreatedItem = nil
                 selectedItems = [item]
             }
+            .onChange(of: viewModel.pendingRestoredItems) { _, items in
+                guard let items else { return }
+                viewModel.pendingRestoredItems = nil
+                selectedItems = items
+            }
             .onChange(of: sortColumn) { _, _ in
                 Task { await viewModel.load(sortColumn: sortColumn, ascending: sortAscending) }
             }

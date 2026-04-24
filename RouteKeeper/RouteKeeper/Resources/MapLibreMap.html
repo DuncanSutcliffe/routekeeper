@@ -99,6 +99,8 @@
             }
         }
 
+        const AUTO_ZOOM_MAX = 14;
+
         // ---------------------------------------------------------------------------
         // Item name label popups
         // ---------------------------------------------------------------------------
@@ -726,7 +728,7 @@
                         Math.min(b[0], c[0]), Math.min(b[1], c[1]),
                         Math.max(b[2], c[0]), Math.max(b[3], c[1])
                     ], [Infinity, Infinity, -Infinity, -Infinity]);
-                map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 60 });
+                map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 60, maxZoom: AUTO_ZOOM_MAX });
             }
 
             if (itemId !== undefined && itemId !== null) {
@@ -816,7 +818,7 @@
             if (suppressRecentre) {
                 suppressRecentre = false;
             } else {
-                map.flyTo({ center: [lng, lat], zoom: 13 });
+                map.flyTo({ center: [lng, lat], zoom: Math.min(13, AUTO_ZOOM_MAX) });
             }
 
             if (itemId !== undefined && itemId !== null) {
@@ -1159,7 +1161,7 @@
                     return [Math.min(b[0], c[0]), Math.min(b[1], c[1]),
                             Math.max(b[2], c[0]), Math.max(b[3], c[1])];
                 }, [Infinity, Infinity, -Infinity, -Infinity]);
-                map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 60 });
+                map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 60, maxZoom: AUTO_ZOOM_MAX });
             }
         }
 
@@ -1371,7 +1373,7 @@
             var bounds = coords.reduce(function(b, c) {
                 return b.extend(c);
             }, new maplibregl.LngLatBounds(coords[0], coords[0]));
-            map.fitBounds(bounds, { padding: 60, maxZoom: 15 });
+            map.fitBounds(bounds, { padding: 60, maxZoom: AUTO_ZOOM_MAX });
         }
 
         /// Removes the track line and start/end markers added by showTrack().

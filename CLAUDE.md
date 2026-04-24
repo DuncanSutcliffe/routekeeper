@@ -266,7 +266,7 @@ RouteKeeper/
 
 ## Current Status
 
-Increments 1–50 complete. The application has a full working shell with:
+Increments 1–51 complete. The application has a full working shell with:
 library sidebar (folders, lists, drag-and-drop, inline rename/edit),
 waypoint creation and editing (coordinate pick, reverse geocode, category
 icons, address storage and editing, elevation capture), route creation
@@ -332,8 +332,6 @@ has been standardised to #1A73E8 throughout).
 **Known issues / deferred:**
 - Valhalla uses the public OSM community instance — rate-limited.
   To be replaced before release.
-- Route direction arrows were attempted and fully reverted. To be
-  revisited using an SDF image approach.
 - Intermittent rendering artefact on first track selection — not
   reliably reproducible, deferred.
 
@@ -367,27 +365,29 @@ point.bottomleft.forward.to.point.topright.scurvepath.fill passed as the
 iconBase64 parameter to showLabel, matching the pattern already used for route and
 waypoint label icons.
 
-Increment 50 — Session state restoration. The selected list and selected items
-are persisted to the existing app_settings table on every selection change using
-two new keys: selected_list_id (string) and selected_item_ids (JSON array of
-integers). Persistence is driven by a SessionSaveKey computed property in
-ContentView that combines libraryViewModel.currentList?.id with the selected item
-IDs; an onChange(of: sessionSaveKey) handler writes both keys immediately via
-DatabaseManager.saveSessionState(). Using currentList rather than selectedList
-ensures the list identity is preserved even when item selection clears selectedList.
-On launch, ContentView.restoreSessionState() reads both keys, validates that
-selected_list_id still exists in the loaded folderContents, stashes the item IDs
-into the new LibraryViewModel.pendingRestoreItemIds property, and sets selectedList
-— triggering the normal onChange(of: selectedList) path and therefore the async
-loadItems() Task. At the end of loadItems(for:)'s success path, if
-pendingRestoreItemIds is non-empty, the just-loaded items array is filtered against
-those IDs, the flag is cleared, and the validated result is signalled via the new
-pendingRestoredItems: Set<Item>? observable property on LibraryViewModel. A new
-onChange(of: viewModel.pendingRestoredItems) handler in LibrarySidebarHandlers
-receives the signal, applies it to selectedItems, and clears the property —
-matching the existing lastCreatedItem pattern exactly. This triggers the map
-display logic (waypoints, routes, labels) as if the user had clicked those items.
-If the stored list no longer exists, restoration is silently skipped. Item IDs
-that no longer exist or no longer belong to the restored list are discarded.
+Increment 50 — Route direction arrows. Direction arrows are drawn on route lines
+using canvas-rendered isosceles triangle images registered with MapLibre via
+map.addImage. A createArrowImage(color) function draws a 9×12px triangle on an
+HTMLCanvasElement and returns { width, height, data } for MapLibre. A darkenHex(hex,
+factor) helper darkens the route's colorHex by factor 0.75 for the arrow fill. A
+computeArrowPoints(coordinates, targetCount) function flattens all FeatureCollection
+coordinates into a single LineString, distributes targetCount evenly-spaced points
+along it, and calculates a spherical bearing for each. Arrow count uses an
+exponential formula Math.min(500, Math.max(4, Math.round(Math.pow(2, zoom - 3))))
+so density doubles with each zoom level. Arrows use icon-rotate with
+icon-rotation-alignment: 'map', icon-allow-overlap: true, and
+icon-ignore-placement: true. A zoomend listener rebuilds arrow sources for all
+currently displayed routes on zoom changes. The same implementation applies to
+showMultipleItems using arrow-multi-{routeItemId} image and source IDs, with
+clearMultipleItems cleaning up all arrow layers and sources.
 
-**Next step: Increment 51 — TBD.**
+Increment 51 — Fix single-item session restore rendering. When the app was closed
+with exactly one item selected, restoration correctly selected the item but then
+immediately overwrote the single-item map view with the full list render. The root
+cause was handleSelectionChange() firing the list-display path before the
+single-item restore signal had been applied. Fixed by adding an early return in
+handleSelectionChange() when pendingRestoreItemIds is non-empty, preventing the
+list render from racing ahead of the restoration. List-only restores are unaffected
+since pendingRestoreItemIds is empty in that case.
+
+**Next step: Increment 52 — TBD.**

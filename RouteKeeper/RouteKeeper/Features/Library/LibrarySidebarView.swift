@@ -758,6 +758,11 @@ private struct LibrarySidebarHandlers: ViewModifier {
                     itemSelectionClearedList = false
                     return
                 }
+                // selectedList becoming nil while selectedItems is already populated
+                // is the signature of a single-item restore completing.  The map is
+                // already showing the correct single-item view — do not fire a list
+                // render that would overwrite it.
+                if newList == nil && !selectedItems.isEmpty { return }
                 selectedItems = []
                 Task {
                     if let list = newList {
@@ -780,7 +785,18 @@ private struct LibrarySidebarHandlers: ViewModifier {
             .onChange(of: viewModel.pendingRestoredItems) { _, items in
                 guard let items else { return }
                 viewModel.pendingRestoredItems = nil
-                selectedItems = items
+                if items.count == 1 {
+                    // Clear selectedList atomically before applying the selection so
+                    // mapSelectionKey jumps directly to {nil, {id}} — the same state
+                    // produced by a user clicking a single item — rather than passing
+                    // through the intermediate {listId, {id}} state that can cause the
+                    // list-display task to race ahead and render the full list view.
+                    itemSelectionClearedList = true
+                    selectedList = nil
+                    selectedItems = items
+                } else {
+                    selectedItems = items
+                }
             }
             .onChange(of: sortColumn) { _, _ in
                 Task { await viewModel.load(sortColumn: sortColumn, ascending: sortAscending) }

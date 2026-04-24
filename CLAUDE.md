@@ -266,7 +266,7 @@ RouteKeeper/
 
 ## Current Status
 
-Increments 1–49 complete. The application has a full working shell with:
+Increments 1–50 complete. The application has a full working shell with:
 library sidebar (folders, lists, drag-and-drop, inline rename/edit),
 waypoint creation and editing (coordinate pick, reverse geocode, category
 icons, address storage and editing, elevation capture), route creation
@@ -367,4 +367,27 @@ point.bottomleft.forward.to.point.topright.scurvepath.fill passed as the
 iconBase64 parameter to showLabel, matching the pattern already used for route and
 waypoint label icons.
 
-**Next step: Increment 50 — TBD.**
+Increment 50 — Session state restoration. The selected list and selected items
+are persisted to the existing app_settings table on every selection change using
+two new keys: selected_list_id (string) and selected_item_ids (JSON array of
+integers). Persistence is driven by a SessionSaveKey computed property in
+ContentView that combines libraryViewModel.currentList?.id with the selected item
+IDs; an onChange(of: sessionSaveKey) handler writes both keys immediately via
+DatabaseManager.saveSessionState(). Using currentList rather than selectedList
+ensures the list identity is preserved even when item selection clears selectedList.
+On launch, ContentView.restoreSessionState() reads both keys, validates that
+selected_list_id still exists in the loaded folderContents, stashes the item IDs
+into the new LibraryViewModel.pendingRestoreItemIds property, and sets selectedList
+— triggering the normal onChange(of: selectedList) path and therefore the async
+loadItems() Task. At the end of loadItems(for:)'s success path, if
+pendingRestoreItemIds is non-empty, the just-loaded items array is filtered against
+those IDs, the flag is cleared, and the validated result is signalled via the new
+pendingRestoredItems: Set<Item>? observable property on LibraryViewModel. A new
+onChange(of: viewModel.pendingRestoredItems) handler in LibrarySidebarHandlers
+receives the signal, applies it to selectedItems, and clears the property —
+matching the existing lastCreatedItem pattern exactly. This triggers the map
+display logic (waypoints, routes, labels) as if the user had clicked those items.
+If the stored list no longer exists, restoration is silently skipped. Item IDs
+that no longer exist or no longer belong to the restored list are discarded.
+
+**Next step: Increment 51 — TBD.**

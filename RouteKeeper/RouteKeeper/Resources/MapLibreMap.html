@@ -146,6 +146,19 @@
         // waypoint, or null when no waypoint is shown.  Cleared by clearWaypoint().
         var waypointMarker = null;
 
+        // ID of the direction-arrow symbol layer and its dedicated flattened source
+        // added by showRoute(), or null when no single route is displayed.  Both are
+        // stored so clearRoute() can remove them by ID without knowing the routeItemId.
+        var routeArrowLayerId     = null;
+        var routeArrowSourceId    = null;
+        var routeArrowImageId     = null; // map.addImage key, removed by clearRoute
+        var routeArrowFlatCoords  = null; // retained for zoom-level rebuilds
+        var routeArrowZoomHandler = null; // zoomend listener reference for removal
+
+        // Retained by showMultipleItems so the zoomend handler can rebuild arrow sources.
+        var multiArrowData        = []; // [{ sourceId, flatCoords }]
+        var multiArrowZoomHandler = null;
+
         /// Returns the coordinate at 50% of the cumulative Euclidean length of
         /// a LineString defined by an array of [lng, lat] pairs.
         ///
@@ -187,6 +200,82 @@
 
             // Fallback: return the last coordinate.
             return coords[coords.length - 1];
+        }
+
+        /// Distributes targetCount evenly-spaced arrow points along a flat array of
+        /// [lng, lat] pairs and returns them with their bearing in degrees clockwise
+        /// from north, derived from the incoming segment direction.
+        ///
+        /// Points are placed at the midpoints of each equal interval so arrows are
+        /// spread uniformly and do not cluster at line endpoints.
+        function computeArrowPoints(coordinates, targetCount) {
+            if (!coordinates || coordinates.length < 2 || targetCount < 1) return [];
+            var total = 0;
+            for (var i = 0; i < coordinates.length - 1; i++) {
+                var ddx = coordinates[i+1][0] - coordinates[i][0];
+                var ddy = coordinates[i+1][1] - coordinates[i][1];
+                total += Math.sqrt(ddx*ddx + ddy*ddy);
+            }
+            if (total === 0) return [];
+            var interval = total / targetCount;
+            var points   = [];
+            var running  = 0;
+            var next     = interval * 0.5; // first arrow at mid-interval
+            for (var i = 0; i < coordinates.length - 1; i++) {
+                var ax = coordinates[i][0],   ay = coordinates[i][1];
+                var bx = coordinates[i+1][0], by = coordinates[i+1][1];
+                var sdx = bx - ax, sdy = by - ay;
+                var len = Math.sqrt(sdx*sdx + sdy*sdy);
+                while (running + len >= next) {
+                    var t = len > 0 ? (next - running) / len : 0;
+                    var bearing = Math.atan2(sdx, sdy) * 180 / Math.PI;
+                    if (bearing < 0) bearing += 360;
+                    points.push({
+                        coord:   [ax + t * sdx, ay + t * sdy],
+                        bearing: bearing
+                    });
+                    next += interval;
+                }
+                running += len;
+            }
+            return points;
+        }
+
+        /// Multiplies each RGB component of a CSS hex colour by factor (0–1) and
+        /// returns the result as a '#rrggbb' string.  Components are clamped to 0–255.
+        function darkenHex(hex, factor) {
+            var h = hex.replace('#', '');
+            if (h.length === 3) { h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2]; }
+            var r = Math.min(255, Math.round(parseInt(h.slice(0,2), 16) * factor));
+            var g = Math.min(255, Math.round(parseInt(h.slice(2,4), 16) * factor));
+            var b = Math.min(255, Math.round(parseInt(h.slice(4,6), 16) * factor));
+            return '#' + [r, g, b].map(function(c) {
+                return ('0' + c.toString(16)).slice(-2);
+            }).join('');
+        }
+
+        /// Draws a narrow isosceles triangle on a 12×20 canvas pointing upward.
+        ///
+        /// Apex at (6,1), base corners at (2,19) and (10,19), giving a sharp point
+        /// with a modest base width.  Filled with color and stroked with a dark
+        /// semi-transparent outline.
+        function createArrowImage(color) {
+            var canvas  = document.createElement('canvas');
+            canvas.width  = 9;
+            canvas.height = 12;
+            var ctx = canvas.getContext('2d');
+            ctx.beginPath();
+            ctx.moveTo(4,  1);  // apex — centre-top
+            ctx.lineTo(8, 11);  // base — bottom-right
+            ctx.lineTo(0, 11);  // base — bottom-left
+            ctx.closePath();
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.65)';
+            ctx.lineWidth   = 1.5;
+            ctx.stroke();
+            var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            return { width: canvas.width, height: canvas.height, data: imageData.data };
         }
 
         /// Creates (or replaces) a compact name label popup anchored at [lng, lat].
@@ -454,6 +543,66 @@
                 layout: { 'line-cap': 'round', 'line-join': 'round' },
                 paint: { 'line-color': lineColour, 'line-width': 4 }
             });
+            routeArrowLayerId  = (itemId !== null && itemId !== undefined)
+                ? 'route-arrows-' + itemId : 'route-arrows';
+            routeArrowSourceId = (itemId !== null && itemId !== undefined)
+                ? 'route-arrows-source-' + itemId : 'route-arrows-source';
+            var arrowFlatCoords = [];
+            for (var fi = 0; fi < geojson.features.length; fi++) {
+                var f = geojson.features[fi];
+                if (f.geometry && f.geometry.type === 'LineString') {
+                    arrowFlatCoords = arrowFlatCoords.concat(f.geometry.coordinates);
+                }
+            }
+            routeArrowFlatCoords = arrowFlatCoords;
+            var arrowCount    = Math.min(500, Math.max(4, Math.round(Math.pow(2, map.getZoom() - 3))));
+            var arrowPts      = computeArrowPoints(arrowFlatCoords, arrowCount);
+            var arrowFeatures = [];
+            for (var api = 0; api < arrowPts.length; api++) {
+                arrowFeatures.push({
+                    type: 'Feature',
+                    geometry: { type: 'Point', coordinates: arrowPts[api].coord },
+                    properties: { bearing: arrowPts[api].bearing }
+                });
+            }
+            routeArrowImageId = (itemId !== null && itemId !== undefined)
+                ? 'arrow-' + itemId : 'arrow';
+            var arrowImageData = createArrowImage(darkenHex(lineColour, 0.75));
+            map.addImage(routeArrowImageId, arrowImageData);
+            map.addSource(routeArrowSourceId, {
+                type: 'geojson',
+                data: { type: 'FeatureCollection', features: arrowFeatures }
+            });
+            map.addLayer({
+                id: routeArrowLayerId,
+                type: 'symbol',
+                source: routeArrowSourceId,
+                layout: {
+                    'symbol-placement': 'point',
+                    'icon-image': routeArrowImageId,
+                    'icon-rotate': ['get', 'bearing'],
+                    'icon-rotation-alignment': 'map',
+                    'icon-allow-overlap': true,
+                    'icon-ignore-placement': true,
+                    'icon-size': 1
+                },
+                paint: {}
+            });
+            routeArrowZoomHandler = function() {
+                if (!routeArrowSourceId || !map.getSource(routeArrowSourceId)) return;
+                var count = Math.min(500, Math.max(4, Math.round(Math.pow(2, map.getZoom() - 3))));
+                var pts   = computeArrowPoints(routeArrowFlatCoords, count);
+                var feats = [];
+                for (var i = 0; i < pts.length; i++) {
+                    feats.push({
+                        type: 'Feature',
+                        geometry: { type: 'Point', coordinates: pts[i].coord },
+                        properties: { bearing: pts[i].bearing }
+                    });
+                }
+                map.getSource(routeArrowSourceId).setData({ type: 'FeatureCollection', features: feats });
+            };
+            map.on('zoomend', routeArrowZoomHandler);
 
             // Start marker.
             const startMarker = new maplibregl.Marker({ draggable: true, color: lineColour })
@@ -595,6 +744,20 @@
             routeMarkers.forEach(function(m) { m.remove(); });
             routeMarkers = [];
             routePointCoords = [];
+            if (routeArrowZoomHandler) {
+                map.off('zoomend', routeArrowZoomHandler);
+                routeArrowZoomHandler = null;
+            }
+            routeArrowFlatCoords = null;
+            if (routeArrowLayerId && map.getLayer(routeArrowLayerId)) {
+                map.removeLayer(routeArrowLayerId);
+            }
+            routeArrowLayerId = null;
+            if (routeArrowSourceId && map.getSource(routeArrowSourceId)) {
+                map.removeSource(routeArrowSourceId);
+            }
+            routeArrowSourceId = null;
+            routeArrowImageId  = null;
             if (map.getLayer('route-layer'))              map.removeLayer('route-layer');
             if (map.getSource('route-source'))            map.removeSource('route-source');
             if (map.getLayer('active-route'))             map.removeLayer('active-route');
@@ -708,6 +871,7 @@
             var shapingGroups     = []; // { sourceId, layerId, features, colour }
             var waypointGroups    = []; // { wpId, lng, lat, colour, iconImageName, name, labelIconBase64 }
             var trackGroups       = []; // { sourceId, layerId, coords, colour, lineStyle, itemId }
+            var arrowGroups       = []; // { sourceId, layerId, geojson, colour }
 
             for (var i = 0; i < items.length; i++) {
                 var item = items[i];
@@ -791,6 +955,23 @@
                             colour:   routeColour
                         });
                     }
+
+                    if (item.itemId !== undefined && item.itemId !== null) {
+                        var arrowCoords = [];
+                        for (var afi = 0; afi < geojson.features.length; afi++) {
+                            var af = geojson.features[afi];
+                            if (af.geometry && af.geometry.type === 'LineString') {
+                                arrowCoords = arrowCoords.concat(af.geometry.coordinates);
+                            }
+                        }
+                        arrowGroups.push({
+                            sourceId:   'route-arrows-source-multi-' + item.itemId,
+                            layerId:    'route-arrows-multi-' + item.itemId,
+                            imageId:    'arrow-multi-' + item.itemId,
+                            flatCoords: arrowCoords,
+                            colour:     routeColour
+                        });
+                    }
                 } else if (item.type === "track" && item.geojson && item.itemId !== undefined) {
                     var trackFeature = JSON.parse(item.geojson);
                     var trackCoords  = trackFeature.geometry ? trackFeature.geometry.coordinates : [];
@@ -820,6 +1001,64 @@
                     layout: { "line-cap": "round", "line-join": "round" },
                     paint: { "line-color": ["get", "color"], "line-width": 4 }
                 });
+            }
+
+            // ── Per-route direction arrows ────────────────────────────────────────────
+            var initArrowCount = Math.min(500, Math.max(4, Math.round(Math.pow(2, map.getZoom() - 3))));
+            for (var ai = 0; ai < arrowGroups.length; ai++) {
+                var ag      = arrowGroups[ai];
+                var agPts   = computeArrowPoints(ag.flatCoords, initArrowCount);
+                var agFeats = [];
+                for (var api = 0; api < agPts.length; api++) {
+                    agFeats.push({
+                        type: 'Feature',
+                        geometry: { type: 'Point', coordinates: agPts[api].coord },
+                        properties: { bearing: agPts[api].bearing }
+                    });
+                }
+                if (map.hasImage(ag.imageId)) map.removeImage(ag.imageId);
+                map.addImage(ag.imageId, createArrowImage(darkenHex(ag.colour, 0.75)));
+                map.addSource(ag.sourceId, { type: 'geojson', data: { type: 'FeatureCollection', features: agFeats } });
+                multiViaSources.push(ag.sourceId);
+                map.addLayer({
+                    id: ag.layerId,
+                    type: 'symbol',
+                    source: ag.sourceId,
+                    layout: {
+                        'symbol-placement': 'point',
+                        'icon-image': ag.imageId,
+                        'icon-rotate': ['get', 'bearing'],
+                        'icon-rotation-alignment': 'map',
+                        'icon-allow-overlap': true,
+                        'icon-ignore-placement': true,
+                        'icon-size': 1
+                    },
+                    paint: {}
+                });
+                multiViaLayerIds.push(ag.layerId);
+            }
+            multiArrowData = arrowGroups.map(function(ag) {
+                return { sourceId: ag.sourceId, flatCoords: ag.flatCoords };
+            });
+            if (multiArrowData.length > 0) {
+                multiArrowZoomHandler = function() {
+                    var count = Math.min(500, Math.max(4, Math.round(Math.pow(2, map.getZoom() - 3))));
+                    for (var i = 0; i < multiArrowData.length; i++) {
+                        var mad = multiArrowData[i];
+                        if (!map.getSource(mad.sourceId)) continue;
+                        var pts   = computeArrowPoints(mad.flatCoords, count);
+                        var feats = [];
+                        for (var pi = 0; pi < pts.length; pi++) {
+                            feats.push({
+                                type: 'Feature',
+                                geometry: { type: 'Point', coordinates: pts[pi].coord },
+                                properties: { bearing: pts[pi].bearing }
+                            });
+                        }
+                        map.getSource(mad.sourceId).setData({ type: 'FeatureCollection', features: feats });
+                    }
+                };
+                map.on('zoomend', multiArrowZoomHandler);
             }
 
             // ── Per-route start/end markers (native Marker, keyed by itemId) ─────────
@@ -1056,6 +1295,11 @@
         /// Route lines use fixed IDs (multi-routes-source / multi-routes-layer) and are
         /// removed separately since they are not tracked in the per-item arrays.
         function clearMultipleItems() {
+            if (multiArrowZoomHandler) {
+                map.off('zoomend', multiArrowZoomHandler);
+                multiArrowZoomHandler = null;
+            }
+            multiArrowData = [];
             // Remove route start/end Marker instances.
             multiRouteMarkers.forEach(function(m) { m.remove(); });
             multiRouteMarkers = [];

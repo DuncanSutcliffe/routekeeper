@@ -332,6 +332,10 @@ struct ContentView: View {
             }
         } else if let list {
             // List selected with no items — show all list items.
+            // Skip if a session-restore is in flight: pendingRestoreItemIds means
+            // we're about to receive a single-item selection that will overwrite
+            // anything we render here.
+            if !libraryViewModel.pendingRestoreItemIds.isEmpty { return }
             routeDistanceKm       = nil
             routeDurationSeconds  = nil
             routeElevationProfile = nil

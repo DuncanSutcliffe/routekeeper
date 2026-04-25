@@ -243,6 +243,25 @@
             return points;
         }
 
+        /// Returns the number of arrows to place on a route given its current
+        /// on-screen pixel length.
+        ///
+        /// Walks flatCoords, projects each coordinate to pixel space with
+        /// map.project(), accumulates the Euclidean pixel distance between
+        /// consecutive pairs, then divides by a 100 px target spacing.
+        /// Result is clamped to [2, 500].
+        function computeArrowCount(flatCoords) {
+            if (!flatCoords || flatCoords.length < 2) return 2;
+            var totalPx = 0;
+            for (var i = 0; i < flatCoords.length - 1; i++) {
+                var a = map.project(flatCoords[i]);
+                var b = map.project(flatCoords[i + 1]);
+                var dx = b.x - a.x, dy = b.y - a.y;
+                totalPx += Math.sqrt(dx * dx + dy * dy);
+            }
+            return Math.min(500, Math.max(2, Math.round(totalPx / 100)));
+        }
+
         /// Multiplies each RGB component of a CSS hex colour by factor (0–1) and
         /// returns the result as a '#rrggbb' string.  Components are clamped to 0–255.
         function darkenHex(hex, factor) {
@@ -557,8 +576,7 @@
                 }
             }
             routeArrowFlatCoords = arrowFlatCoords;
-            var arrowCount    = Math.min(500, Math.max(4, Math.round(Math.pow(2, map.getZoom() - 3))));
-            var arrowPts      = computeArrowPoints(arrowFlatCoords, arrowCount);
+            var arrowPts      = computeArrowPoints(arrowFlatCoords, computeArrowCount(arrowFlatCoords));
             var arrowFeatures = [];
             for (var api = 0; api < arrowPts.length; api++) {
                 arrowFeatures.push({
@@ -592,8 +610,7 @@
             });
             routeArrowZoomHandler = function() {
                 if (!routeArrowSourceId || !map.getSource(routeArrowSourceId)) return;
-                var count = Math.min(500, Math.max(4, Math.round(Math.pow(2, map.getZoom() - 3))));
-                var pts   = computeArrowPoints(routeArrowFlatCoords, count);
+                var pts   = computeArrowPoints(routeArrowFlatCoords, computeArrowCount(routeArrowFlatCoords));
                 var feats = [];
                 for (var i = 0; i < pts.length; i++) {
                     feats.push({
@@ -604,7 +621,7 @@
                 }
                 map.getSource(routeArrowSourceId).setData({ type: 'FeatureCollection', features: feats });
             };
-            map.on('zoomend', routeArrowZoomHandler);
+            map.on('zoom', routeArrowZoomHandler);
 
             // Start marker.
             const startMarker = new maplibregl.Marker({ draggable: true, color: lineColour })
@@ -747,7 +764,7 @@
             routeMarkers = [];
             routePointCoords = [];
             if (routeArrowZoomHandler) {
-                map.off('zoomend', routeArrowZoomHandler);
+                map.off('zoom', routeArrowZoomHandler);
                 routeArrowZoomHandler = null;
             }
             routeArrowFlatCoords = null;
@@ -1006,10 +1023,9 @@
             }
 
             // ── Per-route direction arrows ────────────────────────────────────────────
-            var initArrowCount = Math.min(500, Math.max(4, Math.round(Math.pow(2, map.getZoom() - 3))));
             for (var ai = 0; ai < arrowGroups.length; ai++) {
                 var ag      = arrowGroups[ai];
-                var agPts   = computeArrowPoints(ag.flatCoords, initArrowCount);
+                var agPts   = computeArrowPoints(ag.flatCoords, computeArrowCount(ag.flatCoords));
                 var agFeats = [];
                 for (var api = 0; api < agPts.length; api++) {
                     agFeats.push({
@@ -1044,11 +1060,10 @@
             });
             if (multiArrowData.length > 0) {
                 multiArrowZoomHandler = function() {
-                    var count = Math.min(500, Math.max(4, Math.round(Math.pow(2, map.getZoom() - 3))));
                     for (var i = 0; i < multiArrowData.length; i++) {
                         var mad = multiArrowData[i];
                         if (!map.getSource(mad.sourceId)) continue;
-                        var pts   = computeArrowPoints(mad.flatCoords, count);
+                        var pts   = computeArrowPoints(mad.flatCoords, computeArrowCount(mad.flatCoords));
                         var feats = [];
                         for (var pi = 0; pi < pts.length; pi++) {
                             feats.push({
@@ -1060,7 +1075,7 @@
                         map.getSource(mad.sourceId).setData({ type: 'FeatureCollection', features: feats });
                     }
                 };
-                map.on('zoomend', multiArrowZoomHandler);
+                map.on('zoom', multiArrowZoomHandler);
             }
 
             // ── Per-route start/end markers (native Marker, keyed by itemId) ─────────
@@ -1298,7 +1313,7 @@
         /// removed separately since they are not tracked in the per-item arrays.
         function clearMultipleItems() {
             if (multiArrowZoomHandler) {
-                map.off('zoomend', multiArrowZoomHandler);
+                map.off('zoom', multiArrowZoomHandler);
                 multiArrowZoomHandler = null;
             }
             multiArrowData = [];

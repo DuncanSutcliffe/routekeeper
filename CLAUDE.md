@@ -397,4 +397,34 @@ bounds-fitting calls), and as a Math.min() cap on any explicit zoom values in
 map.flyTo() or map.easeTo() calls triggered by item selection. Manual user zoom
 interactions are completely unaffected.
 
-**Next step: Increment 53 — TBD.**
+Increment 53 — Route recalculation refactor. The duplicated "fetch points → call
+Valhalla → apply snapped coordinates → persist geometry → rebuild RouteDisplay"
+pattern that appeared across five locations has been collapsed into two methods on
+MapViewModel. recalculateRoute(routeItemId:existingDisplay:points:) handles the
+full pipeline used after drag and undo operations: fetches (or accepts) the point
+list, calls Valhalla, applies snapped coordinates, persists via updateRoutePoints,
+re-fetches from the database, and returns a RouteDisplay. refreshRouteGeometryIfNeeded(routeItemId:)
+handles the lighter conditional path used by ContentView: checks
+needsRecalculation or geometry == nil, calls Valhalla, and saves via
+updateRouteGeometryAndStats only, returning a Bool indicating whether work was
+performed. The private buildRouteDisplay helper was moved from the Coordinator to
+MapViewModel. recalculateAndRedraw on the Coordinator was deleted; waypointDragged,
+insertShapingPoint, and the executeUndo insertedPoint and movedPoint route cases
+each now call recalculateRoute. handleSingleItemSelection and buildMultiItemsJson
+in ContentView each now call refreshRouteGeometryIfNeeded. RoutePropertiesSheet
+save() is unchanged (uses caller-supplied criteria, no RouteDisplay needed).
+
+Increment 54 — Route arrow density improvement. A new computeArrowCount(flatCoords)
+helper in MapLibreMap.html calculates arrow count from the route's on-screen pixel
+length rather than a fixed zoom-level formula. It walks the flat coordinate array,
+projects each consecutive pair to pixel space with map.project(), accumulates the
+Euclidean pixel distance, divides by a 100 px target spacing, and clamps the result
+to [2, 500]. All four call sites — the initial setup and zoom handler in both
+showRoute and showMultipleItems — now use computeArrowCount instead of the old
+Math.pow(2, zoom-3) formula. In showMultipleItems the shared pre-loop initArrowCount
+variable was removed; each route computes its own count independently. The zoom
+event was also changed from 'zoomend' to 'zoom' at all four registration and
+deregistration points so arrow density updates continuously during a gesture rather
+than snapping only when the gesture ends.
+
+**Next step: Increment 55 — TBD.**

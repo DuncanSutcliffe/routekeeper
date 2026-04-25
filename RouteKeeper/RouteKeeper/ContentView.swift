@@ -298,6 +298,10 @@ struct ContentView: View {
 
     // MARK: - Selection handling
 
+    // TODO: [REFACTOR] handleSelectionChange, handleSingleItemSelection, handleMultiItemDisplay,
+    // fetchItemsForList, and buildMultiItemsJson contain DB fetches, Valhalla calls, and
+    // JSON-building that belong in a ViewModel, not directly in ContentView.
+
     /// Updates the map in response to any change in the combined selection state.
     ///
     /// Item selection takes precedence over list selection:
@@ -468,40 +472,8 @@ struct ContentView: View {
         case .route:
             mapViewModel.clearWaypoint()
             mapViewModel.clearTrack()
-            var routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(itemId: itemId)
-            // Recalculate when flagged (e.g. waypoint moved) OR when geometry is
-            // absent (e.g. newly imported route with no cached Valhalla result).
-            if routeRecord?.needsRecalculation == true || routeRecord?.geometry == nil {
-                let points = (try? await DatabaseManager.shared.fetchRoutePoints(
-                    routeItemId: itemId
-                )) ?? []
-                if points.count >= 2,
-                   let record = routeRecord {
-                    let coords = points.map {
-                        CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
-                    }
-                    if let result = try? await RoutingService.shared.calculateRoute(
-                        through:        coords,
-                        avoidMotorways: record.avoidMotorways,
-                        avoidTolls:     record.avoidTolls,
-                        avoidUnpaved:   record.avoidUnpaved,
-                        avoidFerries:   record.avoidFerries,
-                        shortestRoute:  record.shortestRoute
-                    ) {
-                        try? await DatabaseManager.shared.updateRouteGeometryAndStats(
-                            itemId:           itemId,
-                            geometry:         result.geometry,
-                            distanceKm:       result.distanceKm,
-                            durationSeconds:  result.durationSeconds,
-                            elevationProfile: result.elevationProfile
-                        )
-                        // Re-fetch so the display uses the updated geometry and stats.
-                        routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(
-                            itemId: itemId
-                        )
-                    }
-                }
-            }
+            try? await mapViewModel.refreshRouteGeometryIfNeeded(routeItemId: itemId)
+            let routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(itemId: itemId)
             routeDistanceKm       = routeRecord?.distanceKm
             routeDurationSeconds  = routeRecord?.durationSeconds
             routeElevationProfile = routeRecord?.elevationProfile
@@ -655,39 +627,14 @@ struct ContentView: View {
                     ))
                 }
             case .route:
+                try? await mapViewModel.refreshRouteGeometryIfNeeded(routeItemId: itemId)
                 guard let routeRecord = try? await DatabaseManager.shared.fetchRouteRecord(
                     itemId: itemId
-                ) else { break }
-                // Fetch points once — used for both recalculation and via/shaping arrays.
+                ), let geometry = routeRecord.geometry else { break }
+                // Fetch points for the via/shaping waypoint marker arrays.
                 let allPoints = (try? await DatabaseManager.shared.fetchRoutePoints(
                     routeItemId: itemId
                 )) ?? []
-                // Recalculate when flagged or when geometry is absent (e.g. imported route).
-                var geometry = routeRecord.geometry
-                if (routeRecord.needsRecalculation || routeRecord.geometry == nil),
-                   allPoints.count >= 2 {
-                    let coords = allPoints.map {
-                        CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
-                    }
-                    if let result = try? await RoutingService.shared.calculateRoute(
-                        through:        coords,
-                        avoidMotorways: routeRecord.avoidMotorways,
-                        avoidTolls:     routeRecord.avoidTolls,
-                        avoidUnpaved:   routeRecord.avoidUnpaved,
-                        avoidFerries:   routeRecord.avoidFerries,
-                        shortestRoute:  routeRecord.shortestRoute
-                    ) {
-                        try? await DatabaseManager.shared.updateRouteGeometryAndStats(
-                            itemId:           itemId,
-                            geometry:         result.geometry,
-                            distanceKm:       result.distanceKm,
-                            durationSeconds:  result.durationSeconds,
-                            elevationProfile: result.elevationProfile
-                        )
-                        geometry = result.geometry
-                    }
-                }
-                guard let geometry else { break }
                 // Build via and shaping waypoint arrays, matching the single-item path.
                 let intermediates = allPoints.count > 2
                     ? Array(allPoints.dropFirst().dropLast())
@@ -758,6 +705,8 @@ struct ContentView: View {
     }
 }
 
+// TODO: [REFACTOR] lineStringMidpoint() duplicates trackMidpoint() in MapView.swift, which
+// in turn duplicates lineMidpoint() in MapLibreMap.html. Consolidate into one shared utility.
 /// Returns the geometric midpoint of a GeoJSON geometry, mirroring the
 /// `lineMidpoint()` helper in MapLibreMap.html.
 ///

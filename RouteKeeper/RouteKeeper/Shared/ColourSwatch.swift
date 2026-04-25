@@ -10,6 +10,9 @@ import SwiftUI
 
 // MARK: - Preset colour palettes
 
+// TODO: [REFACTOR] waypointPresetColours and routePresetColours are identical. Merge
+// into a single shared constant (e.g. itemPresetColours) or keep one and reference the other.
+
 /// Preset colours shown in waypoint creation and editing sheets.
 let waypointPresetColours: [String] = [
     "#E8453C", "#E8873C", "#E8D83C", "#4CAF50",

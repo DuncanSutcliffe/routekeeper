@@ -390,4 +390,11 @@ handleSelectionChange() when pendingRestoreItemIds is non-empty, preventing the
 list render from racing ahead of the restoration. List-only restores are unaffected
 since pendingRestoreItemIds is empty in that case.
 
-**Next step: Increment 52 — TBD.**
+Increment 52 — Auto-zoom cap. A constant AUTO_ZOOM_MAX = 14 is defined in
+MapLibreMap.html. This value is applied as the maxZoom option on every
+map.fitBounds() call (in showRoute, showMultipleItems, and any other programmatic
+bounds-fitting calls), and as a Math.min() cap on any explicit zoom values in
+map.flyTo() or map.easeTo() calls triggered by item selection. Manual user zoom
+interactions are completely unaffected.
+
+**Next step: Increment 53 — TBD.**

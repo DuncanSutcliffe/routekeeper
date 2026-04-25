@@ -55,6 +55,8 @@ actor RoutingService {
 
     static let shared = RoutingService()
 
+    // TODO: [REFACTOR] The costing model "motorcycle" and the endpoint URL are hardcoded
+    // in multiple places (here and in DatabaseManager). Extract as constants.
     private let endpoint = URL(string: "https://valhalla1.openstreetmap.de/route")!
     private let session = URLSession.shared
 
@@ -65,6 +67,9 @@ actor RoutingService {
 
     // MARK: - Public API
 
+    // TODO: [REFACTOR] calculateRoute(from:to:) is the old 2-point API; all current call
+    // sites use calculateRoute(through:). If it's truly unused, remove it. Its cache only
+    // applies to this path — calculateRoute(through:) has no caching at all.
     /// Requests a motorcycle route from `origin` to `destination`.
     ///
     /// - Returns: A compact GeoJSON FeatureCollection string containing a
@@ -80,6 +85,7 @@ actor RoutingService {
             return cached
         }
 
+        // TODO: [REFACTOR] Replace print() debug logging with os.log / Logger throughout.
         print("Routing: calling Valhalla API (\(origin.latitude),\(origin.longitude) → \(destination.latitude),\(destination.longitude))")
         let request = try buildRequest(from: origin, to: destination)
 

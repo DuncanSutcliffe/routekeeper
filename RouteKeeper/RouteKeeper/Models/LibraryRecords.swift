@@ -21,6 +21,8 @@ struct ListFolder: Codable, Identifiable, FetchableRecord, PersistableRecord {
 
     var id: Int64?
     var name: String
+    // TODO: [REFACTOR] parentFolderId is never set or read — folder nesting is not
+    // implemented. The column exists in the schema but is dead weight.
     var parentFolderId: Int64?
     var sortOrder: Int
     /// Populated by the database on insert; read back when fetched.
@@ -64,6 +66,8 @@ struct RouteList: Codable, Identifiable, Hashable, FetchableRecord, PersistableR
     var id: Int64?
     var name: String
     var folderId: Int64?
+    // TODO: [REFACTOR] isSmart and smartRule are never read or written in any UI or
+    // database path — dead abstraction for an unimplemented smart-lists feature.
     /// `true` for smart lists (auto-populated by `smartRule`); `false` for manual lists.
     var isSmart: Bool
     var smartRule: String?

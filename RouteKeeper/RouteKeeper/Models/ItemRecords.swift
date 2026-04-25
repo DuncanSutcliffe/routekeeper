@@ -86,6 +86,9 @@ struct Item: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord
 
 // MARK: - Route
 
+// TODO: [REFACTOR] Route.geojson is a dead field — all write paths use Route.geometry.
+// Route.routingProfile is always "motorcycle" and never changed; it could be removed or
+// replaced with an enum if multi-costing-model support is ever added.
 /// Route-specific data, linked 1-to-1 with an `Item` via `item_id`.
 ///
 /// Individual points are stored in `route_points` and linked by `route_item_id`.
@@ -185,6 +188,9 @@ struct RoutePoint: Codable, FetchableRecord, PersistableRecord {
 
 // MARK: - Track
 
+// TODO: [REFACTOR] Track.geojson, Track.distanceMetres, Track.durationSeconds, and
+// Track.recordedAt are defined in the model but never written by any current code path
+// (import only writes color and line_style). These are dead fields from an earlier design.
 /// Track-specific data, linked 1-to-1 with an `Item` via `item_id`.
 ///
 /// Individual recorded points are stored in `track_points`.

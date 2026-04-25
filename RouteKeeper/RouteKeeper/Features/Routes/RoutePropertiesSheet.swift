@@ -342,6 +342,8 @@ struct RoutePropertiesSheet: View {
         }
     }
 
+    // TODO: [REFACTOR] save() contains DB writes and a full Valhalla recalculation.
+    // This business logic belongs in a ViewModel (or LibraryViewModel), not in the View.
     private func save() {
         let trimmed = routeName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }

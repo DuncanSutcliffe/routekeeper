@@ -40,6 +40,9 @@ enum UndoRecord {
     case insertedPoint(routeItemId: Int64, sequenceNumber: Int)
 }
 
+// TODO: [REFACTOR] Notification.Name extensions are defined here in MapView.swift but
+// are app-level infrastructure used by LibrarySidebarView, ContentView, and RouteKeeperApp.
+// Move them to RouteKeeperApp.swift or a dedicated Notifications.swift file.
 extension Notification.Name {
     static let routeKeeperPerformUndo      = Notification.Name("routeKeeperPerformUndo")
     /// Posted after any library write operation so LibraryViewModel can reload.
@@ -169,6 +172,11 @@ struct TrackDisplay: Equatable {
     }
 }
 
+// TODO: [REFACTOR] MapViewModel, UndoRecord, WaypointDisplay, MapCoordinate, LabelData,
+// LabelCommand, ViaWaypoint, RouteDisplay, and TrackDisplay are all defined in MapView.swift.
+// MapViewModel in particular should live in its own file. The display structs belong in
+// Models/ or a dedicated MapModels.swift.
+
 // MARK: - MapViewModel
 
 /// Drives the map's displayed state.
@@ -292,6 +300,147 @@ final class MapViewModel {
     /// Defaults to `"streets-v4"`. `ContentView.task` overwrites this with the
     /// value loaded from `app_settings` before the map first appears.
     var currentMapStyle: String = "streets-v4"
+
+    // MARK: - Route recalculation
+
+    /// Full recalculation pipeline: fetches (or uses provided) route_points, calls Valhalla,
+    /// applies snapped coordinates to all point positions, persists the complete updated point
+    /// list via `updateRoutePoints`, re-fetches from the database, and returns an updated
+    /// `RouteDisplay`.
+    ///
+    /// Use this after drag and undo operations where road-snapped positions must be written
+    /// back to `route_points`. For geometry-only refreshes (e.g. a stale import), use
+    /// ``refreshRouteGeometryIfNeeded(routeItemId:)`` instead.
+    ///
+    /// - Parameters:
+    ///   - routeItemId: The route to recalculate.
+    ///   - existingDisplay: The current `RouteDisplay`; its `colorHex` and `name` are
+    ///     carried into the returned display without an additional database lookup.
+    ///   - points: Pre-modified point list. Pass a value when the caller has already spliced
+    ///     in or removed a point in memory before calling Valhalla. When `nil` the current
+    ///     `route_points` rows are fetched from the database.
+    /// - Returns: An updated `RouteDisplay` ready to pass to ``showRoute(_:)``.
+    /// - Throws: `RoutingError` on Valhalla failure; `DatabaseManagerError` when the route
+    ///   record cannot be retrieved.
+    func recalculateRoute(
+        routeItemId: Int64,
+        existingDisplay: RouteDisplay,
+        points: [RoutePoint]? = nil
+    ) async throws -> RouteDisplay {
+        var allPoints: [RoutePoint]
+        if let points {
+            allPoints = points
+        } else {
+            allPoints = try await DatabaseManager.shared.fetchRoutePoints(
+                routeItemId: routeItemId
+            )
+        }
+        guard let route = try await DatabaseManager.shared.fetchRouteRecord(
+            itemId: routeItemId
+        ) else {
+            throw RoutingError.noLegsInResponse
+        }
+        let coords = allPoints.map {
+            CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+        }
+        let result = try await RoutingService.shared.calculateRoute(
+            through:        coords,
+            avoidMotorways: route.avoidMotorways,
+            avoidTolls:     route.avoidTolls,
+            avoidUnpaved:   route.avoidUnpaved,
+            avoidFerries:   route.avoidFerries,
+            shortestRoute:  route.shortestRoute
+        )
+        let snapped = result.snappedLocations
+        for i in allPoints.indices where i < snapped.count {
+            allPoints[i].latitude  = snapped[i].latitude
+            allPoints[i].longitude = snapped[i].longitude
+        }
+        try await DatabaseManager.shared.updateRoutePoints(
+            allPoints,
+            routeItemId:      routeItemId,
+            geometry:         result.geometry,
+            distanceKm:       result.distanceKm,
+            durationSeconds:  result.durationSeconds,
+            elevationProfile: result.elevationProfile
+        )
+        let savedPoints = try await DatabaseManager.shared.fetchRoutePoints(
+            routeItemId: routeItemId
+        )
+        return buildRouteDisplay(from: savedPoints, result: result, existing: existingDisplay)
+    }
+
+    /// Recalculates route geometry via Valhalla when the stored geometry is stale or absent,
+    /// saving only geometry and stats without touching point positions.
+    ///
+    /// The condition checked internally is `needsRecalculation == true || geometry == nil`.
+    ///
+    /// - Parameter routeItemId: The route to inspect and optionally recalculate.
+    /// - Returns: `true` if Valhalla was called and the database was updated;
+    ///   `false` if the stored geometry was already valid and no work was performed.
+    /// - Throws: `RoutingError` or `DatabaseManagerError` if recalculation fails.
+    @discardableResult
+    func refreshRouteGeometryIfNeeded(routeItemId: Int64) async throws -> Bool {
+        guard let record = try await DatabaseManager.shared.fetchRouteRecord(
+            itemId: routeItemId
+        ), record.needsRecalculation || record.geometry == nil else {
+            return false
+        }
+        let points = (try? await DatabaseManager.shared.fetchRoutePoints(
+            routeItemId: routeItemId
+        )) ?? []
+        guard points.count >= 2 else { return false }
+        let coords = points.map {
+            CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+        }
+        let result = try await RoutingService.shared.calculateRoute(
+            through:        coords,
+            avoidMotorways: record.avoidMotorways,
+            avoidTolls:     record.avoidTolls,
+            avoidUnpaved:   record.avoidUnpaved,
+            avoidFerries:   record.avoidFerries,
+            shortestRoute:  record.shortestRoute
+        )
+        try await DatabaseManager.shared.updateRouteGeometryAndStats(
+            itemId:           routeItemId,
+            geometry:         result.geometry,
+            distanceKm:       result.distanceKm,
+            durationSeconds:  result.durationSeconds,
+            elevationProfile: result.elevationProfile
+        )
+        return true
+    }
+
+    /// Builds a `RouteDisplay` from a saved point list and a Valhalla result,
+    /// carrying `colorHex` and `name` from an existing display.
+    private func buildRouteDisplay(
+        from savedPoints: [RoutePoint],
+        result: RouteResult,
+        existing display: RouteDisplay
+    ) -> RouteDisplay {
+        let intermediates = savedPoints.count > 2
+            ? Array(savedPoints.dropFirst().dropLast()) : []
+        var announcingCount = 0
+        let viaWaypoints = intermediates.map { pt -> ViaWaypoint in
+            if pt.announcesArrival { announcingCount += 1 }
+            return ViaWaypoint(
+                latitude:         pt.latitude,
+                longitude:        pt.longitude,
+                index:            announcingCount,
+                announcesArrival: pt.announcesArrival,
+                sequenceNumber:   pt.sequenceNumber
+            )
+        }
+        return RouteDisplay(
+            itemId:       display.itemId,
+            geojson:      result.geometry,
+            viaWaypoints: viaWaypoints,
+            colorHex:     display.colorHex,
+            name:         display.name,
+            startSeq:     savedPoints.first?.sequenceNumber ?? display.startSeq,
+            endSeq:       savedPoints.last?.sequenceNumber  ?? display.endSeq
+        )
+    }
 }
 
 // MARK: - MapView
@@ -860,61 +1009,35 @@ struct MapView: NSViewRepresentable {
                             }
                         } else {
                             // Route point: restore previous position, recalculate, redraw.
-                            guard let display = lastRouteDisplay else { return }
+                            guard let display = lastRouteDisplay,
+                                  let vm = mapViewModel else { return }
                             try await DatabaseManager.shared.updateRoutePointPosition(
                                 routeItemId:    routeItemId,
                                 sequenceNumber: sequenceNumber,
                                 latitude:       previousLat,
                                 longitude:      previousLng
                             )
-                            try await recalculateAndRedraw(
-                                routeItemId: routeItemId,
-                                display:     display,
-                                in:          wv
+                            let newDisplay = try await vm.recalculateRoute(
+                                routeItemId:     routeItemId,
+                                existingDisplay: display
                             )
+                            try await wv.evaluateJavaScript("suppressRecentre = true;")
+                            applyRouteDisplay(newDisplay, in: wv)
                         }
 
                     case .insertedPoint(let routeItemId, let sequenceNumber):
-                        guard let display = lastRouteDisplay else { return }
+                        guard let display = lastRouteDisplay,
+                              let vm = mapViewModel else { return }
                         var allPoints = try await DatabaseManager.shared.fetchRoutePoints(
                             routeItemId: routeItemId
                         )
                         allPoints.removeAll { $0.sequenceNumber == sequenceNumber }
                         guard allPoints.count >= 2 else { return }
-                        guard let route = try await DatabaseManager.shared.fetchRouteRecord(
-                            itemId: routeItemId
-                        ) else { return }
-                        let coords = allPoints.map {
-                            CLLocationCoordinate2D(latitude: $0.latitude,
-                                                   longitude: $0.longitude)
-                        }
-                        let result = try await RoutingService.shared.calculateRoute(
-                            through:        coords,
-                            avoidMotorways: route.avoidMotorways,
-                            avoidTolls:     route.avoidTolls,
-                            avoidUnpaved:   route.avoidUnpaved,
-                            avoidFerries:   route.avoidFerries,
-                            shortestRoute:  route.shortestRoute
+                        let newDisplay = try await vm.recalculateRoute(
+                            routeItemId:     routeItemId,
+                            existingDisplay: display,
+                            points:          allPoints
                         )
-                        let snapped = result.snappedLocations
-                        for i in allPoints.indices where i < snapped.count {
-                            allPoints[i].latitude  = snapped[i].latitude
-                            allPoints[i].longitude = snapped[i].longitude
-                        }
-                        try await DatabaseManager.shared.updateRoutePoints(
-                            allPoints,
-                            routeItemId:      routeItemId,
-                            geometry:         result.geometry,
-                            distanceKm:       result.distanceKm,
-                            durationSeconds:  result.durationSeconds,
-                            elevationProfile: result.elevationProfile
-                        )
-                        let savedPoints = try await DatabaseManager.shared.fetchRoutePoints(
-                            routeItemId: routeItemId
-                        )
-                        let newDisplay = buildRouteDisplay(from: savedPoints,
-                                                           result: result,
-                                                           existing: display)
                         try await wv.evaluateJavaScript("suppressRecentre = true;")
                         applyRouteDisplay(newDisplay, in: wv)
                     }
@@ -922,83 +1045,6 @@ struct MapView: NSViewRepresentable {
                     print("executeUndo failed: \(error)")
                 }
             }
-        }
-
-        /// Recalculates a route via Valhalla using its current route_points, applies
-        /// snapped coordinates, persists the updated point list, and redraws the map.
-        private func recalculateAndRedraw(
-            routeItemId: Int64,
-            display: RouteDisplay,
-            in wv: WKWebView
-        ) async throws {
-            var allPoints = try await DatabaseManager.shared.fetchRoutePoints(
-                routeItemId: routeItemId
-            )
-            guard let route = try await DatabaseManager.shared.fetchRouteRecord(
-                itemId: routeItemId
-            ) else { return }
-            let coords = allPoints.map {
-                CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
-            }
-            let result = try await RoutingService.shared.calculateRoute(
-                through:        coords,
-                avoidMotorways: route.avoidMotorways,
-                avoidTolls:     route.avoidTolls,
-                avoidUnpaved:   route.avoidUnpaved,
-                avoidFerries:   route.avoidFerries,
-                shortestRoute:  route.shortestRoute
-            )
-            let snapped = result.snappedLocations
-            for i in allPoints.indices where i < snapped.count {
-                allPoints[i].latitude  = snapped[i].latitude
-                allPoints[i].longitude = snapped[i].longitude
-            }
-            try await DatabaseManager.shared.updateRoutePoints(
-                allPoints,
-                routeItemId:      routeItemId,
-                geometry:         result.geometry,
-                distanceKm:       result.distanceKm,
-                durationSeconds:  result.durationSeconds,
-                elevationProfile: result.elevationProfile
-            )
-            let savedPoints = try await DatabaseManager.shared.fetchRoutePoints(
-                routeItemId: routeItemId
-            )
-            let newDisplay = buildRouteDisplay(from: savedPoints, result: result,
-                                               existing: display)
-            try await wv.evaluateJavaScript("suppressRecentre = true;")
-            applyRouteDisplay(newDisplay, in: wv)
-        }
-
-        /// Builds a RouteDisplay from a freshly-fetched ordered point list and a
-        /// Valhalla result, preserving presentation metadata from an existing display.
-        private func buildRouteDisplay(
-            from savedPoints: [RoutePoint],
-            result: RouteResult,
-            existing display: RouteDisplay
-        ) -> RouteDisplay {
-            let intermediates = savedPoints.count > 2
-                ? Array(savedPoints.dropFirst().dropLast()) : []
-            var announcingCount = 0
-            let viaWaypoints = intermediates.map { pt -> ViaWaypoint in
-                if pt.announcesArrival { announcingCount += 1 }
-                return ViaWaypoint(
-                    latitude:         pt.latitude,
-                    longitude:        pt.longitude,
-                    index:            announcingCount,
-                    announcesArrival: pt.announcesArrival,
-                    sequenceNumber:   pt.sequenceNumber
-                )
-            }
-            return RouteDisplay(
-                itemId:       display.itemId,
-                geojson:      result.geometry,
-                viaWaypoints: viaWaypoints,
-                colorHex:     display.colorHex,
-                name:         display.name,
-                startSeq:     savedPoints.first?.sequenceNumber ?? display.startSeq,
-                endSeq:       savedPoints.last?.sequenceNumber  ?? display.endSeq
-            )
         }
 
         // MARK: WKScriptMessageHandler
@@ -1010,6 +1056,7 @@ struct MapView: NSViewRepresentable {
             guard message.name == "routekeeper",
                   let body = message.body as? [String: Any] else { return }
 
+            // TODO: [REFACTOR] Remove or gate this debug print before release.
             print("JS → Swift: \(body)")
 
             guard let type = body["type"] as? String else { return }
@@ -1020,6 +1067,9 @@ struct MapView: NSViewRepresentable {
                 return
             }
 
+            // TODO: [REFACTOR] The Coordinator directly calls DatabaseManager and shows
+            // NSAlert — UI infrastructure reaching past the ViewModel into the data/service
+            // layer. These operations should be delegated to the ViewModel.
             if type == "waypointMoved" {
                 guard let itemIdInt   = body["itemId"]      as? Int,
                       let latitude    = body["latitude"]    as? Double,
@@ -1090,7 +1140,7 @@ struct MapView: NSViewRepresentable {
                 let routeItemId = Int64(routeItemIdInt)
                 guard let display = lastRouteDisplay else { return }
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard let self, let vm = self.mapViewModel else { return }
                     do {
                         // 1. Persist the dropped position.
                         try await DatabaseManager.shared.updateRoutePointPosition(
@@ -1099,67 +1149,12 @@ struct MapView: NSViewRepresentable {
                             latitude:       latitude,
                             longitude:      longitude
                         )
-                        // 2. Reload all points so Valhalla sees the updated position.
-                        var allPoints = try await DatabaseManager.shared.fetchRoutePoints(
-                            routeItemId: routeItemId
+                        // 2. Recalculate, snap, persist, and get an updated RouteDisplay.
+                        let newDisplay = try await vm.recalculateRoute(
+                            routeItemId:     routeItemId,
+                            existingDisplay: display
                         )
-                        // 3. Fetch stored routing criteria from the route record.
-                        guard let route = try await DatabaseManager.shared.fetchRouteRecord(
-                            itemId: routeItemId
-                        ) else { return }
-                        // 4. Recalculate via Valhalla using the same costing options.
-                        let coords = allPoints.map {
-                            CLLocationCoordinate2D(latitude: $0.latitude,
-                                                   longitude: $0.longitude)
-                        }
-                        let result = try await RoutingService.shared.calculateRoute(
-                            through:        coords,
-                            avoidMotorways: route.avoidMotorways,
-                            avoidTolls:     route.avoidTolls,
-                            avoidUnpaved:   route.avoidUnpaved,
-                            avoidFerries:   route.avoidFerries,
-                            shortestRoute:  route.shortestRoute
-                        )
-                        // 5. Apply snapped coordinates from the Valhalla response,
-                        //    then save the updated point list and new geometry.
-                        let snapped = result.snappedLocations
-                        for i in allPoints.indices where i < snapped.count {
-                            allPoints[i].latitude  = snapped[i].latitude
-                            allPoints[i].longitude = snapped[i].longitude
-                        }
-                        try await DatabaseManager.shared.updateRoutePoints(
-                            allPoints,
-                            routeItemId:      routeItemId,
-                            geometry:         result.geometry,
-                            distanceKm:       result.distanceKm,
-                            durationSeconds:  result.durationSeconds,
-                            elevationProfile: result.elevationProfile
-                        )
-                        // 6. Rebuild RouteDisplay with updated positions and redraw.
-                        //    suppressRecentre prevents the viewport jumping to fitBounds.
-                        let intermediates = allPoints.count > 2
-                            ? Array(allPoints.dropFirst().dropLast()) : []
-                        var announcingCount = 0
-                        let viaWaypoints = intermediates.map { pt -> ViaWaypoint in
-                            if pt.announcesArrival { announcingCount += 1 }
-                            return ViaWaypoint(
-                                latitude:         pt.latitude,
-                                longitude:        pt.longitude,
-                                index:            announcingCount,
-                                announcesArrival: pt.announcesArrival,
-                                sequenceNumber:   pt.sequenceNumber
-                            )
-                        }
-                        let newDisplay = RouteDisplay(
-                            itemId:       display.itemId,
-                            geojson:      result.geometry,
-                            viaWaypoints: viaWaypoints,
-                            colorHex:     display.colorHex,
-                            name:         display.name,
-                            startSeq:     allPoints.first?.sequenceNumber ?? display.startSeq,
-                            endSeq:       allPoints.last?.sequenceNumber  ?? display.endSeq
-                        )
-                        mapViewModel?.pushUndo(.movedPoint(
+                        vm.pushUndo(.movedPoint(
                             routeItemId:    routeItemId,
                             sequenceNumber: sequenceNumber,
                             previousLat:    previousLat,
@@ -1182,13 +1177,12 @@ struct MapView: NSViewRepresentable {
                       let display     = lastRouteDisplay else { return }
                 let routeItemId = display.itemId
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard let self, let vm = self.mapViewModel else { return }
                     do {
-                        // 1. Fetch the current ordered point list.
+                        // 1. Fetch the current ordered point list and splice the new point in.
                         var points = try await DatabaseManager.shared.fetchRoutePoints(
                             routeItemId: routeItemId
                         )
-                        // 2. Build the new shaping point and splice it in.
                         let newPoint = RoutePoint(
                             id:               nil,
                             routeItemId:      routeItemId,
@@ -1202,71 +1196,17 @@ struct MapView: NSViewRepresentable {
                         )
                         let safeIndex = max(1, min(insertIndex, points.count - 1))
                         points.insert(newPoint, at: safeIndex)
-                        // 3. Fetch stored routing criteria.
-                        guard let route = try await DatabaseManager.shared.fetchRouteRecord(
-                            itemId: routeItemId
-                        ) else { return }
-                        // 4. Recalculate via Valhalla using the updated point list.
-                        let coords = points.map {
-                            CLLocationCoordinate2D(latitude: $0.latitude,
-                                                   longitude: $0.longitude)
-                        }
-                        let result = try await RoutingService.shared.calculateRoute(
-                            through:        coords,
-                            avoidMotorways: route.avoidMotorways,
-                            avoidTolls:     route.avoidTolls,
-                            avoidUnpaved:   route.avoidUnpaved,
-                            avoidFerries:   route.avoidFerries,
-                            shortestRoute:  route.shortestRoute
-                        )
-                        // 5. Apply snapped coordinates from the Valhalla response,
-                        //    then persist the updated point list and new geometry.
-                        let snapped = result.snappedLocations
-                        for i in points.indices where i < snapped.count {
-                            points[i].latitude  = snapped[i].latitude
-                            points[i].longitude = snapped[i].longitude
-                        }
-                        try await DatabaseManager.shared.updateRoutePoints(
-                            points,
+                        // 2. Recalculate with the modified list. updateRoutePoints assigns
+                        //    sequence_number == array index, so safeIndex is stable for undo.
+                        let newDisplay = try await vm.recalculateRoute(
                             routeItemId:     routeItemId,
-                            geometry:        result.geometry,
-                            distanceKm:      result.distanceKm,
-                            durationSeconds: result.durationSeconds,
-                            elevationProfile: result.elevationProfile
+                            existingDisplay: display,
+                            points:          points
                         )
-                        // 6. Reload the saved points to pick up the fresh sequence numbers.
-                        let savedPoints = try await DatabaseManager.shared.fetchRoutePoints(
-                            routeItemId: routeItemId
-                        )
-                        // 7. Rebuild RouteDisplay and redraw without moving the viewport.
-                        let intermediates = savedPoints.count > 2
-                            ? Array(savedPoints.dropFirst().dropLast()) : []
-                        var announcingCount = 0
-                        let viaWaypoints = intermediates.map { pt -> ViaWaypoint in
-                            if pt.announcesArrival { announcingCount += 1 }
-                            return ViaWaypoint(
-                                latitude:         pt.latitude,
-                                longitude:        pt.longitude,
-                                index:            announcingCount,
-                                announcesArrival: pt.announcesArrival,
-                                sequenceNumber:   pt.sequenceNumber
-                            )
-                        }
-                        let newDisplay = RouteDisplay(
-                            itemId:   display.itemId,
-                            geojson:  result.geometry,
-                            viaWaypoints: viaWaypoints,
-                            colorHex: display.colorHex,
-                            name:     display.name,
-                            startSeq: savedPoints.first?.sequenceNumber ?? display.startSeq,
-                            endSeq:   savedPoints.last?.sequenceNumber  ?? display.endSeq
-                        )
-                        if safeIndex < savedPoints.count {
-                            mapViewModel?.pushUndo(.insertedPoint(
-                                routeItemId:    routeItemId,
-                                sequenceNumber: savedPoints[safeIndex].sequenceNumber
-                            ))
-                        }
+                        vm.pushUndo(.insertedPoint(
+                            routeItemId:    routeItemId,
+                            sequenceNumber: safeIndex
+                        ))
                         guard let wv = self.webView else { return }
                         try await wv.evaluateJavaScript("suppressRecentre = true;")
                         self.applyRouteDisplay(newDisplay, in: wv)
@@ -1365,6 +1305,9 @@ struct MapView: NSViewRepresentable {
     .frame(width: 800, height: 600)
 }
 
+// TODO: [REFACTOR] trackMidpoint() here duplicates lineStringMidpoint() in ContentView.swift
+// and lineMidpoint() in MapLibreMap.html. One shared utility should serve all three.
+
 // MARK: - Track midpoint
 
 /// Returns the coordinate at 50% of the cumulative Euclidean length of a track point array.
@@ -1391,6 +1334,11 @@ private func trackMidpoint(_ pts: [(lat: Double, lon: Double)]) -> (lat: Double,
     }
     return pts.last!
 }
+
+// TODO: [REFACTOR] sfSymbolBase64(), categoryIconBase64(), and categoryIconBase64Compact()
+// are three overlapping implementations of the same SF Symbol → PNG → base64 concept.
+// sfSymbolBase64() appears unused in production paths. Consolidate into one parameterised
+// function and move it to Shared/ or a dedicated ImageRendering.swift utility file.
 
 // MARK: - SF Symbol → base64 PNG
 

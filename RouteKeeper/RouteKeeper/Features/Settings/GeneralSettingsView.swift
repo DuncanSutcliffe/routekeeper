@@ -7,6 +7,9 @@
 
 import SwiftUI
 
+// TODO: [REFACTOR] GeneralSettingsView accesses PreferencesManager.shared directly
+// rather than via @Environment. Settings views should receive the manager as an
+// @Environment dependency for consistency with APIKeysSettingsView's pattern.
 struct GeneralSettingsView: View {
     var body: some View {
         Form {

@@ -20,6 +20,9 @@ enum DatabaseManagerError: Error {
     case insertFailed(String)
 }
 
+// TODO: [REFACTOR] WaypointSummary and WaypointListSection are presentation/model types
+// that belong in Models/, not in DatabaseManager.swift.
+
 // MARK: - WaypointSummary
 
 /// Lightweight projection used by `WaypointPickerSheet` to list available
@@ -1252,6 +1255,10 @@ actor DatabaseManager {
 
     // MARK: - App Settings
 
+    // TODO: [REFACTOR] app_settings key strings ("map_style", "units", "defaultExportFormat",
+    // "selected_list_id", "selected_item_ids") are scattered as raw literals. Define them as
+    // constants so typos produce compiler errors.
+
     /// Returns the value stored for `key` in `app_settings`, or `nil` if no row exists.
     func fetchSetting(key: String) async throws -> String? {
         let q = try requireQueue()
@@ -1335,6 +1342,9 @@ actor DatabaseManager {
     ///
     /// - Returns: A tuple of (routeCount, waypointCount, listName) for the
     ///   confirmation message shown to the user.
+    // TODO: [REFACTOR] The doc comment above is a dangling stub for importGPXResult
+    // (the actual implementation is below at the second "MARK: - GPX Import"). Clean up
+    // the duplicate MARK and orphaned doc comment.
     // MARK: - Track operations
 
     /// Returns the `Track` record for the given item id, or `nil` if none exists.
@@ -1780,6 +1790,12 @@ actor DatabaseManager {
     /// Called by the single "v1" migration on every new database. Contains all
     /// tables including `routing_profiles` and the routing-option columns on
     /// `routes` added for Increment 19.
+    // TODO: [REFACTOR] Several schema columns are dead: items.colour (never written),
+    // items.description (never written or displayed), routes.geojson (superseded by
+    // routes.geometry), tracks.geojson / distance_metres / duration_seconds / recorded_at
+    // (never written). Consider a cleanup migration.
+    // TODO: [REFACTOR] lists.is_smart / smart_rule and list_folders.parent_folder_id
+    // are defined in the schema but never used — dead abstraction for unimplemented features.
     private static func createCompleteSchema(_ db: Database) throws {
         try db.execute(sql: """
             CREATE TABLE items (

@@ -194,6 +194,8 @@ struct DoubleClickHandler: NSViewRepresentable {
 
 // MARK: - Color from hex string
 
+// TODO: [REFACTOR] Color(itemHex:) here is a duplicate of Color(hex:) in ColourSwatch.swift
+// — identical algorithm, different initialiser label. Remove one and use the other everywhere.
 extension Color {
     /// Initialises a `Color` from a CSS hex string such as `"#E8453C"`.
     init(itemHex hex: String) {
@@ -653,6 +655,8 @@ struct LibrarySidebarView: View {
         guard selectedItems.contains(where: { $0.id == itemId }) else { return }
         let snapshot = selectedItems
         selectedItems = []
+        // TODO: [REFACTOR] Task.sleep is a fragile workaround for a selection-state race.
+        // Replace with a proper observable signal or a ViewModel-driven refresh trigger.
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 50_000_000)
             selectedItems = snapshot

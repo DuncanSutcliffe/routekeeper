@@ -141,6 +141,29 @@ struct RouteWaypointSheet: View {
         }
     }
 
+    // MARK: - Set as start point
+
+    /// Rotates the route so `sequenceNumber` becomes the new first point,
+    /// then reloads the list and triggers the standard Valhalla replanning flow.
+    private func setAsStartPoint(sequenceNumber: Int) {
+        Task {
+            isSaving = true
+            do {
+                try await DatabaseManager.shared.rotateRoutePoints(
+                    routeItemId: routeItemId,
+                    newStartSequenceNumber: sequenceNumber
+                )
+                points = try await DatabaseManager.shared.fetchRoutePoints(
+                    routeItemId: routeItemId
+                )
+                save()
+            } catch {
+                showSaveError = true
+                isSaving = false
+            }
+        }
+    }
+
     // MARK: - Subviews
 
     @ViewBuilder
@@ -169,6 +192,18 @@ struct RouteWaypointSheet: View {
 
             Spacer()
 
+            // Set as start point — omitted on the first row (already the start).
+            if index > 0 {
+                Button {
+                    setAsStartPoint(sequenceNumber: point.sequenceNumber)
+                } label: {
+                    Image(systemName: "flag.fill")
+                        .foregroundStyle(.green)
+                }
+                .buttonStyle(.borderless)
+                .help("Set as start point")
+            }
+
             // Announce toggle — intermediates only (not Start or End).
             if index > 0 && index < points.count - 1 {
                 Button {
@@ -194,6 +229,12 @@ struct RouteWaypointSheet: View {
                     .foregroundStyle(.red)
             }
             .buttonStyle(.borderless)
+        }
+        .contextMenu {
+            Button("Set as start point") {
+                setAsStartPoint(sequenceNumber: point.sequenceNumber)
+            }
+            .disabled(point.sequenceNumber == 0)
         }
     }
 

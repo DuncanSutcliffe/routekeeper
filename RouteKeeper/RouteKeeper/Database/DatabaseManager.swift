@@ -701,6 +701,62 @@ actor DatabaseManager {
         }
     }
 
+    /// Rotates the `route_points` for `routeItemId` so that the point currently
+    /// at `newStartSequenceNumber` becomes the new first point (index 0).
+    ///
+    /// The rotation reorders the rows in place — no rows are inserted or deleted.
+    /// The new sequence is: `points[newStart...] + points[0..<newStart]`.
+    ///
+    /// `announces_arrival` is recalculated for the rotated order: `1` for the
+    /// new first and last rows, `0` for all intermediate rows.
+    ///
+    /// To avoid `UNIQUE(route_item_id, sequence_number)` constraint violations
+    /// during the update, all sequence numbers are temporarily shifted up by the
+    /// row count before the final values are written.
+    func rotateRoutePoints(routeItemId: Int64, newStartSequenceNumber: Int) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            let allPoints = try RoutePoint.fetchAll(
+                db,
+                sql: "SELECT * FROM route_points " +
+                     "WHERE route_item_id = ? ORDER BY sequence_number ASC",
+                arguments: [routeItemId]
+            )
+            guard !allPoints.isEmpty else { return }
+            guard let newStartIndex = allPoints.firstIndex(where: {
+                $0.sequenceNumber == newStartSequenceNumber
+            }) else {
+                throw DatabaseManagerError.insertFailed(
+                    "No route_point with sequence_number \(newStartSequenceNumber) " +
+                    "for route \(routeItemId)"
+                )
+            }
+
+            // Shift all sequence numbers out of the 0..<count range to avoid
+            // UNIQUE constraint conflicts while the final values are being written.
+            try db.execute(
+                sql: "UPDATE route_points " +
+                     "SET sequence_number = sequence_number + ? " +
+                     "WHERE route_item_id = ?",
+                arguments: [allPoints.count, routeItemId]
+            )
+
+            // Assign final sequence numbers and recalculated announces_arrival.
+            let rotated = Array(allPoints[newStartIndex...]) + Array(allPoints[0..<newStartIndex])
+            let lastIndex = rotated.count - 1
+            for (newSeq, point) in rotated.enumerated() {
+                guard let rowId = point.id else { continue }
+                let announces = (newSeq == 0 || newSeq == lastIndex) ? 1 : 0
+                try db.execute(
+                    sql: "UPDATE route_points " +
+                         "SET sequence_number = ?, announces_arrival = ? " +
+                         "WHERE id = ?",
+                    arguments: [newSeq, announces, rowId]
+                )
+            }
+        }
+    }
+
     /// Moves a single route point to new coordinates.
     ///
     /// Matches the row by both `route_item_id` and `sequence_number` so exactly

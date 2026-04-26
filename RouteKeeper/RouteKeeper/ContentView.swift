@@ -17,12 +17,16 @@ private struct MultiViaWaypoint: Encodable {
     let lng: Double
     /// 1-based display index shown inside the circle marker.
     let index: Int
+    /// Display name from `route_points.name`, used in the map hover popup.
+    let name: String?
 }
 
 /// A single shaping waypoint encoded into the multi-item JSON payload.
 private struct MultiShapingWaypoint: Encodable {
     let lat: Double
     let lng: Double
+    /// Display name from `route_points.name`, used in the map hover popup.
+    let name: String?
 }
 
 // MARK: - MultiItemEntry
@@ -64,12 +68,16 @@ private struct MultiItemEntry: Encodable {
     /// Line-style key for track entries: `"dotted"`, `"short_dash"`, `"long_dash"`, or `"solid"`.
     /// `nil` for non-track entries.
     var lineStyle: String?
+    /// Display name of the route's start point from `route_points.name`. `nil` for non-route entries.
+    var startName: String?
+    /// Display name of the route's end point from `route_points.name`. `nil` for non-route entries.
+    var endName: String?
 
     // Custom encoding so nil fields are omitted, keeping the JSON compact.
     enum CodingKeys: String, CodingKey {
         case type, lat, lng, color, geojson, itemId, name
         case viaWaypoints, shapingWaypoints, iconImageName, routeIconBase64, labelIconBase64
-        case lineStyle
+        case lineStyle, startName, endName
     }
 
     func encode(to encoder: Encoder) throws {
@@ -87,6 +95,8 @@ private struct MultiItemEntry: Encodable {
         try c.encodeIfPresent(routeIconBase64,  forKey: .routeIconBase64)
         try c.encodeIfPresent(labelIconBase64,  forKey: .labelIconBase64)
         try c.encodeIfPresent(lineStyle,        forKey: .lineStyle)
+        try c.encodeIfPresent(startName,        forKey: .startName)
+        try c.encodeIfPresent(endName,          forKey: .endName)
     }
 }
 
@@ -495,7 +505,8 @@ struct ContentView: View {
                         longitude: pt.longitude,
                         index: announcingCount,
                         announcesArrival: pt.announcesArrival,
-                        sequenceNumber: pt.sequenceNumber
+                        sequenceNumber: pt.sequenceNumber,
+                        name: pt.name
                     )
                 }
                 mapViewModel.showRoute(RouteDisplay(
@@ -505,7 +516,9 @@ struct ContentView: View {
                     colorHex: routeRecord?.colorHex ?? "#1A73E8",
                     name: item.name,
                     startSeq: allPoints.first?.sequenceNumber ?? 0,
-                    endSeq: allPoints.last?.sequenceNumber ?? 0
+                    endSeq: allPoints.last?.sequenceNumber ?? 0,
+                    startName: allPoints.first?.name,
+                    endName: allPoints.last?.name
                 ))
             } else {
                 mapViewModel.clearRoute()
@@ -646,11 +659,12 @@ struct ContentView: View {
                     if pt.announcesArrival {
                         announcingCount += 1
                         viaWps.append(MultiViaWaypoint(
-                            lat: pt.latitude, lng: pt.longitude, index: announcingCount
+                            lat: pt.latitude, lng: pt.longitude, index: announcingCount,
+                            name: pt.name
                         ))
                     } else {
                         shapingWps.append(MultiShapingWaypoint(
-                            lat: pt.latitude, lng: pt.longitude
+                            lat: pt.latitude, lng: pt.longitude, name: pt.name
                         ))
                     }
                 }
@@ -661,7 +675,9 @@ struct ContentView: View {
                     itemId: itemId, name: item.name,
                     viaWaypoints:     viaWps.isEmpty     ? nil : viaWps,
                     shapingWaypoints: shapingWps.isEmpty ? nil : shapingWps,
-                    routeIconBase64:  routeIconBase64
+                    routeIconBase64:  routeIconBase64,
+                    startName:        allPoints.first?.name,
+                    endName:          allPoints.last?.name
                 ))
                 if let mid = lineStringMidpoint(geometry) {
                     routeLabels.append(LabelData(

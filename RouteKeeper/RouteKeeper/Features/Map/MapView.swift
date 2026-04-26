@@ -130,6 +130,8 @@ struct ViaWaypoint: Equatable {
     /// Sent back to Swift in the `waypointDragged` bridge message so the
     /// correct DB row can be identified after a drag.
     let sequenceNumber: Int
+    /// Display name from `route_points.name`, used in the map hover popup.
+    let name: String?
 }
 
 // MARK: - RouteDisplay
@@ -149,6 +151,10 @@ struct RouteDisplay: Equatable {
     let startSeq: Int
     /// `sequence_number` of the end route_point (the last row in DB order).
     let endSeq: Int
+    /// Display name of the start point from `route_points.name`.
+    let startName: String?
+    /// Display name of the end point from `route_points.name`.
+    let endName: String?
 }
 
 // MARK: - TrackDisplay
@@ -428,7 +434,8 @@ final class MapViewModel {
                 longitude:        pt.longitude,
                 index:            announcingCount,
                 announcesArrival: pt.announcesArrival,
-                sequenceNumber:   pt.sequenceNumber
+                sequenceNumber:   pt.sequenceNumber,
+                name:             pt.name
             )
         }
         return RouteDisplay(
@@ -438,7 +445,9 @@ final class MapViewModel {
             colorHex:     display.colorHex,
             name:         display.name,
             startSeq:     savedPoints.first?.sequenceNumber ?? display.startSeq,
-            endSeq:       savedPoints.last?.sequenceNumber  ?? display.endSeq
+            endSeq:       savedPoints.last?.sequenceNumber  ?? display.endSeq,
+            startName:    savedPoints.first?.name,
+            endName:      savedPoints.last?.name
         )
     }
 }
@@ -892,9 +901,13 @@ struct MapView: NSViewRepresentable {
 
                 // Announcing via points — numbered, draggable circles.
                 let announcing = display.viaWaypoints.filter { $0.announcesArrival }
-                let viaItems = announcing.map { wp in
-                    "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude)," +
-                    "\"index\":\(wp.index),\"seq\":\(wp.sequenceNumber)}"
+                let viaItems = announcing.map { wp -> String in
+                    let n = (wp.name ?? "")
+                        .replacingOccurrences(of: "\\", with: "\\\\")
+                        .replacingOccurrences(of: "\"", with: "\\\"")
+                    return "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude)," +
+                           "\"index\":\(wp.index),\"seq\":\(wp.sequenceNumber)," +
+                           "\"name\":\"\(n)\"}"
                 }.joined(separator: ",")
                 let viaEscaped = "[\(viaItems)]"
                     .replacingOccurrences(of: "\\", with: "\\\\")
@@ -902,15 +915,24 @@ struct MapView: NSViewRepresentable {
 
                 // Shaping points — small filled dots, draggable, no label.
                 let shaping = display.viaWaypoints.filter { !$0.announcesArrival }
-                let shapingItems = shaping.map { wp in
-                    "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude)," +
-                    "\"seq\":\(wp.sequenceNumber)}"
+                let shapingItems = shaping.map { wp -> String in
+                    let n = (wp.name ?? "")
+                        .replacingOccurrences(of: "\\", with: "\\\\")
+                        .replacingOccurrences(of: "\"", with: "\\\"")
+                    return "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude)," +
+                           "\"seq\":\(wp.sequenceNumber),\"name\":\"\(n)\"}"
                 }.joined(separator: ",")
                 let shapingEscaped = "[\(shapingItems)]"
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
 
                 let escapedName = display.name
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                let escapedStartName = (display.startName ?? "")
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                let escapedEndName = (display.endName ?? "")
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
 
@@ -925,7 +947,8 @@ struct MapView: NSViewRepresentable {
                          " \"\(display.colorHex)\", \"\(shapingEscaped)\"," +
                          " \(display.itemId), \"\(escapedName)\"," +
                          " \(display.startSeq), \(display.endSeq)," +
-                         " \(routeIconArg))"
+                         " \(routeIconArg)," +
+                         " \"\(escapedStartName)\", \"\(escapedEndName)\")"
                 webView.evaluateJavaScript(js)
             } else {
                 webView.evaluateJavaScript("clearRoute();")

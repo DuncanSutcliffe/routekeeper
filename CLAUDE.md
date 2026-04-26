@@ -427,4 +427,42 @@ event was also changed from 'zoomend' to 'zoom' at all four registration and
 deregistration points so arrow density updates continuously during a gesture rather
 than snapping only when the gesture ends.
 
-**Next step: Increment 55 — TBD.**
+Increment 55 — Set as start point. A new rotateRoutePoints(routeItemId:newStartSequenceNumber:)
+function on DatabaseManager reorders route_points in place within a single write
+transaction: it fetches all points for the route ordered by sequence_number, locates
+the target row by sequence number, temporarily shifts all sequence numbers up by the
+row count to avoid the UNIQUE(route_item_id, sequence_number) constraint, then writes
+the final 0-based sequence numbers and recalculated announces_arrival flags (1 for
+the new first and last rows, 0 for all intermediates) using each row's primary key.
+RouteWaypointSheet gains a "Set as start point" context menu item on every row
+(disabled when sequence_number == 0) and a flag.fill icon button in the same
+position for each non-first row. Both trigger a shared private setAsStartPoint(sequenceNumber:)
+helper that calls rotateRoutePoints, reloads points from the database, and then calls
+the existing save() flow to trigger Valhalla replanning and dismiss the sheet.
+
+Increment 56 — Route point marker hover popups. A module-level routePointHoverPopup
+variable and two helpers — fmtLngLat(lngLat) and addMarkerHoverPopup(marker,role,coordLabel) —
+were added to MapLibreMap.html. addMarkerHoverPopup sets cursor:pointer on the
+marker's DOM element and attaches mouseenter/mouseleave listeners that show and hide
+a maplibregl.Popup styled with the item-label CSS class (matching the existing route
+name label popups). The helper is called for every route point marker in showRoute
+(start, end, announcing via, shaping) and showMultipleItems (route start/end, via,
+shaping). clearRoute and clearMultipleItems both close any open hover popup before
+removing markers to prevent orphaned DOM elements.
+
+Increment 57 — Hover popup content: point names from database. The hover popup title
+for start/end markers now reads "Start" and "End" respectively; via and shaping
+markers show "Point [seq+1]". The second popup line now shows the route point's
+actual name from route_points.name rather than a formatted coordinate. To thread
+names through the full stack without extra database queries: ViaWaypoint gained a
+name:String? field; RouteDisplay gained startName:String? and endName:String?;
+MultiViaWaypoint and MultiShapingWaypoint each gained name:String?; MultiItemEntry
+gained startName:String? and endName:String? with corresponding CodingKeys and
+encodeIfPresent entries. All Swift call sites that build these types now populate
+name from the RoutePoint.name already in hand. applyRouteDisplay embeds name in the
+via/shaping JSON objects and passes startName/endName as new trailing arguments to
+showRoute(). showMultipleItems propagates names through routeMarkerGroups and via/
+shaping feature properties. All hover calls fall back to a formatted coordinate when
+the name field is empty.
+
+**Next step: Increment 58 — TBD.**

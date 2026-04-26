@@ -161,6 +161,11 @@
         var multiArrowData        = []; // [{ sourceId, flatCoords }]
         var multiArrowZoomHandler = null;
 
+        // The currently visible route-point hover popup, or null.
+        // Replaced on each mouseenter; removed on mouseleave and on clearRoute /
+        // clearMultipleItems so it is never left orphaned after markers are removed.
+        var routePointHoverPopup = null;
+
         /// Returns the coordinate at 50% of the cumulative Euclidean length of
         /// a LineString defined by an array of [lng, lat] pairs.
         ///
@@ -343,6 +348,50 @@
                 labelPopups[id].remove();
             }
             labelPopups = {};
+        }
+
+        /// Formats a [lng, lat] coordinate pair as "lat, lng" to 4 decimal places.
+        function fmtLngLat(lngLat) {
+            return lngLat[1].toFixed(4) + ', ' + lngLat[0].toFixed(4);
+        }
+
+        /// Attaches mouseenter / mouseleave handlers to a route point marker that
+        /// show and hide a two-line hover popup (role on the first line, coordLabel
+        /// on the second) styled with the item-label CSS class.
+        ///
+        /// Also sets cursor: pointer on the marker element so the hover state is
+        /// visually consistent with hovering over the route line.
+        ///
+        /// role       — "Start", "End", "Via N", or "Shaping"
+        /// coordLabel — formatted coordinate string for the second popup line
+        function addMarkerHoverPopup(marker, role, coordLabel) {
+            var el = marker.getElement();
+            el.style.cursor = 'pointer';
+            var sr = role.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+            var sc = coordLabel.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+            var html = '<div style="display:flex;flex-direction:column;gap:1px;">' +
+                       '<span style="font-weight:700;white-space:nowrap;">' + sr + '</span>' +
+                       '<span style="opacity:0.8;white-space:nowrap;">' + sc + '</span>' +
+                       '</div>';
+            el.addEventListener('mouseenter', function() {
+                if (routePointHoverPopup) { routePointHoverPopup.remove(); }
+                routePointHoverPopup = new maplibregl.Popup({
+                    closeButton: false,
+                    closeOnClick: false,
+                    anchor: 'bottom',
+                    offset: [0, -40],
+                    className: 'item-label'
+                })
+                .setLngLat(marker.getLngLat())
+                .setHTML(html)
+                .addTo(map);
+            });
+            el.addEventListener('mouseleave', function() {
+                if (routePointHoverPopup) {
+                    routePointHoverPopup.remove();
+                    routePointHoverPopup = null;
+                }
+            });
         }
 
         // ---------------------------------------------------------------------------
@@ -547,7 +596,7 @@
         /// Image loading is Promise-based because HTMLImageElement src loading
         /// is async — MapLibre silently ignores addImage calls on unloaded images.
         /// fitBounds is suppressed when suppressRecentre is true (set by prepareStyleSwitch).
-        function showRoute(geojsonString, viaWaypointsJSON, lineColour, shapingWaypointsJSON, itemId, name, startSeq, endSeq, routeIconBase64) {
+        function showRoute(geojsonString, viaWaypointsJSON, lineColour, shapingWaypointsJSON, itemId, name, startSeq, endSeq, routeIconBase64, startName, endName) {
             lineColour = lineColour || '#1A73E8';
 
             clearRoute();
@@ -646,6 +695,7 @@
                 });
             });
             routeMarkers.push(startMarker);
+            addMarkerHoverPopup(startMarker, 'Start', startName || fmtLngLat(startCoord));
 
             // End marker.
             const endMarker = new maplibregl.Marker({ draggable: true, color: lineColour })
@@ -670,6 +720,7 @@
                 });
             });
             routeMarkers.push(endMarker);
+            addMarkerHoverPopup(endMarker, 'End', endName || fmtLngLat(endCoord));
 
             // Announcing via waypoint markers.
             const viaWaypoints = (viaWaypointsJSON && viaWaypointsJSON.length > 2)
@@ -697,6 +748,7 @@
                     });
                 });
                 routeMarkers.push(viaMarker);
+                addMarkerHoverPopup(viaMarker, 'Point ' + (w.seq + 1), w.name || fmtLngLat([w.lng, w.lat]));
             });
 
             // Shaping waypoint markers.
@@ -735,6 +787,7 @@
                     });
                 });
                 routeMarkers.push(shapingMarker);
+                addMarkerHoverPopup(shapingMarker, 'Point ' + (w.seq + 1), w.name || fmtLngLat([w.lng, w.lat]));
             });
 
             if (suppressRecentre) {
@@ -760,6 +813,7 @@
         /// Also clears the legacy "active-route" id used by drawRoute() so that
         /// switching between the two mechanisms never leaves orphaned layers.
         function clearRoute() {
+            if (routePointHoverPopup) { routePointHoverPopup.remove(); routePointHoverPopup = null; }
             routeMarkers.forEach(function(m) { m.remove(); });
             routeMarkers = [];
             routePointCoords = [];
@@ -930,7 +984,11 @@
                             routeColour:     routeColour,
                             rId:             item.itemId,
                             name:            item.name || '',
-                            routeIconBase64: item.routeIconBase64 || null
+                            routeIconBase64: item.routeIconBase64 || null,
+                            pointCount:      2 + (item.viaWaypoints || []).length +
+                                               (item.shapingWaypoints || []).length,
+                            startName:       item.startName || '',
+                            endName:         item.endName   || ''
                         });
                     }
 
@@ -943,7 +1001,7 @@
                             viaFeatures.push({
                                 type: 'Feature',
                                 geometry: { type: 'Point', coordinates: [vw.lng, vw.lat] },
-                                properties: { index: vw.index }
+                                properties: { index: vw.index, name: vw.name || '' }
                             });
                         }
                         viaGroups.push({
@@ -964,7 +1022,7 @@
                             shapingFeatures.push({
                                 type: 'Feature',
                                 geometry: { type: 'Point', coordinates: [sw.lng, sw.lat] },
-                                properties: {}
+                                properties: { name: sw.name || '' }
                             });
                         }
                         shapingGroups.push({
@@ -1086,11 +1144,13 @@
                     .setLngLat(rm.startCoord)
                     .addTo(map);
                 multiRouteMarkers.push(startMarker);
+                addMarkerHoverPopup(startMarker, 'Start', rm.startName || fmtLngLat(rm.startCoord));
 
                 var endMarker = new maplibregl.Marker({ color: rm.routeColour })
                     .setLngLat(rm.endCoord)
                     .addTo(map);
                 multiRouteMarkers.push(endMarker);
+                addMarkerHoverPopup(endMarker, 'End', rm.endName || fmtLngLat(rm.endCoord));
 
                 var rmLabelCoord = lineMidpoint(rm.allCoords);
                 showLabel(rm.rId, rmLabelCoord[0], rmLabelCoord[1], rm.name, rm.routeIconBase64);
@@ -1100,10 +1160,14 @@
             for (var vi = 0; vi < viaGroups.length; vi++) {
                 var vg = viaGroups[vi];
                 for (var vfi = 0; vfi < vg.features.length; vfi++) {
+                    var viaCoords = vg.features[vfi].geometry.coordinates;
                     var viaMarker = new maplibregl.Marker({ color: vg.colour, scale: 0.7 })
-                        .setLngLat(vg.features[vfi].geometry.coordinates)
+                        .setLngLat(viaCoords)
                         .addTo(map);
                     multiRouteMarkers.push(viaMarker);
+                    addMarkerHoverPopup(viaMarker,
+                        'Point ' + (vg.features[vfi].properties.index + 1),
+                        vg.features[vfi].properties.name || fmtLngLat(viaCoords));
                 }
             }
 
@@ -1111,10 +1175,13 @@
             for (var si = 0; si < shapingGroups.length; si++) {
                 var sg = shapingGroups[si];
                 for (var sfi = 0; sfi < sg.features.length; sfi++) {
+                    var shapingCoords = sg.features[sfi].geometry.coordinates;
                     var shapingMarker = new maplibregl.Marker({ color: '#888888', scale: 0.5, offset: [0, -7] })
-                        .setLngLat(sg.features[sfi].geometry.coordinates)
+                        .setLngLat(shapingCoords)
                         .addTo(map);
                     multiRouteMarkers.push(shapingMarker);
+                    addMarkerHoverPopup(shapingMarker, 'Shaping',
+                        sg.features[sfi].properties.name || fmtLngLat(shapingCoords));
                 }
             }
 
@@ -1312,6 +1379,7 @@
         /// Route lines use fixed IDs (multi-routes-source / multi-routes-layer) and are
         /// removed separately since they are not tracked in the per-item arrays.
         function clearMultipleItems() {
+            if (routePointHoverPopup) { routePointHoverPopup.remove(); routePointHoverPopup = null; }
             if (multiArrowZoomHandler) {
                 map.off('zoom', multiArrowZoomHandler);
                 multiArrowZoomHandler = null;

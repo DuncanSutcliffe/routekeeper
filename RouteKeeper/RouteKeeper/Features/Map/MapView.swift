@@ -130,8 +130,14 @@ struct ViaWaypoint: Equatable {
     /// Sent back to Swift in the `waypointDragged` bridge message so the
     /// correct DB row can be identified after a drag.
     let sequenceNumber: Int
-    /// Display name from `route_points.name`, used in the map hover popup.
-    let name: String?
+    /// Primary key of the `route_points` row, forwarded to JS so the marker's
+    /// delete context menu can identify the point by a stable ID rather than
+    /// a sequence number that shifts when other points are removed.
+    let pointId: Int64?
+    /// Computed display label — either the point's real name or "Point N"
+    /// (1-based position in the full route) when the stored name is only
+    /// a coordinate pair.
+    let label: String
 }
 
 // MARK: - RouteDisplay
@@ -151,10 +157,14 @@ struct RouteDisplay: Equatable {
     let startSeq: Int
     /// `sequence_number` of the end route_point (the last row in DB order).
     let endSeq: Int
-    /// Display name of the start point from `route_points.name`.
-    let startName: String?
-    /// Display name of the end point from `route_points.name`.
-    let endName: String?
+    /// Primary key of the start `route_points` row, forwarded to JS for deletion.
+    let startId: Int64?
+    /// Primary key of the end `route_points` row, forwarded to JS for deletion.
+    let endId: Int64?
+    /// Computed display label for the start point.
+    let startLabel: String
+    /// Computed display label for the end point.
+    let endLabel: String
 }
 
 // MARK: - TrackDisplay
@@ -424,10 +434,11 @@ final class MapViewModel {
         result: RouteResult,
         existing display: RouteDisplay
     ) -> RouteDisplay {
+        let labels = buildPointLabels(from: savedPoints)
         let intermediates = savedPoints.count > 2
             ? Array(savedPoints.dropFirst().dropLast()) : []
         var announcingCount = 0
-        let viaWaypoints = intermediates.map { pt -> ViaWaypoint in
+        let viaWaypoints = intermediates.enumerated().map { (i, pt) -> ViaWaypoint in
             if pt.announcesArrival { announcingCount += 1 }
             return ViaWaypoint(
                 latitude:         pt.latitude,
@@ -435,9 +446,13 @@ final class MapViewModel {
                 index:            announcingCount,
                 announcesArrival: pt.announcesArrival,
                 sequenceNumber:   pt.sequenceNumber,
-                name:             pt.name
+                pointId:          pt.id,
+                label:            pt.id.flatMap { labels[$0] } ?? "Point \(i + 2)"
             )
         }
+        let startLabel = savedPoints.first?.id.flatMap { labels[$0] } ?? "Point 1"
+        let endLabel   = savedPoints.last?.id.flatMap { labels[$0] }
+            ?? "Point \(savedPoints.count)"
         return RouteDisplay(
             itemId:       display.itemId,
             geojson:      result.geometry,
@@ -446,8 +461,10 @@ final class MapViewModel {
             name:         display.name,
             startSeq:     savedPoints.first?.sequenceNumber ?? display.startSeq,
             endSeq:       savedPoints.last?.sequenceNumber  ?? display.endSeq,
-            startName:    savedPoints.first?.name,
-            endName:      savedPoints.last?.name
+            startId:      savedPoints.first?.id,
+            endId:        savedPoints.last?.id,
+            startLabel:   startLabel,
+            endLabel:     endLabel
         )
     }
 }
@@ -902,12 +919,13 @@ struct MapView: NSViewRepresentable {
                 // Announcing via points — numbered, draggable circles.
                 let announcing = display.viaWaypoints.filter { $0.announcesArrival }
                 let viaItems = announcing.map { wp -> String in
-                    let n = (wp.name ?? "")
+                    let lbl = wp.label
                         .replacingOccurrences(of: "\\", with: "\\\\")
                         .replacingOccurrences(of: "\"", with: "\\\"")
+                    let idArg = wp.pointId.map { String($0) } ?? "null"
                     return "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude)," +
                            "\"index\":\(wp.index),\"seq\":\(wp.sequenceNumber)," +
-                           "\"name\":\"\(n)\"}"
+                           "\"id\":\(idArg),\"label\":\"\(lbl)\"}"
                 }.joined(separator: ",")
                 let viaEscaped = "[\(viaItems)]"
                     .replacingOccurrences(of: "\\", with: "\\\\")
@@ -916,11 +934,12 @@ struct MapView: NSViewRepresentable {
                 // Shaping points — small filled dots, draggable, no label.
                 let shaping = display.viaWaypoints.filter { !$0.announcesArrival }
                 let shapingItems = shaping.map { wp -> String in
-                    let n = (wp.name ?? "")
+                    let lbl = wp.label
                         .replacingOccurrences(of: "\\", with: "\\\\")
                         .replacingOccurrences(of: "\"", with: "\\\"")
+                    let idArg = wp.pointId.map { String($0) } ?? "null"
                     return "{\"lat\":\(wp.latitude),\"lng\":\(wp.longitude)," +
-                           "\"seq\":\(wp.sequenceNumber),\"name\":\"\(n)\"}"
+                           "\"seq\":\(wp.sequenceNumber),\"id\":\(idArg),\"label\":\"\(lbl)\"}"
                 }.joined(separator: ",")
                 let shapingEscaped = "[\(shapingItems)]"
                     .replacingOccurrences(of: "\\", with: "\\\\")
@@ -929,12 +948,14 @@ struct MapView: NSViewRepresentable {
                 let escapedName = display.name
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
-                let escapedStartName = (display.startName ?? "")
+                let escapedStartLabel = display.startLabel
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
-                let escapedEndName = (display.endName ?? "")
+                let escapedEndLabel = display.endLabel
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
+                let startIdArg = display.startId.map { String($0) } ?? "null"
+                let endIdArg   = display.endId.map   { String($0) } ?? "null"
 
                 let routeIconArg = categoryIconBase64Compact(
                     "arrow.triangle.turn.up.right.diamond",
@@ -948,7 +969,8 @@ struct MapView: NSViewRepresentable {
                          " \(display.itemId), \"\(escapedName)\"," +
                          " \(display.startSeq), \(display.endSeq)," +
                          " \(routeIconArg)," +
-                         " \"\(escapedStartName)\", \"\(escapedEndName)\")"
+                         " \"\(escapedStartLabel)\", \"\(escapedEndLabel)\"," +
+                         " \(startIdArg), \(endIdArg))"
                 webView.evaluateJavaScript(js)
             } else {
                 webView.evaluateJavaScript("clearRoute();")
@@ -1046,6 +1068,8 @@ struct MapView: NSViewRepresentable {
                             )
                             try await wv.evaluateJavaScript("suppressRecentre = true;")
                             applyRouteDisplay(newDisplay, in: wv)
+                            lastRouteDisplay = newDisplay
+                            vm.routeDisplay  = newDisplay
                         }
 
                     case .insertedPoint(let routeItemId, let sequenceNumber):
@@ -1063,6 +1087,8 @@ struct MapView: NSViewRepresentable {
                         )
                         try await wv.evaluateJavaScript("suppressRecentre = true;")
                         applyRouteDisplay(newDisplay, in: wv)
+                        lastRouteDisplay = newDisplay
+                        vm.routeDisplay  = newDisplay
                     }
                 } catch {
                     print("executeUndo failed: \(error)")
@@ -1115,6 +1141,19 @@ struct MapView: NSViewRepresentable {
                             previousLat:  previousLat,
                             previousLng:  previousLng
                         ))
+                        // Sync tracking so mapStyleLoaded restores the dragged position.
+                        if let existing = lastWaypointDisplay, existing.itemId == itemId {
+                            let updated = WaypointDisplay(
+                                itemId:        itemId,
+                                latitude:      latitude,
+                                longitude:     longitude,
+                                colorHex:      existing.colorHex,
+                                name:          existing.name,
+                                iconImageName: existing.iconImageName
+                            )
+                            lastWaypointDisplay = updated
+                            mapViewModel?.waypointDisplay = updated
+                        }
                         // 2. Find any routes whose route_points reference this waypoint.
                         let routes = try await DatabaseManager.shared
                             .fetchRoutesContainingWaypoint(itemId: itemId)
@@ -1186,6 +1225,10 @@ struct MapView: NSViewRepresentable {
                         guard let wv = self.webView else { return }
                         try await wv.evaluateJavaScript("suppressRecentre = true;")
                         self.applyRouteDisplay(newDisplay, in: wv)
+                        // Sync tracking so mapStyleLoaded restores the current display,
+                        // and a pushUndo-triggered re-render doesn't revert it.
+                        self.lastRouteDisplay = newDisplay
+                        vm.routeDisplay = newDisplay
                     } catch {
                         print("waypointDragged recalculation failed: \(error)")
                     }
@@ -1233,8 +1276,68 @@ struct MapView: NSViewRepresentable {
                         guard let wv = self.webView else { return }
                         try await wv.evaluateJavaScript("suppressRecentre = true;")
                         self.applyRouteDisplay(newDisplay, in: wv)
+                        // Sync tracking so mapStyleLoaded restores the current display,
+                        // and a pushUndo-triggered re-render doesn't revert it.
+                        self.lastRouteDisplay = newDisplay
+                        vm.routeDisplay = newDisplay
                     } catch {
                         print("insertShapingPoint recalculation failed: \(error)")
+                    }
+                }
+                return
+            }
+
+            if type == "deleteRoutePoint" {
+                guard let routeItemIdInt = body["routeItemId"] as? Int,
+                      let pointIdInt     = body["pointId"]     as? Int,
+                      let label          = body["label"]        as? String else { return }
+                let routeItemId = Int64(routeItemIdInt)
+                let pointId     = Int64(pointIdInt)
+                guard let display = lastRouteDisplay else { return }
+                Task { @MainActor [weak self] in
+                    guard let self, let vm = self.mapViewModel else { return }
+                    let alert = NSAlert()
+                    alert.messageText = "Delete \"\(label)\"?"
+                    alert.addButton(withTitle: "Delete")
+                    alert.addButton(withTitle: "Cancel")
+                    alert.buttons[0].hasDestructiveAction = true
+                    guard alert.runModal() == .alertFirstButtonReturn else { return }
+                    do {
+                        try await DatabaseManager.shared.deleteRoutePoint(
+                            routeItemId: routeItemId,
+                            pointId:     pointId
+                        )
+                    } catch {
+                        print("deleteRoutePoint: database delete failed: \(error)")
+                        let errAlert = NSAlert()
+                        errAlert.messageText = "Delete Failed"
+                        errAlert.informativeText = "The waypoint could not be deleted. " +
+                            "Please try again."
+                        errAlert.addButton(withTitle: "OK")
+                        errAlert.runModal()
+                        return
+                    }
+                    do {
+                        let newDisplay = try await vm.recalculateRoute(
+                            routeItemId:     routeItemId,
+                            existingDisplay: display
+                        )
+                        guard let wv = self.webView else { return }
+                        try await wv.evaluateJavaScript("suppressRecentre = true;")
+                        self.applyRouteDisplay(newDisplay, in: wv)
+                        self.lastRouteDisplay = newDisplay
+                        vm.routeDisplay = newDisplay
+                    } catch {
+                        print("deleteRoutePoint: recalculation failed: \(error)")
+                        try? await DatabaseManager.shared.markRouteNeedsRecalculation(
+                            itemId: routeItemId
+                        )
+                        let errAlert = NSAlert()
+                        errAlert.messageText = "Route Calculation Failed"
+                        errAlert.informativeText = "The waypoint was deleted. Route " +
+                            "calculation failed — the route will update when you reopen it."
+                        errAlert.addButton(withTitle: "OK")
+                        errAlert.runModal()
                     }
                 }
                 return
@@ -1530,4 +1633,38 @@ func renderCategoryIcons() async -> String {
           let data = try? JSONSerialization.data(withJSONObject: entries),
           let json = String(data: data, encoding: .utf8) else { return "[]" }
     return json
+}
+
+// MARK: - Point label helpers
+
+/// Returns `true` when `s` is a formatted coordinate pair (two comma-separated
+/// doubles), which is the format written to `route_points.name` by drag-drop and
+/// shaping-point insertion operations.
+func isCoordinatePair(_ s: String) -> Bool {
+    let parts = s.split(separator: ",", maxSplits: 1)
+    guard parts.count == 2 else { return false }
+    return Double(parts[0].trimmingCharacters(in: .whitespaces)) != nil
+        && Double(parts[1].trimmingCharacters(in: .whitespaces)) != nil
+}
+
+/// Builds a display label for each route point that has a database `id`.
+///
+/// Points with a real name use that name as the label.  Points whose stored
+/// name is only a coordinate pair (the auto-generated format from drag and
+/// shaping-point insertion) are labeled "Point N", where N is the point's
+/// 1-based position in the full ordered sequence.
+///
+/// The returned dictionary is keyed by `route_points.id`.  Points without an
+/// `id` (e.g. newly-added in-memory points not yet saved) are omitted.
+func buildPointLabels(from points: [RoutePoint]) -> [Int64: String] {
+    var labels = [Int64: String]()
+    for (index, point) in points.enumerated() {
+        guard let id = point.id else { continue }
+        if let name = point.name, !name.isEmpty, !isCoordinatePair(name) {
+            labels[id] = name
+        } else {
+            labels[id] = "Point \(index + 1)"
+        }
+    }
+    return labels
 }

@@ -757,6 +757,75 @@ actor DatabaseManager {
         }
     }
 
+    /// Deletes a single route point and renumbers the remaining rows.
+    ///
+    /// All work is done inside a single write transaction.  After deletion the
+    /// surviving rows are renumbered 0, 1, 2, … in sequence-number order and
+    /// `announces_arrival` is recalculated so the new first and last rows are
+    /// always 1 (exactly as `rotateRoutePoints` does).
+    ///
+    /// The caller must ensure the route has more than two points before calling
+    /// this function; the JS side enforces this via the disabled menu item.
+    func deleteRoutePoint(routeItemId: Int64, pointId: Int64) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            // Delete the target row directly, guarded by route_item_id for safety.
+            try db.execute(
+                sql: "DELETE FROM route_points WHERE id = ? AND route_item_id = ?",
+                arguments: [pointId, routeItemId]
+            )
+            guard db.changesCount > 0 else {
+                throw DatabaseManagerError.insertFailed(
+                    "No route_point with id \(pointId) for route \(routeItemId)"
+                )
+            }
+
+            // Fetch remaining row IDs in current sequence order.
+            let remainingIds = try Int64.fetchAll(
+                db,
+                sql: "SELECT id FROM route_points " +
+                     "WHERE route_item_id = ? ORDER BY sequence_number ASC",
+                arguments: [routeItemId]
+            )
+            guard !remainingIds.isEmpty else { return }
+
+            // Shift all sequence numbers above the original range to avoid
+            // UNIQUE(route_item_id, sequence_number) constraint violations.
+            // Must shift by at least (original count) = remainingIds.count + 1
+            // because the highest remaining sequence number may equal remainingIds.count.
+            try db.execute(
+                sql: "UPDATE route_points " +
+                     "SET sequence_number = sequence_number + ? " +
+                     "WHERE route_item_id = ?",
+                arguments: [remainingIds.count + 1, routeItemId]
+            )
+
+            // Assign final 0-based sequence numbers and recalculate announces_arrival.
+            let lastIndex = remainingIds.count - 1
+            for (newSeq, rowId) in remainingIds.enumerated() {
+                let announces = (newSeq == 0 || newSeq == lastIndex) ? 1 : 0
+                try db.execute(
+                    sql: "UPDATE route_points " +
+                         "SET sequence_number = ?, announces_arrival = ? " +
+                         "WHERE id = ?",
+                    arguments: [newSeq, announces, rowId]
+                )
+            }
+        }
+    }
+
+    /// Sets `needs_recalculation = 1` on a route so it is recalculated the
+    /// next time the user selects it.
+    func markRouteNeedsRecalculation(itemId: Int64) async throws {
+        let q = try requireQueue()
+        try await q.write { db in
+            try db.execute(
+                sql: "UPDATE routes SET needs_recalculation = 1 WHERE item_id = ?",
+                arguments: [itemId]
+            )
+        }
+    }
+
     /// Moves a single route point to new coordinates.
     ///
     /// Matches the row by both `route_item_id` and `sequence_number` so exactly

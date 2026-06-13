@@ -61,12 +61,33 @@
         .maplibregl-popup.item-label .maplibregl-popup-tip {
             display: none;
         }
+        #point-context-menu {
+            position: absolute;
+            background: white;
+            border-radius: 6px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.18);
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 13px;
+            z-index: 1001;
+            display: none;
+            min-width: 160px;
+            overflow: hidden;
+            user-select: none;
+        }
+        .map-context-item.disabled {
+            color: #aaa;
+            cursor: default;
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div id="map-context-menu">
         <div class="map-context-item" onclick="addWaypointHere()">New waypoint here</div>
+    </div>
+    <div id="point-context-menu">
+        <div id="point-delete-item" class="map-context-item" onclick="deleteRoutePointAction()">Delete point</div>
     </div>
 
     <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
@@ -596,7 +617,7 @@
         /// Image loading is Promise-based because HTMLImageElement src loading
         /// is async — MapLibre silently ignores addImage calls on unloaded images.
         /// fitBounds is suppressed when suppressRecentre is true (set by prepareStyleSwitch).
-        function showRoute(geojsonString, viaWaypointsJSON, lineColour, shapingWaypointsJSON, itemId, name, startSeq, endSeq, routeIconBase64, startName, endName) {
+        function showRoute(geojsonString, viaWaypointsJSON, lineColour, shapingWaypointsJSON, itemId, name, startSeq, endSeq, routeIconBase64, startLabel, endLabel, startId, endId) {
             lineColour = lineColour || '#1A73E8';
 
             clearRoute();
@@ -695,7 +716,8 @@
                 });
             });
             routeMarkers.push(startMarker);
-            addMarkerHoverPopup(startMarker, 'Start', startName || fmtLngLat(startCoord));
+            addMarkerHoverPopup(startMarker, startLabel, fmtLngLat(startCoord));
+            addMarkerContextMenu(startMarker, startId, startLabel, itemId);
 
             // End marker.
             const endMarker = new maplibregl.Marker({ draggable: true, color: lineColour })
@@ -720,7 +742,8 @@
                 });
             });
             routeMarkers.push(endMarker);
-            addMarkerHoverPopup(endMarker, 'End', endName || fmtLngLat(endCoord));
+            addMarkerHoverPopup(endMarker, endLabel, fmtLngLat(endCoord));
+            addMarkerContextMenu(endMarker, endId, endLabel, itemId);
 
             // Announcing via waypoint markers.
             const viaWaypoints = (viaWaypointsJSON && viaWaypointsJSON.length > 2)
@@ -748,7 +771,8 @@
                     });
                 });
                 routeMarkers.push(viaMarker);
-                addMarkerHoverPopup(viaMarker, 'Point ' + (w.seq + 1), w.name || fmtLngLat([w.lng, w.lat]));
+                addMarkerHoverPopup(viaMarker, w.label, fmtLngLat([w.lng, w.lat]));
+                addMarkerContextMenu(viaMarker, w.id, w.label, itemId);
             });
 
             // Shaping waypoint markers.
@@ -787,7 +811,8 @@
                     });
                 });
                 routeMarkers.push(shapingMarker);
-                addMarkerHoverPopup(shapingMarker, 'Point ' + (w.seq + 1), w.name || fmtLngLat([w.lng, w.lat]));
+                addMarkerHoverPopup(shapingMarker, w.label, fmtLngLat([w.lng, w.lat]));
+                addMarkerContextMenu(shapingMarker, w.id, w.label, itemId);
             });
 
             if (suppressRecentre) {
@@ -814,6 +839,7 @@
         /// switching between the two mechanisms never leaves orphaned layers.
         function clearRoute() {
             if (routePointHoverPopup) { routePointHoverPopup.remove(); routePointHoverPopup = null; }
+            dismissPointContextMenu();
             routeMarkers.forEach(function(m) { m.remove(); });
             routeMarkers = [];
             routePointCoords = [];
@@ -1263,6 +1289,59 @@
                           lat: contextMenuCoord.lat, lng: contextMenuCoord.lng });
         }
 
+        // ---------------------------------------------------------------------------
+        // Route point context menu (right-click on a route point marker)
+        // ---------------------------------------------------------------------------
+
+        var pointContextMenuTarget = null;
+
+        function dismissPointContextMenu() {
+            document.getElementById('point-context-menu').style.display = 'none';
+            pointContextMenuTarget = null;
+        }
+
+        /// Attaches a contextmenu listener to a route point marker element.
+        ///
+        /// When the user right-clicks the marker the point-specific context menu is
+        /// shown at the cursor position.  Propagation is stopped so the map-level
+        /// "add waypoint here" contextmenu does not also fire.
+        ///
+        /// seq         — sequence_number of this route_points row
+        /// name        — display name shown in the Swift confirmation dialog
+        /// routeItemId — the route's item_id, forwarded to Swift on delete
+        function addMarkerContextMenu(marker, pointId, label, routeItemId) {
+            if (routeItemId === null || routeItemId === undefined) { return; }
+            var el = marker.getElement();
+            el.addEventListener('contextmenu', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                dismissContextMenu();
+                pointContextMenuTarget = { id: pointId, label: label, routeItemId: routeItemId };
+                var deleteItem = document.getElementById('point-delete-item');
+                if (routePointCoords.length <= 2) {
+                    deleteItem.classList.add('disabled');
+                } else {
+                    deleteItem.classList.remove('disabled');
+                }
+                var menu = document.getElementById('point-context-menu');
+                menu.style.left = e.clientX + 'px';
+                menu.style.top  = e.clientY + 'px';
+                menu.style.display = 'block';
+            });
+        }
+
+        function deleteRoutePointAction() {
+            var target = pointContextMenuTarget;
+            dismissPointContextMenu();
+            if (!target) { return; }
+            postToSwift({
+                type:        'deleteRoutePoint',
+                routeItemId: target.routeItemId,
+                pointId:     target.id,
+                label:       target.label
+            });
+        }
+
         map.on('contextmenu', function(e) {
             contextMenuCoord.lat = e.lngLat.lat;
             contextMenuCoord.lng = e.lngLat.lng;
@@ -1365,8 +1444,9 @@
 
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Alt') { altKeyHeld = true; }
-            if (e.key === 'Escape') { dismissContextMenu(); }
+            if (e.key === 'Escape') { dismissContextMenu(); dismissPointContextMenu(); }
         });
+        document.addEventListener('click', function() { dismissPointContextMenu(); });
         document.addEventListener('keyup', function(e) {
             if (e.key === 'Alt') { altKeyHeld = false; }
         });

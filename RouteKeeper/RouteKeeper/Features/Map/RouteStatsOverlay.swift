@@ -91,7 +91,7 @@ struct RouteStatsOverlay: View {
         .padding(.horizontal, 16)
         .padding(.top, 10)
         .padding(.bottom, chartPoints.isEmpty ? 10 : 0)
-        .frame(maxWidth: 320)
+        .frame(maxWidth: 400)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
     }
@@ -118,10 +118,12 @@ struct RouteStatsOverlay: View {
                 Text("↑ \(totalAscentM)m")
                     .font(.subheadline.monospacedDigit())
                     .fontWeight(.medium)
+                    .lineLimit(1)
 
                 Text("↓ \(totalDescentM)m")
                     .font(.subheadline.monospacedDigit())
                     .fontWeight(.medium)
+                    .lineLimit(1)
             }
         }
         .padding(.bottom, chartPoints.isEmpty ? 0 : 8)

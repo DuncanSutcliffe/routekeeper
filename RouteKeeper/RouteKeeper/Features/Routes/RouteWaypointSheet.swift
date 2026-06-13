@@ -16,10 +16,25 @@ struct RouteWaypointSheet: View {
     let onSave: () -> Void
 
     @State private var points: [RoutePoint] = []
+
+    private var pointLabels: [Int64: String] { buildPointLabels(from: points) }
+
+    private func labelFor(_ point: RoutePoint, at index: Int) -> String {
+        if let id = point.id, let lbl = pointLabels[id] { return lbl }
+        if let name = point.name, !name.isEmpty, !isCoordinatePair(name) { return name }
+        return "Point \(index + 1)"
+    }
+
     @State private var insertionIndex: Int?
     @State private var showingWaypointPicker = false
     @State private var isSaving = false
     @State private var showSaveError = false
+    @State private var pendingDeleteIndex: Int? = nil
+
+    private var pendingDeleteLabel: String {
+        guard let idx = pendingDeleteIndex, idx < points.count else { return "" }
+        return labelFor(points[idx], at: idx)
+    }
 
     @Environment(\.dismiss) private var dismiss
 
@@ -86,6 +101,23 @@ struct RouteWaypointSheet: View {
         } message: {
             Text("Route calculation failed. Please check your internet " +
                  "connection and try again.")
+        }
+        .alert(
+            "Delete \"\(pendingDeleteLabel)\"?",
+            isPresented: Binding(
+                get: { pendingDeleteIndex != nil },
+                set: { if !$0 { pendingDeleteIndex = nil } }
+            )
+        ) {
+            Button("Delete", role: .destructive) {
+                if let idx = pendingDeleteIndex {
+                    points.remove(at: idx)
+                }
+                pendingDeleteIndex = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteIndex = nil
+            }
         }
         .task {
             do {
@@ -182,11 +214,10 @@ struct RouteWaypointSheet: View {
                 badge("Shaping", color: .gray)
             }
 
-            // Name or coordinate fallback
-            if let name = point.name, !name.isEmpty {
-                Text(name)
-            } else {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(labelFor(point, at: index))
                 Text(String(format: "%.4f, %.4f", point.latitude, point.longitude))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
@@ -223,7 +254,7 @@ struct RouteWaypointSheet: View {
 
             // Delete button
             Button {
-                points.remove(at: index)
+                pendingDeleteIndex = index
             } label: {
                 Image(systemName: "trash")
                     .foregroundStyle(.red)

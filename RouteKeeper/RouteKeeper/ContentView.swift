@@ -492,13 +492,14 @@ struct ContentView: View {
                 let allPoints = (try? await DatabaseManager.shared.fetchRoutePoints(
                     routeItemId: itemId
                 )) ?? []
+                let labels = buildPointLabels(from: allPoints)
                 let intermediates = allPoints.count > 2
                     ? Array(allPoints.dropFirst().dropLast())
                     : []
                 // Announcing intermediates are numbered 1, 2, 3…; shaping points
                 // carry index 0 (unused) so their rendering path shows a dot instead.
                 var announcingCount = 0
-                let viaWaypoints = intermediates.map { pt in
+                let viaWaypoints = intermediates.enumerated().map { (i, pt) in
                     if pt.announcesArrival { announcingCount += 1 }
                     return ViaWaypoint(
                         latitude: pt.latitude,
@@ -506,9 +507,13 @@ struct ContentView: View {
                         index: announcingCount,
                         announcesArrival: pt.announcesArrival,
                         sequenceNumber: pt.sequenceNumber,
-                        name: pt.name
+                        pointId: pt.id,
+                        label: pt.id.flatMap { labels[$0] } ?? "Point \(i + 2)"
                     )
                 }
+                let startLabel = allPoints.first?.id.flatMap { labels[$0] } ?? "Point 1"
+                let endLabel   = allPoints.last?.id.flatMap { labels[$0] }
+                    ?? "Point \(allPoints.count)"
                 mapViewModel.showRoute(RouteDisplay(
                     itemId: itemId,
                     geojson: geometry,
@@ -517,8 +522,10 @@ struct ContentView: View {
                     name: item.name,
                     startSeq: allPoints.first?.sequenceNumber ?? 0,
                     endSeq: allPoints.last?.sequenceNumber ?? 0,
-                    startName: allPoints.first?.name,
-                    endName: allPoints.last?.name
+                    startId: allPoints.first?.id,
+                    endId: allPoints.last?.id,
+                    startLabel: startLabel,
+                    endLabel: endLabel
                 ))
             } else {
                 mapViewModel.clearRoute()

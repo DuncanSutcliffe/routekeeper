@@ -447,12 +447,11 @@ final class MapViewModel {
                 announcesArrival: pt.announcesArrival,
                 sequenceNumber:   pt.sequenceNumber,
                 pointId:          pt.id,
-                label:            pt.id.flatMap { labels[$0] } ?? "Point \(i + 2)"
+                label:            pt.id.flatMap { labels[$0] } ?? "Point \(i + 1)"
             )
         }
-        let startLabel = savedPoints.first?.id.flatMap { labels[$0] } ?? "Point 1"
-        let endLabel   = savedPoints.last?.id.flatMap { labels[$0] }
-            ?? "Point \(savedPoints.count)"
+        let startLabel = savedPoints.first?.id.flatMap { labels[$0] } ?? "Start"
+        let endLabel   = savedPoints.last?.id.flatMap { labels[$0] } ?? "End"
         return RouteDisplay(
             itemId:       display.itemId,
             geojson:      result.geometry,
@@ -1649,21 +1648,31 @@ func isCoordinatePair(_ s: String) -> Bool {
 
 /// Builds a display label for each route point that has a database `id`.
 ///
-/// Points with a real name use that name as the label.  Points whose stored
-/// name is only a coordinate pair (the auto-generated format from drag and
-/// shaping-point insertion) are labeled "Point N", where N is the point's
-/// 1-based position in the full ordered sequence.
+/// - First point: its real name, or "Start" when the stored name is absent
+///   or is only a coordinate pair.
+/// - Last point: its real name, or "End".
+/// - Intermediate points: their real name, or "Point K" where K is the
+///   point's 1-based position among intermediates (equal to its 0-based
+///   index in the full ordered sequence, since the first intermediate is
+///   at index 1).  Named intermediates still occupy their position in K,
+///   so K is never resequenced around them.
 ///
 /// The returned dictionary is keyed by `route_points.id`.  Points without an
 /// `id` (e.g. newly-added in-memory points not yet saved) are omitted.
 func buildPointLabels(from points: [RoutePoint]) -> [Int64: String] {
     var labels = [Int64: String]()
+    let lastIndex = points.count - 1
     for (index, point) in points.enumerated() {
         guard let id = point.id else { continue }
-        if let name = point.name, !name.isEmpty, !isCoordinatePair(name) {
-            labels[id] = name
+        let hasRealName = point.name.map { !$0.isEmpty && !isCoordinatePair($0) } ?? false
+        if hasRealName {
+            labels[id] = point.name!
+        } else if index == 0 {
+            labels[id] = "Start"
+        } else if index == lastIndex {
+            labels[id] = "End"
         } else {
-            labels[id] = "Point \(index + 1)"
+            labels[id] = "Point \(index)"
         }
     }
     return labels

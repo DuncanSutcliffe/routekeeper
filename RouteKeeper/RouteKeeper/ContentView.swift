@@ -508,12 +508,11 @@ struct ContentView: View {
                         announcesArrival: pt.announcesArrival,
                         sequenceNumber: pt.sequenceNumber,
                         pointId: pt.id,
-                        label: pt.id.flatMap { labels[$0] } ?? "Point \(i + 2)"
+                        label: pt.id.flatMap { labels[$0] } ?? "Point \(i + 1)"
                     )
                 }
-                let startLabel = allPoints.first?.id.flatMap { labels[$0] } ?? "Point 1"
-                let endLabel   = allPoints.last?.id.flatMap { labels[$0] }
-                    ?? "Point \(allPoints.count)"
+                let startLabel = allPoints.first?.id.flatMap { labels[$0] } ?? "Start"
+                let endLabel   = allPoints.last?.id.flatMap { labels[$0] } ?? "End"
                 mapViewModel.showRoute(RouteDisplay(
                     itemId: itemId,
                     geojson: geometry,

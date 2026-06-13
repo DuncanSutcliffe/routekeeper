@@ -465,4 +465,23 @@ showRoute(). showMultipleItems propagates names through routeMarkerGroups and vi
 shaping feature properties. All hover calls fall back to a formatted coordinate when
 the name field is empty.
 
-**Next step: Increment 58 — TBD.**
+Increment 58 — Route point deletion and point display labels. A route point can now
+be deleted in two ways: right-clicking its marker on the map opens a small context
+menu with a single "Delete point" item, and the per-row trash icon in
+RouteWaypointSheet. Both first show a native confirmation dialog reading
+Delete "[label]"? with a destructive Delete button. Map deletion acts immediately:
+the marker carries the point's route_points primary key, which is passed over the
+JS-to-Swift bridge and used by deleteRoutePoint in DatabaseManager to delete that
+row, renumber the remaining points' sequence, and reset announces_arrival on the
+new first and last points, all in one transaction, followed by a Valhalla
+recalculation and redraw. Sheet deletion removes the row from the working list and
+commits on Save as before. A single display-label system underpins all of this:
+pointLabels, a dictionary keyed by route_points.id and rebuilt whenever the route's
+points load or change, gives each point its real name where it has one, or "Point N"
+(1-based position in the full route) where its stored name is only a coordinate pair.
+The same labels feed the map hover popup, both delete confirmations, and the editor
+sheet rows, where the label is the primary line with the coordinates beneath. The
+label is display-only and not persisted; the stored name column and GPX export are
+unchanged.
+
+**Next step: Increment 59 — GPX export naming (TBD).**

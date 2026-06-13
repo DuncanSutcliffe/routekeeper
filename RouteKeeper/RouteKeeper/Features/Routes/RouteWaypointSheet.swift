@@ -22,7 +22,9 @@ struct RouteWaypointSheet: View {
     private func labelFor(_ point: RoutePoint, at index: Int) -> String {
         if let id = point.id, let lbl = pointLabels[id] { return lbl }
         if let name = point.name, !name.isEmpty, !isCoordinatePair(name) { return name }
-        return "Point \(index + 1)"
+        if index == 0 { return "Start" }
+        if index == points.count - 1 { return "End" }
+        return "Point \(index)"
     }
 
     @State private var insertionIndex: Int?

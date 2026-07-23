@@ -1822,25 +1822,23 @@ actor DatabaseManager {
                     result.append(.waypoint(wpt))
 
                 case "route":
-                    let ptRows = try Row.fetchAll(
+                    let routePoints = try RoutePoint.fetchAll(
                         db,
                         sql: """
-                            SELECT latitude, longitude, elevation,
-                                   announces_arrival, name
-                            FROM route_points
+                            SELECT * FROM route_points
                             WHERE route_item_id = ?
                             ORDER BY sequence_number
                             """,
                         arguments: [itemId]
                     )
-                    let points: [ExportRoutePoint] = ptRows.map { pt in
-                        let announcesInt: Int? = pt["announces_arrival"]
-                        return ExportRoutePoint(
-                            name: pt["name"],
-                            latitude: pt["latitude"],
-                            longitude: pt["longitude"],
-                            elevation: pt["elevation"],
-                            announcesArrival: (announcesInt ?? 0) != 0
+                    let labels = buildPointLabels(from: routePoints)
+                    let points: [ExportRoutePoint] = routePoints.map { pt in
+                        ExportRoutePoint(
+                            name: pt.id.flatMap { labels[$0] },
+                            latitude: pt.latitude,
+                            longitude: pt.longitude,
+                            elevation: pt.elevation,
+                            announcesArrival: pt.announcesArrival
                         )
                     }
                     let route = ExportRoute(

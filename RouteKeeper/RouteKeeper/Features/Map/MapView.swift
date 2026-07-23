@@ -513,6 +513,9 @@ struct MapView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero, configuration: makeConfiguration(coordinator: context.coordinator))
 
+        // Allow Safari Web Inspector to attach for debugging.
+        webView.isInspectable = true
+
         // Suppress the white background flash before the map tiles load.
         webView.setValue(false, forKey: "drawsBackground")
 

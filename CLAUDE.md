@@ -133,8 +133,8 @@ PRIMARY KEY (`item_id`, `list_id`)
 - Swift → JS: `webView.evaluateJavaScript("functionName(args)")`
 
 Message types Swift receives: `mapReady`, `routeDrawn`, `mapStyleLoaded`,
-`addWaypointAtCoordinate`, `waypointDragged`, `waypointMoved`,
-`insertShapingPoint`, `debugLog`
+`addWaypointAtCoordinate`, `addWaypointFromSearchResult`, `waypointDragged`,
+`waypointMoved`, `insertShapingPoint`, `debugLog`
 
 Key JS functions called from Swift:
 - `showWaypoint(lat, lng, colorHex, itemId, name, iconBase64)` — single waypoint marker + label
@@ -541,4 +541,53 @@ but PlaceSearchControl ever sets or clears searchResultDisplay, so selecting a
 library item, changing map style, panning, or zooming all leave the marker in
 place until the user explicitly dismisses the search.
 
-**Next step: Increment 61 (TBD).**
+Increment 61 — Create a waypoint from a search result. A search result marker
+can now become a waypoint at exactly the searched coordinate, with the
+Nominatim name, rather than falling through to the map's background context
+menu (which used the underlying map coordinate and a reverse geocode). Two
+entry points reach the same outcome. In MapLibreMap.html, showSearchResult
+attaches a contextmenu listener to the marker's element that calls
+preventDefault()/stopPropagation() (so the map's own background context menu
+does not also fire), then builds a small dynamically-created overlay — styled
+via a new `.map-context-menu` CSS class matching the existing static
+`#map-context-menu`/`#point-context-menu` menus — with a single "New waypoint
+here" item. showSearchResultContextMenu()/dismissSearchResultContextMenu()
+manage that overlay by DOM insertion/removal rather than show/hide, so repeated
+right-clicks never stack elements; dismissal is wired into the same points that
+already dismiss the other two menus (map click/move, document click, Escape)
+plus clearSearchResult(). Selecting the item posts a new bridge message,
+addWaypointFromSearchResult, carrying `lat`/`lng`/`name` taken from the
+marker's own stored values, not the click position. Separately,
+PlaceSearchControl's result rows gained a plus.circle button at the trailing
+edge (tooltip "Create waypoint here"), visible on hover (tracked via a
+hoveredResultId state var) or whenever the row is the current selection;
+clicking it calls a new `onCreateWaypoint: (GeocodingResult) -> Void` closure
+directly — no JS round-trip needed since the action already originates in
+Swift — without touching `selectedResultId` or `mapViewModel`, so neither the
+list selection nor the map view changes.
+
+Both entry points feed the same pending-coordinate mechanism introduced in
+Increment 25 rather than a second parallel one: `MapCoordinate` (MapView.swift)
+gained an optional `name: String?` field, and MapView/Coordinator gained a
+second callback, `onAddWaypointFromSearchResult: ((Double, Double, String) ->
+Void)?`, alongside the existing `onAddWaypointAtCoordinate`, wired to the same
+`mapTapPresentation` state and `.sheet(item:)` in ContentView — both a marker
+right-click and a row's plus button end up constructing a `MapTapPresentation`
+around a `MapCoordinate` with `name` set, either via the JS bridge message
+handler or directly from `onCreateWaypoint`. `NewWaypointSheet` gained a
+`prefilledName: String?` parameter (default `nil`); all pre-existing call sites
+pass `prefilledName: nil` explicitly and are unaffected. When non-nil, `onAppear`
+pre-populates `waypointName` with it directly and skips the reverse-geocode
+`Task` entirely — the forward-search Nominatim name is already better than a
+reverse geocode would produce, so there is no reason to spend the request or
+risk it overwriting the name. When `nil`, behaviour is unchanged: the reverse
+geocode fires and pre-populates the name field itself. Everything else about
+the sheet — the pre-confirmed location chip, silent MapTiler elevation capture,
+list assignment — is unaffected. Saving does not touch `PlaceSearchControl`'s
+state or `mapViewModel.searchResultDisplay` in any way — `clearSearchResult()`
+is only ever called from the control's own dismissal — so the search field,
+results list, selection, and search result marker all survive a save exactly
+as Part 4 requires; the new waypoint simply appears alongside the marker
+through the normal library-refresh display path.
+
+**Next step: Increment 62 (TBD).**

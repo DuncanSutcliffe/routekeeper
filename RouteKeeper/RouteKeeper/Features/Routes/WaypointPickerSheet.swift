@@ -214,7 +214,8 @@ struct WaypointPickerSheet: View {
             }) {
                 NewWaypointSheet(
                     viewModel: createWaypointViewModel,
-                    preselectedListID: nil
+                    preselectedListID: nil,
+                    prefilledName: nil
                 )
                 .environment(apiKeysManager)
             }

@@ -20,6 +20,12 @@ struct NewWaypointSheet: View {
     /// When non-nil the sheet opens with the location already confirmed at this
     /// coordinate (from a map right-click), skipping the search step entirely.
     var prefilledCoordinate: MapCoordinate? = nil
+    /// When non-nil, pre-populates the name field with this value and skips the
+    /// reverse geocode — used when `prefilledCoordinate` came from a Nominatim
+    /// place-search result, whose forward-search name is already better than a
+    /// reverse geocode would produce. `nil` preserves today's behaviour: the
+    /// reverse geocode fires and pre-populates the name field itself.
+    var prefilledName: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(APIKeysManager.self) private var apiKeysManager
@@ -132,20 +138,27 @@ struct NewWaypointSheet: View {
                 // Confirm the location immediately from the map tap coordinate,
                 // showing the chip without requiring a Nominatim search first.
                 selectedLocation = GeocodingResult(
-                    name: "Map location",
+                    name: prefilledName ?? "Map location",
                     latitude: coord.latitude,
                     longitude: coord.longitude,
                     subtitle: "Map location"
                 )
                 fetchElevation(latitude: coord.latitude, longitude: coord.longitude)
-                Task {
-                    if let result = await GeocodingService.shared.reverseGeocode(
-                        latitude: coord.latitude, longitude: coord.longitude
-                    ) {
-                        if waypointName.isEmpty {
-                            waypointName = result.name
+                if let prefilledName {
+                    // A place-search forward result's own name is already better
+                    // than a reverse geocode would produce — skip the reverse
+                    // geocode entirely rather than risk it overwriting this name.
+                    waypointName = prefilledName
+                } else {
+                    Task {
+                        if let result = await GeocodingService.shared.reverseGeocode(
+                            latitude: coord.latitude, longitude: coord.longitude
+                        ) {
+                            if waypointName.isEmpty {
+                                waypointName = result.name
+                            }
+                            confirmedAddress = result.address
                         }
-                        confirmedAddress = result.address
                     }
                 }
             } else {

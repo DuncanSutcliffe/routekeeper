@@ -204,6 +204,11 @@ struct ContentView: View {
                                 coordinate: MapCoordinate(latitude: lat, longitude: lng)
                             )
                         },
+                        onAddWaypointFromSearchResult: { lat, lng, name in
+                            mapTapPresentation = MapTapPresentation(
+                                coordinate: MapCoordinate(latitude: lat, longitude: lng, name: name)
+                            )
+                        },
                         suppressMultiLabels: selectedList != nil && selectedItems.isEmpty
                                              && (!showRouteLabels || !showTrackLabels || !showWaypointLabels),
                         labelCommand: mapViewModel.labelCommand,
@@ -230,10 +235,21 @@ struct ContentView: View {
                     .padding(.top, 12)
                     .padding(.leading, 10)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    PlaceSearchControl(mapViewModel: mapViewModel)
-                        .padding(.top, 10)
-                        .padding(.trailing, 50)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    PlaceSearchControl(
+                        mapViewModel: mapViewModel,
+                        onCreateWaypoint: { result in
+                            mapTapPresentation = MapTapPresentation(
+                                coordinate: MapCoordinate(
+                                    latitude:  result.latitude,
+                                    longitude: result.longitude,
+                                    name:      result.name
+                                )
+                            )
+                        }
+                    )
+                    .padding(.top, 10)
+                    .padding(.trailing, 50)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     if let distKm = routeDistanceKm, let durSecs = routeDurationSeconds {
                         RouteStatsOverlay(
                             distanceKm:       distKm,
@@ -272,7 +288,8 @@ struct ContentView: View {
             NewWaypointSheet(
                 viewModel: libraryViewModel,
                 preselectedListID: selectedList?.id,
-                prefilledCoordinate: tap.coordinate
+                prefilledCoordinate: tap.coordinate,
+                prefilledName: tap.coordinate.name
             )
         }
         .onChange(of: showRouteLabels) { _, newValue in

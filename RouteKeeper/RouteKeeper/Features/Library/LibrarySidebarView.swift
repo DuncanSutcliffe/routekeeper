@@ -947,7 +947,8 @@ private struct LibrarySidebarModals: ViewModifier {
                 NewWaypointSheet(
                     viewModel: viewModel,
                     preselectedListID: presentation.preselectedListID,
-                    prefilledCoordinate: nil
+                    prefilledCoordinate: nil,
+                    prefilledName: nil
                 )
             }
             .sheet(item: $newRoutePresentation) { presentation in

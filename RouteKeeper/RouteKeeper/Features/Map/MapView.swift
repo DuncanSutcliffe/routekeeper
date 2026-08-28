@@ -73,9 +73,15 @@ struct WaypointDisplay: Equatable {
 // MARK: - MapCoordinate
 
 /// A coordinate pair returned from a map interaction (e.g. context-menu tap).
+///
+/// `name` is non-nil when the coordinate originated from a place-search result
+/// (see `addWaypointFromSearchResult`), carrying the Nominatim name through to
+/// `NewWaypointSheet.prefilledName` so it can pre-populate the name field and
+/// skip the reverse geocode. `nil` for a plain map right-click.
 struct MapCoordinate: Equatable {
     let latitude: Double
     let longitude: Double
+    var name: String? = nil
 }
 
 // MARK: - LabelData
@@ -524,6 +530,10 @@ struct MapView: NSViewRepresentable {
     /// Called on the main thread when the user selects "New waypoint here" from the map
     /// context menu. Receives the WGS-84 latitude and longitude of the right-click point.
     let onAddWaypointAtCoordinate: ((Double, Double) -> Void)?
+    /// Called on the main thread when the user selects "New waypoint here" from either
+    /// the search result marker's context menu or the plus button on a search results
+    /// row. Receives the result's latitude, longitude, and Nominatim name.
+    let onAddWaypointFromSearchResult: ((Double, Double, String) -> Void)?
     /// When `true`, `hideAllLabels()` is appended to the `showMultipleItems()` JS call
     /// so labels are suppressed without a visible flash.
     let suppressMultiLabels: Bool
@@ -694,6 +704,7 @@ struct MapView: NSViewRepresentable {
         // Keep the callback current so the Coordinator always calls back into
         // the latest ContentView closure, even after SwiftUI re-renders.
         coordinator.onAddWaypointAtCoordinate = onAddWaypointAtCoordinate
+        coordinator.onAddWaypointFromSearchResult = onAddWaypointFromSearchResult
         coordinator.mapViewModel = mapViewModel
     }
 
@@ -803,6 +814,11 @@ struct MapView: NSViewRepresentable {
         /// Callback set by `MapView.updateNSView` each render pass.
         /// Called when the JS context menu fires an `addWaypointAtCoordinate` message.
         var onAddWaypointAtCoordinate: ((Double, Double) -> Void)? = nil
+
+        /// Called when the JS bridge fires an `addWaypointFromSearchResult` message,
+        /// from either the search result marker's context menu or the plus button
+        /// on a search results row.
+        var onAddWaypointFromSearchResult: ((Double, Double, String) -> Void)? = nil
 
         /// Last style name applied to the map; `nil` on first render (before any
         /// `updateNSView` pass). Used to detect user-initiated style changes and
@@ -1270,6 +1286,14 @@ struct MapView: NSViewRepresentable {
                 return
             }
 
+            if type == "addWaypointFromSearchResult" {
+                guard let lat  = body["lat"]  as? Double,
+                      let lng  = body["lng"]  as? Double,
+                      let name = body["name"] as? String else { return }
+                onAddWaypointFromSearchResult?(lat, lng, name)
+                return
+            }
+
             if type == "waypointDragged" {
                 guard let routeItemIdInt = body["routeItemId"]    as? Int,
                       let sequenceNumber = body["sequenceNumber"] as? Int,
@@ -1508,6 +1532,7 @@ struct MapView: NSViewRepresentable {
         mapStyle: "streets-v4", mapScaleUnit: "metric",
         mapTilerAPIKey: "",
         onAddWaypointAtCoordinate: nil,
+        onAddWaypointFromSearchResult: nil,
         suppressMultiLabels: false,
         labelCommand: nil,
         trackDisplay: nil,

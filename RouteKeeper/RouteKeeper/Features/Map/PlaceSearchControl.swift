@@ -18,11 +18,17 @@ import SwiftUI
 /// dismissal (clear button, deleting all text, collapsing, or Escape).
 struct PlaceSearchControl: View {
     let mapViewModel: MapViewModel
+    /// Called when the user chooses "Create waypoint here" for a result, either via
+    /// the plus button on its row or (indirectly) the search result marker's map
+    /// context menu. Feeds the same pending-coordinate mechanism NewWaypointSheet
+    /// already uses for a map right-click, just carrying a name alongside it.
+    let onCreateWaypoint: (GeocodingResult) -> Void
 
     @State private var isExpanded = false
     @State private var query = ""
     @State private var resultsState: ResultsState = .hidden
     @State private var selectedResultId: UUID? = nil
+    @State private var hoveredResultId: UUID? = nil
     @FocusState private var fieldFocused: Bool
 
     private let fieldWidth: CGFloat = 280
@@ -193,27 +199,48 @@ struct PlaceSearchControl: View {
     }
 
     private func resultRow(_ result: GeocodingResult) -> some View {
-        Button {
-            selectResult(result)
-        } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(result.name)
-                    .lineLimit(1)
-                Text(secondaryLine(for: result))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+        let showPlusButton = hoveredResultId == result.id || selectedResultId == result.id
+        return HStack(spacing: 4) {
+            Button {
+                selectResult(result)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(result.name)
+                        .lineLimit(1)
+                    Text(secondaryLine(for: result))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .padding(.vertical, 6)
-            .padding(.horizontal, 10)
-            .background(
-                selectedResultId == result.id ? Color.accentColor.opacity(0.2) : Color.clear,
-                in: RoundedRectangle(cornerRadius: 4)
-            )
+            .buttonStyle(.plain)
+
+            if showPlusButton {
+                Button {
+                    onCreateWaypoint(result)
+                } label: {
+                    Image(systemName: "plus.circle")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Create waypoint here")
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .background(
+            selectedResultId == result.id ? Color.accentColor.opacity(0.2) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 4)
+        )
+        .onHover { hovering in
+            if hovering {
+                hoveredResultId = result.id
+            } else if hoveredResultId == result.id {
+                hoveredResultId = nil
+            }
+        }
     }
 
     /// Formats a row's secondary line as `display_name` with the leading `name`
@@ -294,6 +321,6 @@ struct PlaceSearchControl: View {
 }
 
 #Preview {
-    PlaceSearchControl(mapViewModel: MapViewModel())
+    PlaceSearchControl(mapViewModel: MapViewModel(), onCreateWaypoint: { _ in })
         .padding()
 }

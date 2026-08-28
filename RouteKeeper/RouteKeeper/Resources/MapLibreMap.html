@@ -79,6 +79,21 @@
             cursor: default;
             pointer-events: none;
         }
+        /* Dynamically created/removed context menu (search result marker).
+           Same visual styling as #map-context-menu / #point-context-menu, but
+           built and torn down via the DOM rather than shown/hidden in place. */
+        .map-context-menu {
+            position: absolute;
+            background: white;
+            border-radius: 6px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.18);
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 13px;
+            z-index: 1002;
+            min-width: 160px;
+            overflow: hidden;
+            user-select: none;
+        }
     </style>
 </head>
 <body>
@@ -1351,8 +1366,8 @@
             menu.style.display = 'block';
         });
 
-        map.on('click', function() { dismissContextMenu(); });
-        map.on('move',  function() { dismissContextMenu(); });
+        map.on('click', function() { dismissContextMenu(); dismissSearchResultContextMenu(); });
+        map.on('move',  function() { dismissContextMenu(); dismissSearchResultContextMenu(); });
 
         function findNearestSegment(coords, clickLngLat) {
             var cx = clickLngLat.lng, cy = clickLngLat.lat;
@@ -1444,9 +1459,16 @@
 
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Alt') { altKeyHeld = true; }
-            if (e.key === 'Escape') { dismissContextMenu(); dismissPointContextMenu(); }
+            if (e.key === 'Escape') {
+                dismissContextMenu();
+                dismissPointContextMenu();
+                dismissSearchResultContextMenu();
+            }
         });
-        document.addEventListener('click', function() { dismissPointContextMenu(); });
+        document.addEventListener('click', function() {
+            dismissPointContextMenu();
+            dismissSearchResultContextMenu();
+        });
         document.addEventListener('keyup', function(e) {
             if (e.key === 'Alt') { altKeyHeld = false; }
         });
@@ -1584,6 +1606,19 @@
                 .setLngLat([lng, lat])
                 .addTo(map);
 
+            // Right-click on the marker offers "New waypoint here" at the result's
+            // own coordinate and name — not the click position — so it lands exactly
+            // on the search result rather than falling through to the map's own
+            // background context menu (which would use the underlying map coordinate
+            // and a reverse geocode instead of the Nominatim name).
+            el.addEventListener('contextmenu', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                dismissContextMenu();
+                dismissPointContextMenu();
+                showSearchResultContextMenu(e.clientX, e.clientY, lat, lng, name || '');
+            });
+
             showLabel(SEARCH_RESULT_LABEL_ID, lng, lat, name || '', null);
 
             if (performFraming) {
@@ -1602,6 +1637,45 @@
                 searchResultMarker = null;
             }
             hideLabel(SEARCH_RESULT_LABEL_ID);
+            dismissSearchResultContextMenu();
+        }
+
+        // ---------------------------------------------------------------------------
+        // Search result marker context menu ("New waypoint here")
+        // ---------------------------------------------------------------------------
+
+        // Built and torn down on demand rather than a static hidden div, so repeated
+        // right-clicks never stack overlay elements in the DOM.
+        var searchResultContextMenuEl = null;
+
+        /// Removes the search result context menu from the DOM, if present.
+        function dismissSearchResultContextMenu() {
+            if (searchResultContextMenuEl) {
+                searchResultContextMenuEl.remove();
+                searchResultContextMenuEl = null;
+            }
+        }
+
+        /// Builds and shows a one-item context menu ("New waypoint here") at
+        /// (x, y) in page coordinates. lat/lng/name are the search result's own
+        /// stored values, not the click position, so the created waypoint lands
+        /// exactly on the result.
+        function showSearchResultContextMenu(x, y, lat, lng, name) {
+            dismissSearchResultContextMenu();
+            var menu = document.createElement('div');
+            menu.className = 'map-context-menu';
+            menu.style.left = x + 'px';
+            menu.style.top  = y + 'px';
+            var item = document.createElement('div');
+            item.className = 'map-context-item';
+            item.textContent = 'New waypoint here';
+            item.addEventListener('click', function() {
+                dismissSearchResultContextMenu();
+                postToSwift({ type: 'addWaypointFromSearchResult', lat: lat, lng: lng, name: name });
+            });
+            menu.appendChild(item);
+            document.body.appendChild(menu);
+            searchResultContextMenuEl = menu;
         }
 </script>
 </body>

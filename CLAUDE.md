@@ -146,6 +146,9 @@ Key JS functions called from Swift:
 - `showLabel(itemId, lng, lat, name, iconBase64)` / `hideLabel(itemId)` / `hideAllLabels()`
 - `setMapStyle(styleName)`, `setScaleUnits(unit)`
 - `registerCategoryIcons(iconsJson)` — registers base64 SF Symbol PNGs
+- `showSearchResult(lng, lat, name, boundsJson, performFraming)` — provisional
+  place-search marker + label, reserved item id `"__search_result__"`
+- `clearSearchResult()` — removes the place-search marker and label
 
 All route point markers (start, end, via, shaping) use native
 `maplibregl.Marker` instances. Marker drags require the Option key to be
@@ -197,6 +200,7 @@ RouteKeeper/
 │   │   ├── Map/
 │   │   │   ├── MapStylePicker.swift
 │   │   │   ├── MapView.swift
+│   │   │   ├── PlaceSearchControl.swift
 │   │   │   ├── RouteStatsOverlay.swift
 │   │   │   └── ShowLabelsButton.swift
 │   │   ├── Routes/
@@ -484,4 +488,57 @@ sheet rows, where the label is the primary line with the coordinates beneath. Th
 label is display-only and not persisted; the stored name column and GPX export are
 unchanged.
 
-**Next step: Increment 59 — GPX export naming (TBD).**
+Increment 60 — Map place search. A floating PlaceSearchControl overlay
+(Features/Map/PlaceSearchControl.swift) lets the user search for a place and see
+it on the map without creating a waypoint — strictly display-only; nothing here
+is ever written to the database. It reuses GeocodingService.shared.search(), the
+same Nominatim search and 300 ms debounce logic already used by
+NewWaypointSheet — no second implementation was written. GeocodingResult gained
+two fields to support this: displayName (Nominatim's raw display_name, used to
+derive a secondary line distinct from name) and bounds ([[west, south],
+[east, north]], parsed from Nominatim's boundingbox field, which is returned as
+strings in south, north, west, east order).
+
+The control sits top-right, offset to clear MapLibre's NavigationControl (zoom
+buttons) at any window size. Collapsed, it is a single magnifyingglass button
+styled like the other floating map overlays (regularMaterial background, 8pt
+corner radius, matching shadow). Clicking it expands a 280pt-wide text field to
+its left with a placeholder of "Search for a place" and a trailing clear button;
+search begins once the field holds at least three characters, debounced
+identically to NewWaypointSheet, with a small in-field progress indicator while
+a request is in flight. Results appear in a scrolling list (max height 300pt)
+below the field, each row showing the Nominatim name as the primary line and the
+remainder of display_name as a secondary line; a single "No places found" or
+"Search failed" row replaces an empty list. Clicking a row, or moving to it with
+the up/down arrow keys, gives it a persistent highlight and immediately shows it
+on the map; the list stays open and the search text is unchanged so results can
+be compared. Return activates the highlighted row. Escape, the clear button,
+manually deleting all search text, or clicking the magnifying glass while
+expanded all perform a full dismissal — clearing the text, the results list, and
+the map marker — but only the magnifying-glass click also collapses the control
+back to its button-only state.
+
+Two new JS bridge functions were added to MapLibreMap.html. showSearchResult(lng,
+lat, name, boundsJson, performFraming) removes any existing search marker, draws
+a maplibregl.Marker built from a custom HTML pin element (white fill, #5A5A5A
+grey stroke — visually distinct from the coloured library waypoint markers),
+calls the existing showLabel() with the reserved item id "__search_result__"
+(chosen so it cannot collide with any real, always-positive item id), and then
+either calls map.fitBounds(boundsJson, {padding: 80}) or map.flyTo(..., zoom: 14)
+depending on whether a bounding box was supplied — AUTO_ZOOM_MAX is deliberately
+not applied here since this is a direct user action. When performFraming is
+false the marker and label are still (re)created but neither fitBounds nor flyTo
+is called. clearSearchResult() removes the marker and calls
+hideLabel("__search_result__"). On the Swift side, MapViewModel gained a
+searchResultDisplay: SearchResultDisplay? property mirroring the existing
+waypointDisplay/routeDisplay pattern, with showSearchResult(_:)/
+clearSearchResult() methods; MapView.Coordinator applies it via the same
+last/pending change-tracking and map-ready flush queue used by every other
+display type, and the mapStyleLoaded re-dispatch path calls
+applySearchResultDisplay(lastSearchResultDisplay, performFraming: false, in:),
+re-creating the marker after a style switch without moving the viewport. Nothing
+but PlaceSearchControl ever sets or clears searchResultDisplay, so selecting a
+library item, changing map style, panning, or zooming all leave the marker in
+place until the user explicitly dismisses the search.
+
+**Next step: Increment 61 (TBD).**

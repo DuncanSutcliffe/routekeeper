@@ -63,6 +63,13 @@ struct GeocodingResult: Identifiable {
     let subtitle: String
     /// Structured address components from Nominatim, if available.
     var address: AddressData? = nil
+    /// Full `display_name` string as returned by Nominatim. Used by the map
+    /// place-search control to derive a secondary line distinct from `name`.
+    var displayName: String = ""
+    /// Bounding box as `[[west, south], [east, north]]`, parsed from Nominatim's
+    /// `boundingbox` field (returned as strings in south, north, west, east order).
+    /// `nil` if the field is absent or unparsable.
+    var bounds: [[Double]]? = nil
 }
 
 // MARK: - GeocodingService
@@ -153,11 +160,14 @@ private struct NominatimResult: Decodable {
     let lat: String
     let lon: String
     let address: NominatimAddress?
+    /// `[south, north, west, east]` as strings, per the Nominatim API.
+    let boundingBox: [String]?
 
     enum CodingKeys: String, CodingKey {
         case name
         case displayName = "display_name"
         case lat, lon, address
+        case boundingBox = "boundingbox"
     }
 }
 
@@ -218,6 +228,12 @@ private extension GeocodingResult {
         latitude  = lat
         longitude = lon
         subtitle  = parts.isEmpty ? raw.displayName : parts.joined(separator: ", ")
+        displayName = raw.displayName
+        if let bbox = raw.boundingBox, bbox.count == 4,
+           let south = Double(bbox[0]), let north = Double(bbox[1]),
+           let west  = Double(bbox[2]), let east  = Double(bbox[3]) {
+            bounds = [[west, south], [east, north]]
+        }
         address = raw.address.map { a in
             AddressData(
                 houseNumber:   a.houseNumber,

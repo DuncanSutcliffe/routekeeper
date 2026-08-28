@@ -208,6 +208,7 @@ struct ContentView: View {
                                              && (!showRouteLabels || !showTrackLabels || !showWaypointLabels),
                         labelCommand: mapViewModel.labelCommand,
                         trackDisplay: mapViewModel.trackDisplay,
+                        searchResultDisplay: mapViewModel.searchResultDisplay,
                         mapViewModel: mapViewModel
                     )
                     VStack(alignment: .leading, spacing: 8) {
@@ -229,6 +230,10 @@ struct ContentView: View {
                     .padding(.top, 12)
                     .padding(.leading, 10)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    PlaceSearchControl(mapViewModel: mapViewModel)
+                        .padding(.top, 10)
+                        .padding(.trailing, 50)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     if let distKm = routeDistanceKm, let durSecs = routeDurationSeconds {
                         RouteStatsOverlay(
                             distanceKm:       distKm,

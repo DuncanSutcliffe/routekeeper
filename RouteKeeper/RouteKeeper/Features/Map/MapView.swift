@@ -188,6 +188,22 @@ struct TrackDisplay: Equatable {
     }
 }
 
+// MARK: - SearchResultDisplay
+
+/// The data needed to render a provisional place-search result marker.
+///
+/// Produced by the map's place-search control (see `PlaceSearchControl`) from a
+/// selected Nominatim result. Display-only: nothing here is ever written to the
+/// database.
+struct SearchResultDisplay: Equatable {
+    let latitude: Double
+    let longitude: Double
+    let name: String
+    /// Bounding box as `[[west, south], [east, north]]`, or `nil` to centre-zoom
+    /// on the coordinate instead of fitting a box.
+    let bounds: [[Double]]?
+}
+
 // TODO: [REFACTOR] MapViewModel, UndoRecord, WaypointDisplay, MapCoordinate, LabelData,
 // LabelCommand, ViaWaypoint, RouteDisplay, and TrackDisplay are all defined in MapView.swift.
 // MapViewModel in particular should live in its own file. The display structs belong in
@@ -278,6 +294,21 @@ final class MapViewModel {
     /// Removes all multi-item display content from the map.
     func clearMultiDisplay() {
         multiDisplay = nil
+    }
+
+    /// Non-nil when a Nominatim place-search result marker should be shown on the
+    /// map. Display-only — never written to the database. Setting this triggers
+    /// `showSearchResult()` in JS; setting it to nil triggers `clearSearchResult()`.
+    var searchResultDisplay: SearchResultDisplay? = nil
+
+    /// Shows a provisional place-search result marker on the map.
+    func showSearchResult(_ display: SearchResultDisplay) {
+        searchResultDisplay = display
+    }
+
+    /// Removes the place-search result marker from the map.
+    func clearSearchResult() {
+        searchResultDisplay = nil
     }
 
     /// Non-nil when an imported track should be displayed on the map.
@@ -500,6 +531,8 @@ struct MapView: NSViewRepresentable {
     let labelCommand: LabelCommand?
     /// Non-nil when a GPS track should be rendered on the map.
     let trackDisplay: TrackDisplay?
+    /// Non-nil when a Nominatim place-search result marker should be displayed.
+    let searchResultDisplay: SearchResultDisplay?
     /// Reference to the owning MapViewModel; set on the Coordinator each pass so
     /// drag handlers can push undo records and the undo action can pop them.
     let mapViewModel: MapViewModel
@@ -648,6 +681,16 @@ struct MapView: NSViewRepresentable {
             }
         }
 
+        // Apply a search-result display change if it has changed.
+        if searchResultDisplay != coordinator.lastSearchResultDisplay {
+            coordinator.lastSearchResultDisplay = searchResultDisplay
+            if coordinator.mapIsReady {
+                coordinator.applySearchResultDisplay(searchResultDisplay, in: nsView)
+            } else {
+                coordinator.pendingSearchResultDisplay = searchResultDisplay
+            }
+        }
+
         // Keep the callback current so the Coordinator always calls back into
         // the latest ContentView closure, even after SwiftUI re-renders.
         coordinator.onAddWaypointAtCoordinate = onAddWaypointAtCoordinate
@@ -785,6 +828,9 @@ struct MapView: NSViewRepresentable {
 
         var lastTrackDisplay: TrackDisplay? = nil
         var pendingTrackDisplay: TrackDisplay? = nil
+
+        var lastSearchResultDisplay: SearchResultDisplay? = nil
+        var pendingSearchResultDisplay: SearchResultDisplay? = nil
         /// itemId of the track whose label is currently shown; used to hide it when the track is cleared.
         var shownTrackItemId: Int64? = nil
 
@@ -1019,6 +1065,36 @@ struct MapView: NSViewRepresentable {
                 " \"\(escapedName)\", \(trackIconArg));"
             )
             shownTrackItemId = display.itemId
+        }
+
+        /// Calls either `showSearchResult()` or `clearSearchResult()` in JS depending
+        /// on whether `display` is non-nil.
+        ///
+        /// `performFraming` controls whether the JS side re-fits or re-centres the
+        /// viewport. Pass `false` when re-applying after a map style reload
+        /// (`mapStyleLoaded`) so the user's current view is not disturbed.
+        func applySearchResultDisplay(
+            _ display: SearchResultDisplay?,
+            performFraming: Bool = true,
+            in webView: WKWebView
+        ) {
+            guard let display else {
+                webView.evaluateJavaScript("clearSearchResult();")
+                return
+            }
+            let escapedName = display.name
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            let boundsArg: String
+            if let bounds = display.bounds, bounds.count == 2 {
+                boundsArg = "[[\(bounds[0][0]),\(bounds[0][1])],[\(bounds[1][0]),\(bounds[1][1])]]"
+            } else {
+                boundsArg = "null"
+            }
+            webView.evaluateJavaScript(
+                "showSearchResult(\(display.longitude), \(display.latitude)," +
+                " \"\(escapedName)\", \(boundsArg), \(performFraming));"
+            )
         }
 
         // MARK: Undo execution
@@ -1358,6 +1434,7 @@ struct MapView: NSViewRepresentable {
                 applyRouteDisplay(lastRouteDisplay, in: wv)
                 applyMultiDisplay(lastMultiDisplay, suppressLabels: lastSuppressMultiLabels, in: wv)
                 applyTrackDisplay(lastTrackDisplay, in: wv)
+                applySearchResultDisplay(lastSearchResultDisplay, performFraming: false, in: wv)
                 return
             }
 
@@ -1413,6 +1490,12 @@ struct MapView: NSViewRepresentable {
                     applyLabelCommand(pending, in: wv)
                     pendingLabelCommand = nil
                 }
+
+                // Flush any search result that arrived before the map was ready.
+                if let pending = pendingSearchResultDisplay {
+                    applySearchResultDisplay(pending, in: wv)
+                    pendingSearchResultDisplay = nil
+                }
             }
         }
     }
@@ -1428,6 +1511,7 @@ struct MapView: NSViewRepresentable {
         suppressMultiLabels: false,
         labelCommand: nil,
         trackDisplay: nil,
+        searchResultDisplay: nil,
         mapViewModel: MapViewModel()
     )
     .frame(width: 800, height: 600)

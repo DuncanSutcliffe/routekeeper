@@ -1546,6 +1546,63 @@
             if (map.getLayer('track-layer'))   { map.removeLayer('track-layer'); }
             if (map.getSource('track-source')) { map.removeSource('track-source'); }
         }
+
+        // ---------------------------------------------------------------------------
+        // Place search result marker (Nominatim place search) — display-only.
+        // Never written to the database. The reserved label id below cannot collide
+        // with any real item id, which are always positive integers.
+        // ---------------------------------------------------------------------------
+        var searchResultMarker = null;
+        const SEARCH_RESULT_LABEL_ID = "__search_result__";
+
+        /// Shows a single provisional marker for a Nominatim place-search result,
+        /// removing any previously shown search result marker first so only one is
+        /// ever present. The marker is a white pin with a grey (#5A5A5A) stroke,
+        /// visually distinct from the coloured library waypoint markers.
+        ///
+        /// lng, lat       — WGS-84 coordinates of the result
+        /// name           — place name, shown via showLabel() above the marker
+        /// boundsJson     — [[west, south], [east, north]] or null
+        /// performFraming — when true (default), fits/flies the viewport to the
+        ///                  result; pass false to re-create the marker after a map
+        ///                  style reload without disturbing the current view.
+        function showSearchResult(lng, lat, name, boundsJson, performFraming) {
+            if (performFraming === undefined) { performFraming = true; }
+            clearSearchResult();
+
+            var el = document.createElement('div');
+            el.style.width = '26px';
+            el.style.height = '36px';
+            el.innerHTML =
+                '<svg width="26" height="36" viewBox="0 0 26 36" xmlns="http://www.w3.org/2000/svg">' +
+                '<path d="M13 1C6.37 1 1 6.37 1 13c0 9.25 12 21.5 12 21.5S25 22.25 25 13C25 6.37 19.63 1 13 1z" ' +
+                'fill="#FFFFFF" stroke="#5A5A5A" stroke-width="2"/>' +
+                '<circle cx="13" cy="13" r="4.5" fill="#5A5A5A"/>' +
+                '</svg>';
+
+            searchResultMarker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+                .setLngLat([lng, lat])
+                .addTo(map);
+
+            showLabel(SEARCH_RESULT_LABEL_ID, lng, lat, name || '', null);
+
+            if (performFraming) {
+                if (boundsJson) {
+                    map.fitBounds(boundsJson, { padding: 80 });
+                } else {
+                    map.flyTo({ center: [lng, lat], zoom: 14 });
+                }
+            }
+        }
+
+        /// Removes the search result marker and its label, if present.
+        function clearSearchResult() {
+            if (searchResultMarker) {
+                searchResultMarker.remove();
+                searchResultMarker = null;
+            }
+            hideLabel(SEARCH_RESULT_LABEL_ID);
+        }
 </script>
 </body>
 </html>
